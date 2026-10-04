@@ -412,6 +412,8 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
       - name: Build CLI dist once
+        # Binary preparation owns the versioned CLI build when payloads are requested.
+        if: ${{ env.BUILD_INSTALLER_BINARIES != 'true' && env.BUILD_SMOKE_BINARIES != 'true' }}
         run: yarn workspace @happier-dev/cli build
       - name: Build requested binary payloads
         if: ${{ env.BUILD_INSTALLER_BINARIES == 'true' || env.BUILD_SMOKE_BINARIES == 'true' }}
