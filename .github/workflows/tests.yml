@@ -371,6 +371,78 @@ jobs:
           CLASSIFIED_PATHS_TYPECHECK: ${{ steps.changes.outputs.typecheck_files }}
         run: node scripts/ci/classify-source-ci-paths.mjs --github-output "$GITHUB_OUTPUT"
 
+  build-cli:
+    if: ${{ (inputs.select_jobs_explicitly && (inputs.run_cli || inputs.run_cli_daemon_e2e || inputs.run_e2e_core || inputs.run_e2e_core_slow || inputs.run_binary_smoke || (inputs.run_installers_smoke && inputs.installers_source == 'local-build'))) || (!inputs.select_jobs_explicitly && (needs.ci_plan.outputs.run_cli == 'true' || needs.ci_plan.outputs.run_cli_daemon_e2e == 'true' || needs.ci_plan.outputs.run_e2e_core == 'true' || needs.ci_plan.outputs.run_binary_smoke == 'true' || needs.ci_plan.outputs.run_installers_smoke == 'true')) }}
+    needs: [ci_plan, trusted_ref_guard]
+    name: build-cli
+    runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
+    timeout-minutes: 120
+    env:
+      BUILD_INSTALLER_BINARIES: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke && inputs.installers_source == 'local-build') || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true' && !((github.event_name == 'push' && github.ref_name == 'main') || (github.event_name == 'pull_request' && github.base_ref == 'main'))) }}
+      BUILD_SMOKE_BINARIES: ${{ (inputs.select_jobs_explicitly && inputs.run_binary_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_binary_smoke == 'true') }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact requested checkout SHA
+        if: ${{ inputs.checkout_sha != '' }}
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: test "$(git rev-parse HEAD)" = "$CHECKOUT_SHA"
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Setup Bun
+        if: ${{ env.BUILD_INSTALLER_BINARIES == 'true' || env.BUILD_SMOKE_BINARIES == 'true' }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.2
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Build CLI dist once
+        run: yarn workspace @happier-dev/cli build
+      - name: Build requested binary payloads
+        if: ${{ env.BUILD_INSTALLER_BINARIES == 'true' || env.BUILD_SMOKE_BINARIES == 'true' }}
+        run: |
+          set -euo pipefail
+          targets=linux-x64
+          if [ "$BUILD_INSTALLER_BINARIES" = "true" ]; then
+            targets=linux-x64,darwin-x64,darwin-arm64,win32-x64
+          fi
+          node scripts/pipeline/release/build-cli-binaries.mjs --channel dev --targets "$targets"
+          if [ "$BUILD_SMOKE_BINARIES" = "true" ]; then
+            version="$(node -p 'require("./apps/cli/package.json").version')"
+            node scripts/pipeline/release/build-server-binaries.mjs --channel dev --version "$version" --targets linux-x64
+            node scripts/pipeline/release/build-hstack-binaries.mjs --channel dev --targets linux-x64
+          fi
+      - name: Archive producer outputs
+        run: |
+          set -euo pipefail
+          paths=(apps/cli/dist)
+          if [ -d dist/release-assets/cli ]; then paths+=(dist/release-assets/cli); fi
+          if [ -d dist/release-assets/server ]; then paths+=(dist/release-assets/server); fi
+          if [ -d dist/release-assets/stack ]; then paths+=(dist/release-assets/stack); fi
+          tar -cf "$RUNNER_TEMP/ci-cli-build.tar" "${paths[@]}"
+      - name: Upload shared CLI build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          path: ${{ runner.temp }}/ci-cli-build.tar
+          compression-level: 0
+          if-no-files-found: error
+
   ui-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui_e2e == 'true') }}
     needs: [ci_plan, trusted_ref_guard]
@@ -914,7 +986,7 @@ jobs:
 
   cli:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli == 'true') }}
-    needs: [ci_plan, trusted_ref_guard]
+    needs: [ci_plan, trusted_ref_guard, build-cli]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
     permissions:
       contents: read
@@ -925,6 +997,7 @@ jobs:
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 60
     env:
+      HAPPIER_CLI_TEST_SKIP_BUILD: "1"
       # Some CLI tests fetch/inspect GitHub Release assets. Prefer the built-in
       # GitHub Actions token rather than requiring extra secrets.
       GH_TOKEN: ${{ github.token }}
@@ -938,6 +1011,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
@@ -1003,6 +1079,11 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Download shared CLI build
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Disable remote logging for CI (avoid hanging test process)
         run: |
@@ -1162,8 +1243,8 @@ jobs:
           fi
 
   installers-smoke-linux:
-    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
-    needs: [ci_plan]
+    if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
+    needs: [ci_plan, build-cli]
     name: Installer Smoke (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -1175,6 +1256,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1197,11 +1281,19 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Download shared CLI build
+        if: ${{ env.INSTALLERS_SOURCE == 'local-build' }}
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
       - name: Prepare release validation workspaces
         run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
 
       - name: Run unified installer smoke
         env:
+          HAPPIER_CLI_TEST_SKIP_BUILD: ${{ env.INSTALLERS_SOURCE == 'local-build' && '1' || '' }}
+          HAPPIER_RELEASE_ASSETS_DIR: ${{ env.INSTALLERS_SOURCE == 'local-build' && format('{0}/dist/release-assets/cli', github.workspace) || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -1213,8 +1305,8 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-macos:
-    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
-    needs: [ci_plan]
+    if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
+    needs: [ci_plan, build-cli]
     name: Installer Smoke (macOS)
     runs-on: macos-latest
     timeout-minutes: 25
@@ -1226,6 +1318,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1248,11 +1343,19 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Download shared CLI build
+        if: ${{ env.INSTALLERS_SOURCE == 'local-build' }}
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
       - name: Prepare release validation workspaces
         run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
 
       - name: Run unified installer smoke
         env:
+          HAPPIER_CLI_TEST_SKIP_BUILD: ${{ env.INSTALLERS_SOURCE == 'local-build' && '1' || '' }}
+          HAPPIER_RELEASE_ASSETS_DIR: ${{ env.INSTALLERS_SOURCE == 'local-build' && format('{0}/dist/release-assets/cli', github.workspace) || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -1264,8 +1367,8 @@ jobs:
             --release-channel "${INSTALLERS_RELEASE_CHANNEL}"
 
   installers-smoke-windows:
-    if: ${{ (inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true') }}
-    needs: [ci_plan]
+    if: ${{ !cancelled() && ((inputs.select_jobs_explicitly && inputs.run_installers_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_installers_smoke == 'true')) && (needs.build-cli.result == 'success' || needs.build-cli.result == 'skipped') }}
+    needs: [ci_plan, build-cli]
     name: Installer Smoke (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
@@ -1277,6 +1380,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -1299,6 +1405,12 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Download shared CLI build
+        if: ${{ env.INSTALLERS_SOURCE == 'local-build' }}
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
       - name: Prepare release validation workspaces
         shell: pwsh
         run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
@@ -1306,6 +1418,8 @@ jobs:
       - name: Run unified installer smoke
         shell: pwsh
         env:
+          HAPPIER_CLI_TEST_SKIP_BUILD: ${{ env.INSTALLERS_SOURCE == 'local-build' && '1' || '' }}
+          HAPPIER_RELEASE_ASSETS_DIR: ${{ env.INSTALLERS_SOURCE == 'local-build' && format('{0}/dist/release-assets/cli', github.workspace) || '' }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           node scripts/pipeline/run.mjs release-validate `
@@ -1317,10 +1431,12 @@ jobs:
 
   binary-smoke:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_binary_smoke) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_binary_smoke == 'true') }}
-    needs: [ci_plan, trusted_ref_guard]
+    needs: [ci_plan, trusted_ref_guard, build-cli]
     name: Binary Smoke (isolated cwd)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2404 }}
     timeout-minutes: 120
+    env:
+      HAPPIER_CLI_TEST_SKIP_BUILD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -1362,6 +1478,11 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Download shared CLI build
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Run isolated binary smoke tests
         run: |
@@ -2011,11 +2132,12 @@ jobs:
 
   cli-daemon-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli_daemon_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli_daemon_e2e == 'true') }}
-    needs: [ci_plan]
+    needs: [ci_plan, build-cli]
     name: CLI + Server (light/sqlite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
+      HAPPIER_CLI_TEST_SKIP_BUILD: "1"
       PORT: "3005"
       HAPPIER_SERVER_URL: http://localhost:3005
       HAPPIER_WEBAPP_URL: http://localhost:3005
@@ -2031,6 +2153,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
@@ -2084,11 +2209,13 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Download shared CLI build
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
       - name: Prepare light DB (SQLite) + apply migrations
         run: yarn --cwd apps/server -s migrate:sqlite:deploy
-
-      - name: Build CLI
-        run: yarn workspace @happier-dev/cli build
 
       - name: Run daemon integration suite (with light server)
         env:
@@ -2198,13 +2325,18 @@ jobs:
 
   e2e-core:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_e2e_core) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_e2e_core == 'true') }}
-    needs: [ci_plan, trusted_ref_guard]
+    needs: [ci_plan, trusted_ref_guard, build-cli]
     name: Core E2E (fast, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
+    env:
+      HAPPIER_CLI_TEST_SKIP_BUILD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup Node (GitHub Actions)
         if: env.ACT != 'true'
@@ -2238,6 +2370,11 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Download shared CLI build
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
+
       - name: Run core e2e suite
         env:
           CI: "1"
@@ -2254,10 +2391,12 @@ jobs:
 
   e2e-core-slow:
     if: ${{ inputs.select_jobs_explicitly && inputs.run_e2e_core_slow }}
-    needs: [trusted_ref_guard]
+    needs: [trusted_ref_guard, build-cli]
     name: Core E2E (slow, packages/tests, server-light, sqlite)
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
+    env:
+      HAPPIER_CLI_TEST_SKIP_BUILD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -2307,6 +2446,11 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Download shared CLI build
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Prepare immutable server-v0.2.1 artifact
         run: |
@@ -2653,7 +2797,7 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
