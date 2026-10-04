@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +10,10 @@ async function importSetupModule() {
 
 describe('CLI test global setup', () => {
     const originalSkipBuild = process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+
+    beforeEach(() => {
+        delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+    });
 
     afterEach(() => {
         if (typeof originalSkipBuild === 'string') {

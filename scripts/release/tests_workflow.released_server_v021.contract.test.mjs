@@ -53,7 +53,7 @@ test('the exact server-v0.2.1 gate accepts an optional immutable candidate check
     default: '',
     type: 'string',
   });
-  assert.deepEqual(job.needs, ['trusted_ref_guard']);
+  assert.deepEqual(job.needs, ['trusted_ref_guard', 'build-cli']);
   assert.equal(validation?.if, "${{ inputs.checkout_sha != '' }}");
   assert.equal(validation?.env?.CHECKOUT_SHA, '${{ inputs.checkout_sha }}');
   assert.equal(checkout?.with?.ref, "${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}");
