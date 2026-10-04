@@ -58,7 +58,7 @@ test.describe('ui e2e: settings notifications', () => {
     });
 
     test('renders the notifications settings route and adds a webhook channel', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!uiBaseUrl) throw new Error('missing ui base url');
 
         await page.setViewportSize({ width: 1440, height: 900 });

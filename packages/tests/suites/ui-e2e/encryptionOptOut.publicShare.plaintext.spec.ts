@@ -155,7 +155,7 @@ test.describe('ui e2e: plaintext mode + public share', () => {
   });
 
   test('toggles account to plaintext, writes a plaintext session, and opens a public link', async ({ page, context }, testInfo) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
 

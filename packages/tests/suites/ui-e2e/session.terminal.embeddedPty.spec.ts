@@ -103,7 +103,7 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
     });
 
     test('runs a command and shows output', async ({ page }) => {
-        test.setTimeout(420_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         const browserDiagnostics = collectBrowserDiagnostics({ page });

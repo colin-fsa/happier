@@ -107,7 +107,7 @@ test.describe('ui e2e: /new path picker (Phase 11 SelectionList migration)', () 
         if (!server || !ui || !uiBaseUrl) {
             throw new Error('test infra failed to start');
         }
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
 
         daemon = await authenticateAndStartDaemon({
             page,

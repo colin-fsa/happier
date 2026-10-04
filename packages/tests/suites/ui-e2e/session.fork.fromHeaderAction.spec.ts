@@ -76,7 +76,7 @@ test.describe('ui e2e: session fork from header action menu', () => {
   });
 
   test('forks conversation and navigates to the child session', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

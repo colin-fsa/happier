@@ -84,7 +84,7 @@ test.describe('ui e2e: direct sessions browse/open/tail', () => {
   });
 
   test('links a provider-backed direct session and follows appended provider log lines', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't1-direct-browse-open-tail'));
@@ -173,7 +173,7 @@ test.describe('ui e2e: direct sessions browse/open/tail', () => {
   });
 
   test('takes over + persists a linked direct session from the send intercept and moves it to the persisted tab', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't2-direct-browse-takeover-persist'));

@@ -110,7 +110,7 @@ test.describe('ui e2e: server/account scoped settings', () => {
   });
 
   test('keeps synced settings isolated when switching between server accounts', async ({ page }) => {
-    test.setTimeout(360_000);
+    test.setTimeout(180_000);
     if (!primaryServer || !secondaryServer || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

@@ -66,7 +66,7 @@ test.describe('ui e2e: connected-services auth chip state', () => {
   });
 
   test('shows the effective native auth label instead of a generic connected-services label', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

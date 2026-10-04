@@ -125,7 +125,7 @@ test.describe('ui e2e: machine identity and replacement surfaces', () => {
     if (!serverBaseUrl || !uiBaseUrl) throw new Error('test infra failed to start');
     const serverUrl = serverBaseUrl;
     const webUrl = uiBaseUrl;
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
 
     await gotoDomContentLoadedWithRetries(page, webUrl, 420_000);
     await waitForInitialAppUi({ page, timeoutMs: 420_000 });

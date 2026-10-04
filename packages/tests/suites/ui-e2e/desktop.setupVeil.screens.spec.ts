@@ -80,7 +80,7 @@ test.describe('ui e2e: desktop setup veil screens (R11)', () => {
 
     for (const theme of ['light', 'dark'] as const) {
         test(`every setup state over the Home, desktop width, ${theme}`, async ({ browser }) => {
-            test.setTimeout(1_200_000);
+            test.setTimeout(180_000);
             if (!uiBaseUrl) throw new Error('missing ui base url');
 
             // 1. First run: signed in just now, facts still being read.

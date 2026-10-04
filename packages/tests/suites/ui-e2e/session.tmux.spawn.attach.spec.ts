@@ -174,6 +174,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
     });
 
     test('starts and resumes a UI-created session in tmux and can attach via CLI', async ({ page }) => {
+        // CI 36709793378: this journey passed in 198s; retain its longer test budget.
         test.setTimeout(900_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

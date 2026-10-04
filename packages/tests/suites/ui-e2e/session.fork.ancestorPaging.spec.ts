@@ -133,6 +133,7 @@ test.describe('ui e2e: fork ancestor paging across segments', () => {
   });
 
   test('loads older ancestor messages when scrolling past fork cutoff', async ({ page }) => {
+    // CI 36709793378: this journey passed in 216s; retain its longer test budget.
     test.setTimeout(900_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

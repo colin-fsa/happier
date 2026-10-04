@@ -475,7 +475,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('restores long draft expansion and web scroll position after switching sessions', async ({ page }) => {
-        test.setTimeout(420_000);
+        test.setTimeout(180_000);
         if (!uiBaseUrl || !sessionA || !sessionB) throw new Error('missing composer continuity fixtures');
 
         const longDraft = Array.from({ length: 36 }, (_, index) => `line ${index + 1} composer continuity ${run.runId}`).join('\n');
@@ -511,7 +511,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('keeps stable UUID identities across reload/resume and preserves multiple new-session drafts', async ({ page }) => {
-        test.setTimeout(360_000);
+        test.setTimeout(180_000);
         if (!server || !token || !uiBaseUrl) throw new Error('missing draft continuity fixtures');
 
         const draftAText = `new-session draft A ${run.runId}`;
@@ -566,7 +566,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('projects an existing-session draft and preserves edits made while the captured enqueue is in flight', async ({ page }) => {
-        test.setTimeout(360_000);
+        test.setTimeout(180_000);
         if (!server || !token || !uiBaseUrl) throw new Error('missing existing-session fixtures');
 
         const submitted = `captured send ${run.runId}`;
@@ -616,7 +616,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('converges an existing-session clear across two contexts without lifecycle resurrection', async ({ page, browser }) => {
-        test.setTimeout(360_000);
+        test.setTimeout(180_000);
         if (!server || !token || !uiBaseUrl || !sessionB) throw new Error('missing existing-session draft fixtures');
 
         const seed = `existing-session shared draft ${run.runId}`;
@@ -659,7 +659,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('rebases distinct fields, exposes same-field conflict, and does not resurrect a deleted draft across two contexts', async ({ page, browser }) => {
-        test.setTimeout(420_000);
+        test.setTimeout(180_000);
         if (!server || !token || !uiBaseUrl) throw new Error('missing synchronized draft fixtures');
 
         const seed = `two-context base ${run.runId}`;
@@ -752,7 +752,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
     });
 
     test('cycles only current-session user messages with repeated ArrowUp in per-session history scope', async ({ page }) => {
-        test.setTimeout(300_000);
+        test.setTimeout(180_000);
         if (!uiBaseUrl || !sessionA || !sessionB) throw new Error('missing composer history fixtures');
 
         const composerA = await openSession({ page, uiBaseUrl, session: sessionA });

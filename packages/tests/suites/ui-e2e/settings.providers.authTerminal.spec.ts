@@ -77,7 +77,7 @@ test.describe('ui e2e: provider settings auth status', () => {
   });
 
   test('shows provider auth status in web settings and refreshes auth state', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
     await page.setViewportSize({ width: 1440, height: 900 });
 

@@ -97,7 +97,7 @@ test.describe('ui e2e: keyless OAuth auto-redirect (GitHub)', () => {
   });
 
   test('auto-redirects into keyless GitHub login and lands in the app authenticated', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauthBaseUrl) throw new Error('missing oauth base url');

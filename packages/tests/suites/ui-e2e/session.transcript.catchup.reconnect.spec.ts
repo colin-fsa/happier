@@ -222,6 +222,7 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
   });
 
   test('uses snapshot tail reset when pinned and defers forward loading when mid-history', async ({ page }) => {
+    // CI 36709793378: this journey passed in 204s; retain its longer test budget.
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

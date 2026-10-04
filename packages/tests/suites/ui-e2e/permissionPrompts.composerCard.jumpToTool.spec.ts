@@ -110,7 +110,7 @@ test.describe('ui e2e: permission prompts (composer card)', () => {
   }
 
   test('shows composer permission card and view-tool navigates to the tool in transcript', async ({ page }, testInfo) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');
 

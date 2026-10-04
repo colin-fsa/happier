@@ -183,6 +183,7 @@ test.describe('ui e2e: automations authoring', () => {
     });
 
     test('creates automations from the inline /new flow and the existing-session authoring flow', async ({ page }) => {
+        // CI 36709793378: this journey passed in 210s; retain its longer test budget.
         test.setTimeout(900_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

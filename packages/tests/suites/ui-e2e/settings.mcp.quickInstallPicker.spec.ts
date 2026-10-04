@@ -60,7 +60,7 @@ test.describe('ui e2e: MCP settings quick install and new-session picker', () =>
     });
 
     test('quick installs a managed MCP server and previews it in the new-session MCP picker', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         await page.setViewportSize({ width: 1440, height: 900 });

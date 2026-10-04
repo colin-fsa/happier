@@ -116,7 +116,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
   });
 
   test('renders shell-owned desktop controls and update status in the wide sidebar', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await launchDesktopShell(page, { uiBaseUrl, updateVersion: '9.9.9' });
@@ -161,7 +161,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
   });
 
   test('does not render Tauri desktop controls in plain web mode', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -174,7 +174,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
   });
 
   test('excludes global desktop chrome from the desktop pet overlay route', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 800, height: 600 });

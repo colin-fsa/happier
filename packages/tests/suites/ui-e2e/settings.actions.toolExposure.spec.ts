@@ -146,7 +146,7 @@ test.describe('ui e2e: actions settings tool exposure', () => {
     });
 
     test('persists per-surface action tool exposure overrides', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!uiBaseUrl) throw new Error('missing ui base url');
 
         const actionId = 'agents.backends.list';

@@ -226,7 +226,7 @@ test.describe('ui e2e: Files upload + rename/delete + download (+ zip)', () => {
   });
 
   test('uploads file, renames, downloads, deletes, and downloads folder zip', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });
