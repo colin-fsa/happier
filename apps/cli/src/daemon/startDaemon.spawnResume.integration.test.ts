@@ -2658,6 +2658,12 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         expect(logger.warn).toHaveBeenCalled();
         return;
       }
+      if (isNonceReplay) {
+        // Replay mutates an already-published runner, not an in-flight report.
+        const acceptedRunner = tracked!.get(12345)!;
+        await acceptedRunner.startupCustody?.finalization;
+        await acceptedRunner.reportMarkerCustody?.pending;
+      }
       if (contract !== 'resume_after_stop') await vi.waitFor(async () => {
         expect(await harness.getResolveSpawnSessionByNonce()!(`hosted-completion-${contract}`))
           .toMatchObject({ status: 'success', sessionId: 'sess_plain' });
@@ -2722,6 +2728,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           const markerPath = join(fixtureHome, 'tmp', 'daemon-sessions', 'pid-12345.json');
           const rawMarker = JSON.parse(await readFile(markerPath, 'utf8'));
           await writeFile(markerPath, JSON.stringify({ ...rawMarker, pid: 23456 }));
+          const markers = await vi.importActual<typeof import('./sessionRegistry')>('./sessionRegistry');
+          expect(await markers.readSessionMarkerForPid(12345)).toMatchObject({ pid: 23456 });
         }
         if (contract === 'wrong_marker_identity_nonce_replay') {
           const markers = await vi.importActual<typeof import('./sessionRegistry')>('./sessionRegistry');
