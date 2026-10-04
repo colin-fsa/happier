@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const cliProjectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -9,14 +10,15 @@ async function importSetupModule() {
 }
 
 describe('CLI test global setup', () => {
-    const originalSkipBuild = process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+    const envScope = createEnvKeyScope(['HAPPIER_CLI_TEST_SKIP_BUILD']);
+
+    beforeEach(() => {
+        // Build-policy cases own this input even when CI reuses its prebuilt runtime.
+        envScope.patch({ HAPPIER_CLI_TEST_SKIP_BUILD: undefined });
+    });
 
     afterEach(() => {
-        if (typeof originalSkipBuild === 'string') {
-            process.env.HAPPIER_CLI_TEST_SKIP_BUILD = originalSkipBuild;
-        } else {
-            delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
-        }
+        envScope.restore();
         vi.restoreAllMocks();
         vi.resetModules();
     });
