@@ -410,7 +410,8 @@ jobs:
           npm_config_production: "false"
         uses: ./.github/actions/install-yarn-dependencies
         with:
-          args: --frozen-lockfile --ignore-engines
+          # The canonical binary builder requires target-specific optional packages.
+          args: ${{ env.BUILD_INSTALLER_BINARIES == 'true' && '--frozen-lockfile --ignore-engines --ignore-platform' || '--frozen-lockfile --ignore-engines' }}
       - name: Build CLI dist once
         # Binary preparation owns the versioned CLI build when payloads are requested.
         if: ${{ env.BUILD_INSTALLER_BINARIES != 'true' && env.BUILD_SMOKE_BINARIES != 'true' }}
