@@ -102,6 +102,8 @@ Browser-driven end-to-end tests against the Expo web UI, using the same server-l
 yarn test:e2e:ui
 ```
 
+The command above runs the full browser suite. In the current `dev` CI configuration, ordinary push/PR browser checks select self-contained `@smoke` journeys. The nightly Extended DB workflow and explicitly selected UI E2E in manual/release validation retain the full suite.
+
 Notes:
 - These tests run Playwright against `expo start --web` and require Playwright browsers to be installed (see Playwright install docs).
 - UI E2E should stay small and focus on flows that are uniquely UI-driven (auth/login/connect, navigation, and key cross-app wiring). Lower-level server/daemon invariants belong in core E2E.
@@ -376,6 +378,7 @@ Default gate includes:
 - Release contracts (release/workflow/install/signing guards)
 - Daemon integration E2E (`CLI + Server (light/sqlite) E2E`)
 - Core E2E fast (sqlite)
+- UI E2E smoke (`@smoke`, when selected by the changed paths)
 
 The daemon integration E2E job is intentionally separate from app unit/integration lanes because it verifies cross-package boot/auth/daemon behavior against a real light server process.
 
@@ -395,6 +398,8 @@ Workflow: `CI — Stress Tests` (`.github/workflows/stress-tests.yml`)
 ### Nightly extended DB matrix
 
 Workflow: `CI — Extended DB Matrix` (`.github/workflows/extended-db-tests.yml`)
+
+Its current `dev` schedule also runs the full UI E2E suite.
 
 ## Contributor guidance
 
