@@ -421,7 +421,7 @@ jobs:
           set -euo pipefail
           targets=linux-x64
           if [ "$BUILD_INSTALLER_BINARIES" = "true" ]; then
-            targets=linux-x64,darwin-x64,darwin-arm64,win32-x64
+            targets=linux-x64,darwin-x64,darwin-arm64,windows-x64
           fi
           node scripts/pipeline/release/build-cli-binaries.mjs --channel dev --targets "$targets"
           if [ "$BUILD_SMOKE_BINARIES" = "true" ]; then
