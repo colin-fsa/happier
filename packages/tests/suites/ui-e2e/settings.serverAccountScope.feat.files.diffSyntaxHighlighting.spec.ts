@@ -109,7 +109,7 @@ test.describe('ui e2e: server/account scoped settings', () => {
     await primaryServer?.stop().catch(() => {});
   });
 
-  test('keeps synced settings isolated when switching between server accounts', async ({ page }) => {
+  test('keeps synced settings isolated when switching between server accounts', { tag: "@smoke" }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!primaryServer || !secondaryServer || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

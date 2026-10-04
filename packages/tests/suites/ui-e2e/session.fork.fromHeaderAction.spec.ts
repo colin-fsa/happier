@@ -75,7 +75,7 @@ test.describe('ui e2e: session fork from header action menu', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('forks conversation and navigates to the child session', async ({ page }) => {
+  test('forks conversation and navigates to the child session', { tag: "@smoke" }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

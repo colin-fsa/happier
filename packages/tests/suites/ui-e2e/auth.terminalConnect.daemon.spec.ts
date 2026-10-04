@@ -163,7 +163,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('creates an account, approves terminal connect, then daemon becomes online', async ({ page }, testInfo) => {
+  test('creates an account, approves terminal connect, then daemon becomes online', { tag: "@smoke" }, async ({ page }, testInfo) => {
     test.setTimeout(180_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');
     if (!uiBaseUrl) throw new Error('missing ui base url');

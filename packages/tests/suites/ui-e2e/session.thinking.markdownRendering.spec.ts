@@ -71,7 +71,7 @@ test.describe('ui e2e: thinking markdown rendering', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('renders streamed thinking markdown with stable whitespace and inline-code styles', async ({ page }) => {
+  test('renders streamed thinking markdown with stable whitespace and inline-code styles', { tag: "@smoke" }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

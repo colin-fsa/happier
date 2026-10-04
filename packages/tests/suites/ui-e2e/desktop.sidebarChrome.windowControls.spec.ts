@@ -115,7 +115,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('renders shell-owned desktop controls and update status in the wide sidebar', async ({ page }) => {
+  test('renders shell-owned desktop controls and update status in the wide sidebar', { tag: "@smoke" }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 

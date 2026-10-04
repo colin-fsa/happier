@@ -127,7 +127,7 @@ test.describe('ui e2e: session subroutes', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('resolves session info/runs/files subroutes without redirecting', async ({ page }) => {
+  test('resolves session info/runs/files subroutes without redirecting', { tag: "@smoke" }, async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

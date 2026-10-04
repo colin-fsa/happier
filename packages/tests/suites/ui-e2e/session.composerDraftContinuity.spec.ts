@@ -474,7 +474,7 @@ test.describe('ui e2e: session composer draft continuity', () => {
         await server?.stop().catch(() => {});
     });
 
-    test('restores long draft expansion and web scroll position after switching sessions', async ({ page }) => {
+    test('restores long draft expansion and web scroll position after switching sessions', { tag: "@smoke" }, async ({ page }) => {
         test.setTimeout(180_000);
         if (!uiBaseUrl || !sessionA || !sessionB) throw new Error('missing composer continuity fixtures');
 

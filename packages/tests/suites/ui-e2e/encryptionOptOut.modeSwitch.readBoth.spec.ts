@@ -180,7 +180,7 @@ test.describe('ui e2e: encryption opt-out mode switching', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('switches modes and keeps old sessions readable (e2ee → plain → e2ee)', async ({ page }, testInfo) => {
+  test('switches modes and keeps old sessions readable (e2ee → plain → e2ee)', { tag: "@smoke" }, async ({ page }, testInfo) => {
     // This scenario performs two real account migrations and three daemon-backed session create/send flows.
     test.setTimeout(180_000);
     if (!server || !ui) throw new Error('missing server/ui fixtures');

@@ -125,7 +125,7 @@ test.describe('ui e2e: actions settings detail approval modes', () => {
         await server?.stop().catch(() => {});
     });
 
-    test('persists action detail approval modes and keeps non-approval targets simple', async ({ page }) => {
+    test('persists action detail approval modes and keeps non-approval targets simple', { tag: "@smoke" }, async ({ page }) => {
         test.setTimeout(180_000);
         if (!uiBaseUrl) throw new Error('missing ui base url');
 
