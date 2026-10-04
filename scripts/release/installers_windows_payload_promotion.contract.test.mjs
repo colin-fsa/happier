@@ -104,7 +104,8 @@ test('install.ps1 payload promotion uses the local PowerShell executable instead
   );
 });
 
-test('install.ps1 carries runtime sidecars into the unlocked promotion runner and cleans it up', {
+for (const runnerTempName of ['runner-temp', 'runner temp']) {
+test(`install.ps1 carries runtime sidecars into an unlocked runner in ${runnerTempName} and cleans it up`, {
   skip: process.platform !== 'win32' && 'Requires real Windows executable locking and PowerShell',
 }, async (t) => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
@@ -122,7 +123,7 @@ test('install.ps1 carries runtime sidecars into the unlocked promotion runner an
   const scratch = await mkdtemp(join(tmpdir(), 'happier-promotion-'));
   t.after(() => rm(scratch, { recursive: true, force: true }));
   const payload = join(scratch, "payload with spaces and 'quote");
-  const runnerTemp = join(scratch, 'runner temp');
+  const runnerTemp = join(scratch, runnerTempName);
   await mkdir(runnerTemp);
   await writeFile(join(runnerTemp, 'sentinel'), 'unrelated file');
   for (const relative of ['scripts', 'scripts/runtime', 'scripts/shims']) {
@@ -178,6 +179,7 @@ class Fixture {
   assert.equal(await readFile(join(`${payload}.promoted`, 'scripts/process_tree.cjs'), 'utf8'), 'runtime marker');
   assert.deepEqual(await readdir(runnerTemp), ['sentinel']);
 });
+}
 
 test('install.ps1 fails closed on payload promotion timeout instead of accepting fallback success', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
