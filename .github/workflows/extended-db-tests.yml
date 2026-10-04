@@ -42,6 +42,9 @@ jobs:
   ui-e2e-nightly:
     if: ${{ github.event_name == 'schedule' }}
     name: Full UI E2E nightly
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/tests.yml
     with:
       select_jobs_explicitly: true

@@ -279,6 +279,7 @@ jobs:
     if: ${{ needs.resolve.outputs.run_extended_db == 'true' }}
     permissions:
       contents: read
+      pull-requests: read
     uses: ./.github/workflows/extended-db-tests.yml
     with:
       select_jobs_explicitly: true
