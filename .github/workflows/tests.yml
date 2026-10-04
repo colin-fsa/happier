@@ -194,10 +194,9 @@ permissions:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  # Preserve the active collector so late lanes can report their failures. GitHub retains at most
-  # one pending run per group, so newer pushes replace stale pending work without discarding the
-  # evidence already being collected by the running workflow.
-  cancel-in-progress: false
+  # Superseded PR heads are not evidence. Preserve active push collectors so late
+  # lanes still report failures; newer pushes replace only stale pending work.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Speed up CI: UI postinstall vendors large web-only assets (Monaco/Kokoro/Skia web).

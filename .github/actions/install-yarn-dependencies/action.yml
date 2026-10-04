@@ -38,10 +38,7 @@ runs:
         fi
         # Yarn's no-op install does not regenerate outputs outside node_modules.
         # Delegate that setup to the same workspace postinstall owners as a miss.
-        yarn workspace @happier-dev/cli run postinstall
-        yarn workspace @happier-dev/server run postinstall
-        yarn workspace @happier-dev/app run postinstall
-        yarn run postinstall
+        node scripts/ci/refresh-workspace-postinstall.mjs ${{ inputs.args }}
     - name: Install dependencies with retry
       if: steps.dependencies.outputs.cache-hit != 'true'
       shell: bash

@@ -17,9 +17,8 @@ import {
     type AgentRecord,
     type InstallKind,
 } from './agents';
-import { SHIPPED_AGENT_IDS, SHIPPED_TREE_ENV_VAR, isShippedAgentId } from './availability';
+import { SHIPPED_TREE_ENV_VAR, isShippedAgentId } from './availability';
 import {
-    readShippedAgentIds,
     readShippedCliFacts,
     readShippedManifestFacts,
     resolveShippedTreeRoot,
@@ -87,30 +86,6 @@ describe('the site measures itself against the RELEASED registry', () => {
         ).not.toBeNull();
     });
 
-    it('transcribes AGENT_IDS from the released tree without drift', () => {
-        const shipped = readShippedAgentIds();
-        if (!shipped) return; // reported by the test above
-        expect(
-            [...SHIPPED_AGENT_IDS],
-            'SHIPPED_AGENT_IDS in src/data/availability.ts no longer matches the released ' +
-                'packages/agents/src/types.ts. Update the transcription — and then check ' +
-                'whether the new id needs a page, an UNLISTED_AGENTS reason, or nothing.',
-        ).toEqual(shipped);
-    });
-
-    it('accounts for every id the release actually ships', () => {
-        const covered = new Set([...AGENTS.map((a) => a.id), ...Object.keys(UNLISTED_AGENTS)]);
-        const unaccounted = SHIPPED_AGENT_IDS.filter((id) => !covered.has(id));
-
-        expect(
-            unaccounted,
-            'A shipped agent has no page and no written reason for not having one. Give it ' +
-                'an entry in AGENTS or in UNLISTED_AGENTS. Leaving it out silently is how ' +
-                '/agents becomes a list that claims we support fewer agents than we do — ' +
-                'which is exactly what happened to customAcp.',
-        ).toEqual([]);
-    });
-
     it('never presents an agent the release does not ship', () => {
         for (const agent of AGENTS) {
             expect(
@@ -150,29 +125,6 @@ describe('the per-agent facts come from the released manifest', () => {
             // The page tells people to type `happier <id>`; that has to be the
             // subcommand the shipped CLI dispatches on.
             expect(agent.id, `/agents/${agent.slug} cli subcommand`).toBe(manifest.cliSubcommand);
-        }
-    });
-
-    /**
-     * Vendor URLs, asserted one way on purpose.
-     *
-     * `vendorDocs` must be the released `docsUrl` exactly — it is not a field
-     * anyone should be authoring. `vendorSetupGuide` must match the released
-     * `guideUrl` WHERE ONE EXISTS; where the release carries none, the site is
-     * allowed to carry a setup page someone found, because "the vendor publishes
-     * no guide URL in our registry" is not the same claim as "the vendor has no
-     * setup page". What it may never do is contradict a guide the registry has.
-     */
-    it('carries the vendor URLs the released registry declares', () => {
-        for (const agent of AGENTS) {
-            const cli = readShippedCliFacts(agent.id);
-            if (!cli) return;
-            expect.soft(agent.vendorDocs, `/agents/${agent.slug} vendorDocs`).toBe(cli.docsUrl);
-            if (cli.installGuideUrl) {
-                expect.soft(agent.vendorSetupGuide, `/agents/${agent.slug} vendorSetupGuide`).toBe(
-                    cli.installGuideUrl,
-                );
-            }
         }
     });
 

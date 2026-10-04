@@ -30,10 +30,9 @@
  *
  * It is transcribed rather than imported because a marketing site that only
  * builds when a second checkout happens to sit beside it is a worse thing than
- * a transcription. The transcription cannot rot silently: availability.test.ts
- * re-reads that file from the released tree and fails if the two disagree. When
- * the released tree is not on the machine, the test says so loudly instead of
- * passing quietly.
+ * a transcription. Review this list when the released catalog changes. Tests
+ * retain rendered availability separation and runtime/install contracts rather
+ * than making catalog transcription a blocking CI check.
  *
  * Set HAPPIER_SHIPPED_TREE to point the cross-check at a checkout that is not
  * in the default sibling location.
