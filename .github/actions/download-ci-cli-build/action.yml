@@ -14,4 +14,6 @@ runs:
         path: ${{ runner.temp }}/ci-cli-build
     - name: Restore outputs with archive permissions intact
       shell: bash
-      run: tar -xf "$RUNNER_TEMP/ci-cli-build/ci-cli-build.tar" -C "$GITHUB_WORKSPACE"
+      run: |
+        cd "$RUNNER_TEMP/ci-cli-build"
+        tar -xf ci-cli-build.tar -C "$GITHUB_WORKSPACE"

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,38 @@ import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('shared CLI restoration handles a Windows drive path and preserves executable payloads', async (t) => {
+  const action = YAML.parse(await readFile(join(repoRoot, '.github', 'actions', 'download-ci-cli-build', 'action.yml'), 'utf8'));
+  const restore = action.runs.steps.find((step) => step.run);
+  const scratch = mkdtempSync(join(tmpdir(), 'ci-cli-archive-'));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // On POSIX, model the drive prefix that GNU tar interprets as a remote host.
+  const runnerTemp = process.platform === 'win32' ? scratch : join(scratch, 'D:', 'runner temp');
+  const archiveDir = join(runnerTemp, 'ci-cli-build');
+  const payloadDir = join(scratch, 'payload');
+  const workspaceDir = join(scratch, 'workspace with spaces');
+  for (const dir of [archiveDir, payloadDir, workspaceDir]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(payloadDir, 'built-cli'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(payloadDir, 'built-cli'), 0o755);
+  const archive = spawnSync('tar', ['-cf', 'ci-cli-build.tar', '-C', payloadDir, 'built-cli'], {
+    cwd: archiveDir, encoding: 'utf8',
+  });
+  assert.equal(archive.status, 0, archive.stderr);
+
+  const restored = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', restore.run], {
+    cwd: scratch,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      RUNNER_TEMP: process.platform === 'win32' ? runnerTemp : 'D:/runner temp',
+      GITHUB_WORKSPACE: workspaceDir,
+    },
+  });
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.equal(await readFile(join(workspaceDir, 'built-cli'), 'utf8'), '#!/bin/sh\nexit 0\n');
+  if (process.platform !== 'win32') assert.equal(statSync(join(workspaceDir, 'built-cli')).mode & 0o777, 0o755);
+});
 
 async function runInlineCollector(env) {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
