@@ -9,9 +9,15 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
+async function readInstallerSource(path) {
+  // Git's native Windows checkout may use CRLF; extraction must execute the
+  // same functions regardless of checkout line endings.
+  return (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
+}
+
 test('install.ps1 only falls back to direct binary copy for legacy payload installers', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(trimmed, /\$promotionResult\.ExitCode\s*-ne\s*0/i);
@@ -66,7 +72,7 @@ test('install.ps1 only falls back to direct binary copy for legacy payload insta
 
 test('install.ps1 payload promotion timeout avoids background jobs and enforces bounded process waits', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.doesNotMatch(trimmed, /\bStart-Job\b/);
@@ -78,7 +84,7 @@ test('install.ps1 payload promotion timeout avoids background jobs and enforces 
 
 test('install.ps1 payload promotion uses the local PowerShell executable instead of hard-coded pwsh', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const helper = raw.match(/function Invoke-InstallerPayloadPromotionWithTimeout\s*\{[\s\S]*?\n\}(?=\n\nfunction )/);
 
   assert.ok(helper, 'expected Invoke-InstallerPayloadPromotionWithTimeout to exist');
@@ -109,7 +115,7 @@ test(`install.ps1 carries runtime sidecars into an unlocked runner in ${runnerTe
   skip: process.platform !== 'win32' && 'Requires real Windows executable locking and PowerShell',
 }, async (t) => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const functions = [
     'Resolve-InstallerPayloadPromotionTimeoutMs',
     'Resolve-InstallerPowerShellExecutablePath',
@@ -183,7 +189,7 @@ class Fixture {
 
 test('install.ps1 fails closed on payload promotion timeout instead of accepting fallback success', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
   const fallbackSignature = trimmed.match(/\$longPathOrMissingSourceSignature\s*=\s*\$promotionOutput\s+-match\s*'([^']+)'/i);
 
@@ -202,7 +208,7 @@ test('install.ps1 fails closed on payload promotion timeout instead of accepting
 
 test('install.ps1 direct-copy fallback refuses partial temporary managed version state', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const fallbackSafety = raw.match(/function Test-InstallerPayloadDirectCopyFallbackSafe\s*\{[\s\S]*?\n\}(?=\n\nfunction )/);
 
   assert.ok(fallbackSafety, 'expected Test-InstallerPayloadDirectCopyFallbackSafe to exist');
@@ -225,7 +231,7 @@ test('install.ps1 direct-copy fallback refuses partial temporary managed version
 
 test('install.ps1 stages release archives under the install home instead of process temp', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(
@@ -252,7 +258,7 @@ test('install.ps1 stages release archives under the install home instead of proc
 
 test('install.ps1 tells install-payload when native pre-install cleanup already ran', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(
@@ -269,7 +275,7 @@ test('install.ps1 tells install-payload when native pre-install cleanup already 
 
 test('install.ps1 tells install-payload that installer-owned repair runs after promotion', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(
