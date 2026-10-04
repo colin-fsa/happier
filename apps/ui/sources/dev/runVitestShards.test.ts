@@ -120,7 +120,6 @@ describe('apps/ui runVitestShards', () => {
             'run',
             '--config',
             'vitest.config.ts',
-            '--no-file-parallelism',
             '--reporter',
             'dot',
             '/abs/a.test.ts',
@@ -136,7 +135,19 @@ describe('apps/ui runVitestShards', () => {
                 positionalFilters: [],
                 files: ['/abs/a.test.ts'],
             }),
-        ).toEqual(['run', '--config', 'vitest.config.ts', '--no-file-parallelism', '/abs/a.test.ts']);
+        ).toEqual(['run', '--config', 'vitest.config.ts', '/abs/a.test.ts']);
+    });
+
+    it('leaves configured fork concurrency authoritative at the Vitest boundary', async () => {
+        const { parseCLI } = await import('vitest/node');
+        const args = buildVitestShardRunArgs({
+            configPath: 'vitest.config.ts',
+            passthroughArgs: [],
+            positionalFilters: [],
+            files: ['/abs/a.test.ts', '/abs/b.test.ts', '/abs/c.test.ts'],
+        });
+        const { options } = parseCLI(['vitest', ...args]);
+        expect(options.fileParallelism).not.toBe(false);
     });
 
     it('keeps an option value that is spelled like the dropped path filter', () => {
@@ -151,7 +162,6 @@ describe('apps/ui runVitestShards', () => {
             'run',
             '--config',
             'vitest.config.ts',
-            '--no-file-parallelism',
             '--testNamePattern',
             'sources/x',
             '/abs/a.test.ts',

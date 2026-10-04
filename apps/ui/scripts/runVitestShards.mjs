@@ -102,7 +102,6 @@ export function buildVitestShardRunArgs({ configPath, passthroughArgs, positiona
     'run',
     '--config',
     configPath,
-    '--no-file-parallelism',
     ...optionArgs,
     ...(files ?? []),
   ];
