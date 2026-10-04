@@ -91,14 +91,15 @@ async function ensureTmuxSettingsInUi(params: {
 
     await page.goto(`${uiBaseUrl}/settings/session/runtime`, { waitUntil: 'domcontentloaded' });
 
-    const enabledItem = page.getByTestId('settings-session-tmux-enabled-item');
-    await expect(enabledItem).toHaveCount(1, { timeout: 60_000 });
-    await enabledItem.scrollIntoViewIfNeeded();
+    const terminalHostItem = page.getByTestId('settings-session-terminal-host-item');
+    await expect(terminalHostItem).toHaveCount(1, { timeout: 60_000 });
+    await terminalHostItem.scrollIntoViewIfNeeded();
+    await terminalHostItem.click();
+    const tmuxOption = page.getByTestId('settings-session-terminal-host-option-tmux');
+    await expect(tmuxOption).toBeVisible();
+    await tmuxOption.click();
 
     const sessionNameInput = page.getByTestId('settings-session-tmux-sessionName-input');
-    if ((await sessionNameInput.count()) === 0) {
-        await enabledItem.click();
-    }
     await expect(sessionNameInput).toHaveCount(1, { timeout: 60_000 });
     await sessionNameInput.fill(tmuxSessionName);
 

@@ -42,7 +42,7 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                     onOpenChange={setOpenTerminalHostMenu}
                     items={[
                         { id: 'none', title: t('settingsSession.terminalHostNone') },
-                        { id: 'tmux', title: 'tmux' },
+                        { id: 'tmux', title: 'tmux', testID: 'settings-session-terminal-host-option-tmux' },
                         { id: 'zellij', title: 'Zellij' },
                         { id: 'herdr', title: 'Herdr' },
                     ]}
@@ -54,6 +54,7 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                         }
                     }}
                     itemTrigger={{
+                        itemProps: { testID: 'settings-session-terminal-host-item' },
                         title: t('settingsSession.terminalHostTitle'),
                         subtitle: selectedTerminalHost === 'none'
                             ? t('settingsSession.terminalHostNone')
