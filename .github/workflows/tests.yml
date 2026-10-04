@@ -2,6 +2,8 @@ name: CI — Tests
 
 on:
   pull_request:
+    branches-ignore:
+      - v0.3
   push:
     branches:
       - dev
@@ -576,6 +578,8 @@ jobs:
     env:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
       HAPPIER_UI_VITEST_PARTS: "4"
+      HAPPIER_UI_VITEST_SHARDS: "8"
+      VITEST_UI_MAX_FORKS: "3"
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
