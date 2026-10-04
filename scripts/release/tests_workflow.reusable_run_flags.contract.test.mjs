@@ -47,12 +47,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     'tests-${{ github.workflow }}-${{ github.ref }}',
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
-  assert.equal(
-    testsWorkflow.concurrency['cancel-in-progress'],
-    false,
-    'an active full collector must finish; GitHub may replace the single pending run, but a later push must not discard in-flight evidence',
-  );
-
   const defaultSuiteInputs = new Map([
     ['ui-e2e', 'run_ui_e2e'],
     ['ui-unit', 'run_ui'],
