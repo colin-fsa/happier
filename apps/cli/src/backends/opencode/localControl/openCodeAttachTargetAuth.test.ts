@@ -23,6 +23,7 @@ describe('OpenCode attach target authentication', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.doUnmock('node:fs/promises');
     vi.resetModules();
   });
 
@@ -47,6 +48,20 @@ describe('OpenCode attach target authentication', () => {
         vi.stubEnv('HAPPIER_OPENCODE_SERVER_URL', '');
         vi.stubEnv('HAPPIER_OPENCODE_SERVER_XDG_ROOT_DIR', '');
         vi.resetModules();
+        const pool = join(root, 'opencode', 'managed-servers');
+        const inventoryObserver: { complete: ((entries: unknown) => void) | null } = { complete: null };
+        const startupPoolInventory = new Promise<unknown>((resolve) => { inventoryObserver.complete = resolve; });
+        // Observe the real filesystem boundary without replacing inventory or affinity logic.
+        // The selecting client's background scan must see its original current-account pool
+        // before this fixture adds another account, otherwise its late lock can race teardown.
+        vi.doMock('node:fs/promises', async (importOriginal) => {
+          const actual = await importOriginal<typeof import('node:fs/promises')>();
+          return { ...actual, readdir: async (...args: Parameters<typeof actual.readdir>) => {
+            const entries = await actual.readdir(...args);
+            if (String(args[0]) === pool) inventoryObserver.complete?.(entries);
+            return entries;
+          } };
+        });
         const { resolveOpenCodeManagedServerLaunchFingerprint } = await import('../server/openCodeManagedServerEnv');
         const { runOpenCodeProviderAttach } = await import('../attach/runOpenCodeProviderAttach');
         const { maybeUpdateOpenCodeSessionIdMetadata } = await import('../utils/opencodeSessionIdMetadata');
@@ -56,7 +71,6 @@ describe('OpenCode attach target authentication', () => {
           baseEnv: process.env,
           xdgRootDir: null, isolateConfig: false,
         });
-        const pool = join(root, 'opencode', 'managed-servers');
         await mkdir(pool, { recursive: true });
         if (targetState !== 'missing') await writeFile(join(pool, `${fingerprint}.json`), JSON.stringify({
           baseUrl: 'http://127.0.0.1:4200', pid: 4200, startedAtMs: 1,
@@ -103,6 +117,8 @@ describe('OpenCode attach target authentication', () => {
             expect(identity?.launchEnvFingerprint).toBe(fingerprint);
             selectedFingerprint = identity!.launchEnvFingerprint!;
           } finally { await client.dispose(); }
+          // The real startup scan skips the current fingerprint without filesystem writes.
+          expect(await startupPoolInventory).toEqual([`${fingerprint}.json`]);
           selectingManagedClient = false;
           observedAuthorization.length = 0;
           observedUrls.length = 0;
