@@ -2801,10 +2801,46 @@ jobs:
           name: stress-artifacts
           path: .project/logs/e2e
 
+  unit-summary:
+    name: ${{ matrix.name }}
+    if: always()
+    needs: [ci_plan, trusted_ref_guard, cli, ui-unit]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: cli
+            name: CLI Unit Tests
+            selection: run_cli
+          - lane: ui-unit
+            name: UI Unit Tests
+            selection: run_ui
+    steps:
+      - name: Assert selected unit matrix result
+        env:
+          UNIT_RESULT: ${{ needs[matrix.lane].result }}
+          PLAN_RESULT: ${{ needs.ci_plan.result }}
+          GUARD_RESULT: ${{ needs.trusted_ref_guard.result }}
+          SELECTED: ${{ (inputs.select_jobs_explicitly && inputs[matrix.selection]) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs[matrix.selection] == 'true') }}
+        run: |
+          if [ "$PLAN_RESULT" != success ] || [ "$GUARD_RESULT" != success ]; then
+            echo "Unit check admission failed: plan=$PLAN_RESULT guard=$GUARD_RESULT" >&2
+            exit 1
+          fi
+          if [ "$SELECTED" = true ] && [ "$UNIT_RESULT" != success ]; then
+            echo "Selected unit matrix did not succeed: $UNIT_RESULT" >&2
+            exit 1
+          fi
+          if [ "$UNIT_RESULT" != success ] && [ "$UNIT_RESULT" != skipped ]; then
+            echo "Unit matrix failed: $UNIT_RESULT" >&2
+            exit 1
+          fi
+
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-cli]
+    needs: [ci_plan, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-cli, unit-summary]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

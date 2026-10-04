@@ -71,6 +71,44 @@ async function runInlineCollector(env) {
   }
 }
 
+test('stable unit checks fail closed on admission failures and selected matrix skips', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github/workflows/tests.yml'), 'utf8'));
+  const job = workflow.jobs['unit-summary'];
+  assert.ok(job, 'required unit checks need an always-emitted matrix result owner');
+  assert.equal(job.if, 'always()');
+  assert.equal(job.name, '${{ matrix.name }}');
+  assert.equal(job.strategy['fail-fast'], false);
+  assert.deepEqual(job.strategy.matrix.include, [
+    { lane: 'cli', name: 'CLI Unit Tests', selection: 'run_cli' },
+    { lane: 'ui-unit', name: 'UI Unit Tests', selection: 'run_ui' },
+  ]);
+  for (const { lane } of job.strategy.matrix.include) assert.ok(job.needs.includes(lane));
+  assert.ok(workflow.jobs.ci_summary.needs.includes('unit-summary'));
+  const assertion = job.steps[0];
+  assert.equal(assertion.env.UNIT_RESULT, '${{ needs[matrix.lane].result }}');
+  assert.equal(assertion.env.PLAN_RESULT, '${{ needs.ci_plan.result }}');
+  assert.equal(assertion.env.GUARD_RESULT, '${{ needs.trusted_ref_guard.result }}');
+  assert.equal(assertion.env.SELECTED, "${{ (inputs.select_jobs_explicitly && inputs[matrix.selection]) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs[matrix.selection] == 'true') }}");
+  for (const [selected, result, expected] of [
+    ['true', 'success', 0], ['true', 'skipped', 1], ['true', 'failure', 1],
+    ['true', 'cancelled', 1], ['true', '', 1], ['false', 'skipped', 0],
+    ['false', 'success', 0], ['false', 'failure', 1],
+  ]) {
+    const outcome = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', assertion.run], {
+      encoding: 'utf8',
+      env: { ...process.env, SELECTED: selected, UNIT_RESULT: result, PLAN_RESULT: 'success', GUARD_RESULT: 'success' },
+    });
+    assert.equal(outcome.status, expected, `${selected}/${result}: ${outcome.stderr}`);
+  }
+  for (const [plan, guard] of [['failure', 'success'], ['success', 'skipped'], ['cancelled', 'success']]) {
+    const outcome = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', assertion.run], {
+      encoding: 'utf8',
+      env: { ...process.env, SELECTED: 'false', UNIT_RESULT: 'skipped', PLAN_RESULT: plan, GUARD_RESULT: guard },
+    });
+    assert.equal(outcome.status, 1, `admission ${plan}/${guard}: ${outcome.stderr}`);
+  }
+});
+
 test('reusable tests calls make their run flags authoritative regardless of the caller event', async () => {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const testsWorkflow = YAML.parse(testsRaw, { prettyErrors: true });
