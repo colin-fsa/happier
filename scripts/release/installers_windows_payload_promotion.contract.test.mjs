@@ -111,7 +111,7 @@ test('install.ps1 payload promotion uses the local PowerShell executable instead
 });
 
 for (const runnerTempName of ['runner-temp', 'runner temp']) {
-test(`install.ps1 carries runtime sidecars into an unlocked runner in ${runnerTempName} and cleans it up`, {
+test(`install.ps1 atomically promotes from an unlocked runner in ${runnerTempName} and cleans it up`, {
   skip: process.platform !== 'win32' && 'Requires real Windows executable locking and PowerShell',
 }, async (t) => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
@@ -132,15 +132,11 @@ test(`install.ps1 carries runtime sidecars into an unlocked runner in ${runnerTe
   const runnerTemp = join(scratch, runnerTempName);
   await mkdir(runnerTemp);
   await writeFile(join(runnerTemp, 'sentinel'), 'unrelated file');
-  for (const relative of ['scripts', 'scripts/runtime', 'scripts/shims']) {
-    await mkdir(join(payload, relative), { recursive: true });
-  }
-  for (const relative of ['scripts/process_tree.cjs', 'scripts/runtime/probe.cjs', 'scripts/shims/probe.cjs']) {
-    await writeFile(join(payload, relative), 'runtime marker');
-  }
+  await mkdir(payload);
+  await writeFile(join(payload, 'payload-marker'), 'payload contents');
   // The CLI executable is a genuine external process boundary for the installer.
-  // This native fixture requires adjacent sidecars and renames its input payload,
-  // so neither EXE-only relocation nor running inside the locked payload can pass.
+  // Renaming its input payload proves the runner is detached from the executable
+  // Windows locks. The real compiled CLI embeds its promotion-time process owner.
   const fixtureSource = join(scratch, 'Fixture.cs');
   await writeFile(fixtureSource, `
 using System;
@@ -148,15 +144,7 @@ using System.IO;
 class Fixture {
   static int Main(string[] args) {
     if (args.Length < 2 || args[0] != "self" || args[1] != "__install-payload") return 3;
-    string root = AppDomain.CurrentDomain.BaseDirectory;
-    foreach (string asset in new[] { "scripts/process_tree.cjs", "scripts/runtime/probe.cjs", "scripts/shims/probe.cjs" }) {
-      string file = Path.Combine(root, asset);
-      if (!File.Exists(file) || File.ReadAllText(file) != "runtime marker") {
-        Console.Error.WriteLine("Missing adjacent runtime sidecar: " + file);
-        return 42;
-      }
-    }
-    Console.WriteLine("closure-ready");
+    Console.WriteLine("promotion-ready");
     int payloadIndex = Array.IndexOf(args, "--payload-root");
     if (payloadIndex < 0 || payloadIndex + 1 >= args.Length) return 4;
     string payload = args[payloadIndex + 1];
@@ -181,8 +169,8 @@ class Fixture {
   const result = JSON.parse(execFileSync('pwsh', ['-NoProfile', '-File', script], { encoding: 'utf8' }).trim());
   assert.equal(result.TimedOut, false);
   assert.equal(result.ExitCode, 0, result.Output);
-  assert.match(result.Output, /closure-ready[\s\S]*promoted/);
-  assert.equal(await readFile(join(`${payload}.promoted`, 'scripts/process_tree.cjs'), 'utf8'), 'runtime marker');
+  assert.match(result.Output, /promotion-ready[\s\S]*promoted/);
+  assert.equal(await readFile(join(`${payload}.promoted`, 'payload-marker'), 'utf8'), 'payload contents');
   assert.deepEqual(await readdir(runnerTemp), ['sentinel']);
 });
 }
