@@ -102,7 +102,7 @@ Browser-driven end-to-end tests against the Expo web UI, using the same server-l
 yarn test:e2e:ui
 ```
 
-The command above runs the full browser suite. In the current `dev` CI configuration, ordinary push/PR browser checks select self-contained `@smoke` journeys. The nightly Extended DB workflow and explicitly selected UI E2E in manual/release validation retain the full suite.
+The command above runs the full browser suite. In the current `dev` CI configuration, ordinary push/PR browser checks select self-contained `@smoke` journeys. The nightly Extended DB workflow and explicitly selected UI E2E in manual/release validation run the full suite unless specific spec paths are supplied.
 
 Notes:
 - These tests run Playwright against `expo start --web` and require Playwright browsers to be installed (see Playwright install docs).
