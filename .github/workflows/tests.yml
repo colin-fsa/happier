@@ -1418,6 +1418,10 @@ jobs:
         shell: pwsh
         run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common @happier-dev/release-runtime
 
+      - name: Verify Windows payload promotion
+        shell: pwsh
+        run: node --test scripts/release/installers_windows_payload_promotion.contract.test.mjs
+
       - name: Run unified installer smoke
         shell: pwsh
         env:
