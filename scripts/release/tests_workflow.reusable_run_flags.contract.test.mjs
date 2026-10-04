@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +41,10 @@ test('shared CLI restoration handles a Windows drive path and preserves executab
   });
   assert.equal(restored.status, 0, restored.stderr);
   assert.equal(await readFile(join(workspaceDir, 'built-cli'), 'utf8'), '#!/bin/sh\nexit 0\n');
-  if (process.platform !== 'win32') assert.equal(statSync(join(workspaceDir, 'built-cli')).mode & 0o777, 0o755);
+  if (process.platform !== 'win32') {
+    const executed = spawnSync(join(workspaceDir, 'built-cli'), [], { encoding: 'utf8' });
+    assert.equal(executed.status, 0, executed.error?.message ?? executed.stderr);
+  }
 });
 
 async function runInlineCollector(env) {

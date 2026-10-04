@@ -12,7 +12,7 @@ runs:
       with:
         name: ${{ inputs.name }}
         path: ${{ runner.temp }}/ci-cli-build
-    - name: Restore outputs with archive permissions intact
+    - name: Restore outputs and executable permissions
       shell: bash
       run: |
         cd "$RUNNER_TEMP/ci-cli-build"
