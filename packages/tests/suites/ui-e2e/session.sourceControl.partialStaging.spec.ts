@@ -88,7 +88,7 @@ test.describe('ui e2e: SCM partial staging + commit + discard', () => {
   });
 
   test('stages selected lines, commits, keeps remaining changes, and supports discard/revert UI', async ({ page }) => {
-    test.setTimeout(1_200_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

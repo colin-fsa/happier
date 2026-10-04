@@ -84,7 +84,7 @@ test.describe('ui e2e: Updates surface screens (R13 e)', () => {
   });
 
   test('live desktop entry: available → downloading % → ready, then a failed download', async ({ page }) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -141,7 +141,7 @@ test.describe('ui e2e: Updates surface screens (R13 e)', () => {
   });
 
   test('every row state, desktop and phone widths, light and dark (developer preview)', async ({ page }) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await createAccount(page, uiBaseUrl);

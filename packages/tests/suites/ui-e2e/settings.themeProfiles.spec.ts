@@ -107,7 +107,7 @@ test.describe('ui e2e: custom theme profiles', () => {
   });
 
   test('creates, activates, exports, and imports a custom theme profile through Appearance settings', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui fixture');
 
     await page.setViewportSize({ width: 390, height: 844 });

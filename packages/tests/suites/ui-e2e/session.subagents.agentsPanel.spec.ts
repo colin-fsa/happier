@@ -76,7 +76,7 @@ test.describe('ui e2e: session subagents agents panel', () => {
   });
 
   test('shows the Agents surface on a fresh session and records execution-run rows after quick launch', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

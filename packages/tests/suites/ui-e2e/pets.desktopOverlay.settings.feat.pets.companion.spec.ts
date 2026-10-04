@@ -67,7 +67,7 @@ test.describe('ui e2e: pets desktop overlay settings', () => {
   });
 
   test('enables the desktop overlay setting in a Tauri shell and exposes a transparent overlay route on web', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     const testDir = resolve(join(suiteDir, 'desktop-overlay-setting'));

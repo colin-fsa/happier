@@ -221,7 +221,7 @@ test.describe('ui e2e: session organization pinned bootstrap', () => {
   });
 
   test('loads more than 100 server-backed pins in the pinned section from the initial session list response', async ({ page }) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
 
     const pinnedSessionIds = await seedSessions({

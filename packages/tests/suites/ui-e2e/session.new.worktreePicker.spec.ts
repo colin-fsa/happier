@@ -135,7 +135,7 @@ test.describe('ui e2e: /new worktree picker (Phase 5 SelectionList migration)', 
         if (!server || !ui || !uiBaseUrl) {
             throw new Error('test infra failed to start');
         }
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 240_000);
         daemon = await authenticateAndStartDaemon({

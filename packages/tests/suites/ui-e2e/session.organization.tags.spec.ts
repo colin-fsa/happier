@@ -195,7 +195,7 @@ test.describe('ui e2e: session organization tags', () => {
   });
 
   test('creates, persists, filters, and removes a server-backed session tag assignment', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
 
     const [taggedSessionId, untaggedSessionId] = await seedSessions({

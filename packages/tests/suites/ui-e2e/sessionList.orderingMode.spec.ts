@@ -215,7 +215,7 @@ test.describe('ui e2e: session list ordering mode', () => {
   });
 
   test('switches updated and custom modes without mutating dormant custom order', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();

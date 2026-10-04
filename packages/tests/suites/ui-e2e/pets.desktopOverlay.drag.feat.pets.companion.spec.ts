@@ -175,7 +175,7 @@ test.describe('ui e2e: pets desktop overlay drag bridge', () => {
   });
 
   test('drags the mascot through the desktop bridge with pointer capture and release velocity', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     const testDir = resolve(join(suiteDir, 'desktop-overlay-drag'));

@@ -120,7 +120,7 @@ test.describe('ui e2e: action approvals (composer card)', () => {
   });
 
   test('approves a session-scoped action approval from the composer card', async ({ page }, testInfo) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't1-composer-action-approval'));

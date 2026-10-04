@@ -203,7 +203,7 @@ test.describe('UI e2e: AgentInput slash command menu', () => {
   test('anchors the command menu to the textarea caret and inserts slash, file, and skill mentions', async ({
     page,
   }) => {
-    test.setTimeout(600_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

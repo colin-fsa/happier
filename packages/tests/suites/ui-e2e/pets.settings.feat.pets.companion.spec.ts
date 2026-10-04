@@ -65,7 +65,7 @@ test.describe('ui e2e: pets settings', () => {
   });
 
   test('supports daemon-local pet import and hides account sync controls when pets sync is disabled', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     const testDir = resolve(join(suiteDir, 'settings-local-import'));

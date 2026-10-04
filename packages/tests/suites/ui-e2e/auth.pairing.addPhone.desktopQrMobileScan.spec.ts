@@ -103,7 +103,7 @@ test.describe('ui e2e: add your phone (desktop QR → mobile scan)', () => {
   });
 
   test('shows pairing QR, accepts pairing request, and approves (mobile receives token)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server) throw new Error('missing server fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
     const startedServer = server;

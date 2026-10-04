@@ -63,7 +63,7 @@ test.describe('ui e2e: mobile session cockpit source control', () => {
   });
 
   test('moves between Files, Git, Review, details, and Chat through the default phone cockpit', async ({ page }) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 390, height: 844 });

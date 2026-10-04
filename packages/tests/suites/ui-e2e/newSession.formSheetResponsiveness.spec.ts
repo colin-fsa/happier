@@ -95,7 +95,7 @@ test.describe('ui e2e: new-session formSheet responsiveness', () => {
     });
 
     test('opens from the sessions surface and closes through the stable cancel affordance', async ({ page }) => {
-        test.setTimeout(360_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 240_000);

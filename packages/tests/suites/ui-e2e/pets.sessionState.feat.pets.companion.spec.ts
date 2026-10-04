@@ -118,7 +118,7 @@ test.describe('ui e2e: pets session state mapping', () => {
   });
 
   test('maps idle and active session states onto the companion state test contract', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

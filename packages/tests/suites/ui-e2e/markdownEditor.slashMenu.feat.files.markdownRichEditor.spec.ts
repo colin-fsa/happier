@@ -94,7 +94,7 @@ test.describe('UI e2e: markdown rich editor slash menu', () => {
   test('inserts heading and bullet blocks from the rich editor slash menu and saves markdown', async ({
     page,
   }) => {
-    test.setTimeout(600_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

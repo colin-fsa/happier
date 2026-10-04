@@ -198,7 +198,7 @@ test.describe('ui e2e: settings analytics', () => {
   });
 
   test('emits safe account, local, feature, and compact-view analytics from settings flows', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui fixture');
 
     const analyticsRequests: CapturedAnalyticsRequest[] = [];

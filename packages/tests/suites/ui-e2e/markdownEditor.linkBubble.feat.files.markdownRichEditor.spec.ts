@@ -155,7 +155,7 @@ test.describe('UI e2e: markdown rich editor link bubble', () => {
   test('opens, edits, saves, and unlinks a markdown link from the rich editor bubble', async ({
     page,
   }) => {
-    test.setTimeout(600_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

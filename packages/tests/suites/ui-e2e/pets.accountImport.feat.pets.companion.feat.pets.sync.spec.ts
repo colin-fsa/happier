@@ -66,7 +66,7 @@ test.describe('ui e2e: pets account import', () => {
   });
 
   test('imports a detected pet into the account library when pets sync is enabled', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     const testDir = resolve(join(suiteDir, 'account-import'));

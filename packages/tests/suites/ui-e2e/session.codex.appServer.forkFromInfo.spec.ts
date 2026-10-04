@@ -231,7 +231,7 @@ test.describe('ui e2e: Codex app-server fork from session info', () => {
     });
 
     test('forks a Codex app-server session from the session info surface with replay disabled', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
         await page.setViewportSize({ width: 1440, height: 900 });

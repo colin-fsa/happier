@@ -54,7 +54,7 @@ test.describe('ui e2e: setup control panel flow', () => {
     });
 
     test('shows the desktop-only setup notice on web', async ({ page }) => {
-        test.setTimeout(300_000);
+        test.setTimeout(180_000);
         if (!uiBaseUrl) throw new Error('missing ui base url');
 
         await page.setViewportSize({ width: 1440, height: 900 });

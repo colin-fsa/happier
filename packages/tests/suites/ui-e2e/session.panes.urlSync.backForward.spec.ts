@@ -72,7 +72,7 @@ test.describe('ui e2e: session multi-pane URL sync', () => {
   });
 
   test('reconciles right/details panes from URL and supports back/forward', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
