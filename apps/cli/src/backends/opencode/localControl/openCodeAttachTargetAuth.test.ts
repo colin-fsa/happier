@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { expectTerminalNativeInvocation, terminalLauncherBoundary } from '@/testkit/process/terminalLauncher';
 
 import {
   resolveOpenCodeAttachChildEnv,
@@ -121,6 +122,7 @@ describe('OpenCode attach target authentication', () => {
         }
         const child = new ChildProcess();
         const spawnProcess = vi.fn(() => {
+          terminalLauncherBoundary(child);
           setImmediate(() => child.emit('exit', 0, null));
           return child;
         });
@@ -149,14 +151,14 @@ describe('OpenCode attach target authentication', () => {
             setImmediate(() => ownedChild.emit('exit', 0, null));
             return true;
           });
-          const ownedSpawn = vi.fn(() => ownedChild);
+          const ownedSpawn = vi.fn(() => terminalLauncherBoundary(ownedChild));
           const supervisor = createOpenCodeTuiSupervisor({ command: 'opencode-fixture', commandArgs: [], env: {},
             spawnProcess: ownedSpawn as unknown as typeof spawn });
           const target = { baseUrl: 'http://127.0.0.1:4200', directory: root, sessionId: 'native-target-session',
             managedServerLaunchFingerprint: selectedFingerprint };
           await expect(supervisor.attach(target)).resolves.toBe(true);
           expect(observedAuthorization).toEqual([targetAuthorization]);
-          expect(ownedSpawn).toHaveBeenCalledWith('opencode-fixture',
+          await expectTerminalNativeInvocation(ownedSpawn.mock.calls, 'opencode-fixture',
             ['--server', target.baseUrl, '--session', target.sessionId, root],
             expect.objectContaining({ env: { OPENCODE_PASSWORD: 'target-fixture-password' } }));
           await supervisor.dispose();
@@ -229,7 +231,7 @@ describe('OpenCode attach target authentication', () => {
           prepareProviderCliAttach: async ({ providerSessionId }) => ({ ok: true, providerSessionId }),
         })).resolves.toBe(0);
         expect(observedAuthorization).toEqual([targetAuthorization]);
-        expect(spawnProcess).toHaveBeenCalledWith('opencode-fixture',
+        await expectTerminalNativeInvocation(spawnProcess.mock.calls, 'opencode-fixture',
           ['--server', managed ? 'http://127.0.0.1:4200' : 'http://127.0.0.1:4200/', '--session', 'native-target-session', root],
           expect.objectContaining({ env: { OPENCODE_PASSWORD: 'target-fixture-password' } }));
       });

@@ -2,7 +2,8 @@ import http from 'node:http';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/projectPath', () => ({
+vi.mock('@/projectPath', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/projectPath')>(),
   projectPath: () => '/missing-bunfs-root',
 }));
 

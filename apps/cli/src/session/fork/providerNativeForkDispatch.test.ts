@@ -134,6 +134,7 @@ describe('dispatchProviderNativeFork', () => {
       parentSessionId: 'happy_parent',
       parentRawSession: {},
       parentMetadata: {
+        path: '/tmp/project',
         opencodeSessionId: 'legacy_parent_1',
         opencodeBackendMode: 'acp',
         opencodeServerBaseUrl: 'http://127.0.0.1:1111',
@@ -160,6 +161,8 @@ describe('dispatchProviderNativeFork', () => {
       parentRawSession: {},
       directory: '/tmp/project',
       parentOpenCodeSessionId: 'oc_parent_1',
+      baseUrlOverride: 'http://127.0.0.1:4096/',
+      managedServerLaunchFingerprint: undefined,
       forkPoint: { type: 'seq', upToSeqInclusive: 42 },
     });
     expect(result).toMatchObject({
@@ -190,6 +193,7 @@ describe('dispatchProviderNativeFork', () => {
         parentSessionId: 'happy_parent',
         parentRawSession: {},
         parentMetadata: {
+          path: '/tmp/project',
           agentRuntimeDescriptorV1: {
             v: 1,
             providerId: 'opencode',
