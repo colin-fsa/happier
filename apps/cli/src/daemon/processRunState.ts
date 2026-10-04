@@ -1,12 +1,8 @@
 import { execFile } from 'node:child_process';
-import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
-import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
+import { isPidAliveBySignal as probePidAliveBySignal } from '../../scripts/process_tree.cjs';
 
 const execFileAsync = promisify(execFile);
-const processOwner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('scripts', 'process_tree.cjs')) as {
-  isPidAliveBySignal: (pid: number) => boolean;
-};
 
 /**
  * Coarse process run state for daemon liveness decisions.
@@ -23,7 +19,7 @@ const processOwner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('
 export type ProcessRunState = 'dead' | 'servable' | 'stopped' | 'zombie';
 
 export function isPidAliveBySignal(pid: number): boolean {
-  return processOwner.isPidAliveBySignal(pid);
+  return probePidAliveBySignal(pid);
 }
 
 function classifyPosixStateChar(stateOutput: string): ProcessRunState | null {
