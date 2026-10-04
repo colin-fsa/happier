@@ -39,6 +39,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ui-e2e-nightly:
+    if: ${{ github.event_name == 'schedule' }}
+    name: Full UI E2E nightly
+    uses: ./.github/workflows/tests.yml
+    with:
+      select_jobs_explicitly: true
+      run_ui_e2e: true
+      run_ui: false
+      run_shared_packages: false
+      run_server: false
+      run_server_db_contract: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_installers_smoke: false
+      run_binary_smoke: false
+
   e2e-postgres:
     if: ${{ !inputs.select_jobs_explicitly || inputs.run_e2e_postgres }}
     name: Core E2E (Postgres)

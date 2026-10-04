@@ -374,17 +374,18 @@ jobs:
   ui-e2e:
     if: ${{ (inputs.select_jobs_explicitly && inputs.run_ui_e2e) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_ui_e2e == 'true') }}
     needs: [ci_plan, trusted_ref_guard]
-    name: UI E2E (Playwright) / shard ${{ matrix.shard }}/12
+    name: UI E2E (Playwright) / shard ${{ matrix.shard }}
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || '[1,2,3,4,5,6,7,8,9,10,11,12]') }}
+        shard: ${{ fromJSON(inputs.ui_e2e_specs != '' && '[1]' || (!inputs.select_jobs_explicitly && (github.event_name == 'push' || github.event_name == 'pull_request')) && '[1,2,3,4]' || '[1,2,3,4,5,6,7,8,9,10,11,12]') }}
     runs-on: ${{ needs.trusted_ref_guard.outputs.ubuntu_2204 }}
     timeout-minutes: 120
     env:
       # UI E2E boots Expo web; keep web assets available to avoid CI-only runtime surprises.
       HAPPIER_UI_VENDOR_WEB_ASSETS: "1"
       UI_E2E_SPECS: ${{ inputs.ui_e2e_specs }}
+      UI_E2E_SMOKE: ${{ !inputs.select_jobs_explicitly && (github.event_name == 'push' || github.event_name == 'pull_request') }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -434,6 +435,10 @@ jobs:
       - name: Run UI E2E
         run: |
           set -euo pipefail
+          if [ "$UI_E2E_SMOKE" = "true" ]; then
+            yarn -s test:e2e:ui -- --grep @smoke --shard "${{ matrix.shard }}/4"
+            exit 0
+          fi
           if [ -z "$UI_E2E_SPECS" ]; then
             selected_specs="$(node scripts/ci/select-ui-e2e-shard.mjs --shard "${{ matrix.shard }}/12")"
             mapfile -t specs <<< "$selected_specs"
@@ -464,7 +469,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}-of-12
+          name: ui-e2e-playwright-artifacts-shard-${{ matrix.shard }}
           compression-level: 0
           path: |
             packages/tests/.project/logs/e2e/ui-playwright
