@@ -54,6 +54,7 @@ test('the exact server-v0.2.1 gate accepts an optional immutable candidate check
     type: 'string',
   });
   assert.ok(job.needs.includes('trusted_ref_guard'));
+  assert.ok(job.needs.includes('build-cli'));
   assert.equal(validation?.if, "${{ inputs.checkout_sha != '' }}");
   assert.equal(validation?.env?.CHECKOUT_SHA, '${{ inputs.checkout_sha }}');
   assert.equal(checkout?.with?.ref, "${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}");
