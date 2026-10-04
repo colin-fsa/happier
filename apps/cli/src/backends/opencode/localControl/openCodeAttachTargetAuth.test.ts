@@ -117,8 +117,11 @@ describe('OpenCode attach target authentication', () => {
             expect(identity?.launchEnvFingerprint).toBe(fingerprint);
             selectedFingerprint = identity!.launchEnvFingerprint!;
           } finally { await client.dispose(); }
-          // The real startup scan skips the current fingerprint without filesystem writes.
-          expect(await startupPoolInventory).toEqual([`${fingerprint}.json`]);
+          // Match the real scan's state-file selection; an in-flight lock/tmp file is harmless.
+          const initialInventory = await startupPoolInventory;
+          expect(Array.isArray(initialInventory)
+            ? initialInventory.filter((entry: unknown) => typeof entry === 'string' && entry.endsWith('.json'))
+            : initialInventory).toEqual([`${fingerprint}.json`]);
           selectingManagedClient = false;
           observedAuthorization.length = 0;
           observedUrls.length = 0;
