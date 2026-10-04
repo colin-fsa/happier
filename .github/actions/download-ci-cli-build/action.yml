@@ -15,5 +15,6 @@ runs:
     - name: Restore outputs and executable permissions
       shell: bash
       run: |
+        workspace_dir="$(cd "$GITHUB_WORKSPACE" && pwd)"
         cd "$RUNNER_TEMP/ci-cli-build"
-        tar -xf ci-cli-build.tar -C "$GITHUB_WORKSPACE"
+        tar -xf ci-cli-build.tar -C "$workspace_dir"
