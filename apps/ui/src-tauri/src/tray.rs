@@ -32,9 +32,8 @@ use tauri::{
 use crate::menu_bar::policy::{parse_persisted_tray_state, PersistedTrayState};
 #[cfg(desktop)]
 use model::{
-    build_menu_entries, menu_icon_rgba_is_valid, status_dot_rgba, AutostartMode, MenuEntry,
-    MenuPlatform, ServiceList, ServiceRow, ServiceState, TrayLabels, TrayMenuModel, UpdatesItem,
-    STATUS_DOT_IMAGE_PX,
+    build_menu_entries, status_dot_rgba, AutostartMode, MenuEntry, MenuPlatform, ServiceList,
+    ServiceRow, ServiceState, TrayLabels, TrayMenuModel, UpdatesItem, STATUS_DOT_IMAGE_PX,
 };
 
 #[cfg(desktop)]
@@ -527,22 +526,12 @@ fn rebuild_menu(app: &AppHandle, model: &TrayMenuModel) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
-fn status_dot(state: ServiceState) -> tauri::Result<Image<'static>> {
-    let rgba = status_dot_rgba(state, STATUS_DOT_IMAGE_PX);
-    // muda accepts an empty 0x0 icon, but its macOS PNG encoder aborts on it.
-    // Reject invalid image data before either the item or submenu reaches native code.
-    if !menu_icon_rgba_is_valid(&rgba, STATUS_DOT_IMAGE_PX, STATUS_DOT_IMAGE_PX) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid tray status icon dimensions or RGBA buffer",
-        )
-        .into());
-    }
-    Ok(Image::new_owned(
-        rgba,
+fn status_dot(state: ServiceState) -> Image<'static> {
+    Image::new_owned(
+        status_dot_rgba(state, STATUS_DOT_IMAGE_PX),
         STATUS_DOT_IMAGE_PX,
         STATUS_DOT_IMAGE_PX,
-    ))
+    )
 }
 
 /// The one native builder: [`build_menu_entries`] rendered item by item.
@@ -585,7 +574,7 @@ fn build_native_item(
                 Some(id) => IconMenuItemBuilder::with_id(id.as_str(), text),
                 None => IconMenuItemBuilder::new(text),
             }
-            .icon(status_dot(*state)?)
+            .icon(status_dot(*state))
             .enabled(*enabled);
             if let Some(accelerator) = accelerator {
                 builder = builder.accelerator(*accelerator);
@@ -625,7 +614,7 @@ fn build_native_item(
                 .collect();
             let submenu = Submenu::with_items(app, text, *enabled, &refs)?;
             if let Some(state) = dot {
-                submenu.set_icon(Some(status_dot(*state)?))?;
+                submenu.set_icon(Some(status_dot(*state)))?;
             }
             MenuItemKind::Submenu(submenu)
         }

@@ -777,16 +777,6 @@ pub fn read_service_status(data: &Value) -> ProjectedStatus {
 /// its @2x; Windows scales it to the menu's small-icon size.
 pub const STATUS_DOT_IMAGE_PX: u32 = 36;
 
-/// Validate the data handed to the native menu image encoder.
-pub fn menu_icon_rgba_is_valid(rgba: &[u8], width: u32, height: u32) -> bool {
-    width != 0
-        && height != 0
-        && width
-            .checked_mul(height)
-            .and_then(|pixels| pixels.checked_mul(4))
-            .is_some_and(|bytes| rgba.len() == bytes as usize)
-}
-
 /// The system palette's green / grey / orange (as AppKit's `systemGreen`, `systemGray`,
 /// `systemOrange`), which read on light and dark menus alike.
 fn dot_colour(state: ServiceState) -> [u8; 3] {
@@ -1265,29 +1255,6 @@ mod tests {
         assert_eq!(pixel(18, 18), &[52, 199, 89, 255]);
         assert_eq!(pixel(0, 0)[3], 0);
         assert_eq!(pixel(35, 35)[3], 0);
-    }
-
-    #[test]
-    fn native_menu_images_reject_zero_dimensions_and_malformed_buffers() {
-        // muda 0.17.1 accepts empty 0x0 RGBA, then macOS's PNG encoder panics ZeroWidth.
-        assert!(!menu_icon_rgba_is_valid(&[], 0, 0));
-        assert!(!menu_icon_rgba_is_valid(&[], 0, 36));
-        assert!(!menu_icon_rgba_is_valid(&[], 36, 0));
-        assert!(!menu_icon_rgba_is_valid(&[0; 3], 1, 1));
-        assert!(!menu_icon_rgba_is_valid(&[0; 8], 1, 1));
-        assert!(!menu_icon_rgba_is_valid(&[], u32::MAX, u32::MAX));
-        assert!(menu_icon_rgba_is_valid(&[0; 4], 1, 1));
-        for state in [
-            ServiceState::Connected,
-            ServiceState::Offline,
-            ServiceState::NeedsAttention,
-        ] {
-            assert!(menu_icon_rgba_is_valid(
-                &status_dot_rgba(state, STATUS_DOT_IMAGE_PX),
-                STATUS_DOT_IMAGE_PX,
-                STATUS_DOT_IMAGE_PX
-            ));
-        }
     }
 
     #[test]

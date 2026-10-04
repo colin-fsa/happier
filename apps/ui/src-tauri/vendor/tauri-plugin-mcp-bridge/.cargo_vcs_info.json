@@ -1,0 +1,6 @@
+{
+  "git": {
+    "sha1": "8a6267615d42707478e5ad528addde0307c4affc"
+  },
+  "path_in_vcs": "packages/tauri-plugin-mcp-bridge"
+}
