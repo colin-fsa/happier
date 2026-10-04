@@ -68,7 +68,8 @@ describe('setup ownership guards', () => {
      * Exactly the surfaces where a person chooses one relay for this device call it: the connection
      * status control, the onboarding `/setup` relay pick and custom-relay add, and Settings › Server
      * (profile pick, Add — including a notification-prefilled form the person still submits — and a
-     * confirmed Reset). Deep-link auto-add, group selection,
+     * confirmed Reset), and a background-service relay chosen from the desktop tray.
+     * Deep-link auto-add, group selection,
      * notification routing, voice and session navigation keep the raw switch and arm nothing.
      */
     it('keeps the direct-selection operation to the explicit relay-choice surfaces (R8/INV7)', () => {
@@ -81,6 +82,7 @@ describe('setup ownership guards', () => {
             'app/(app)/setup/index.tsx',
             'components/navigation/ConnectionStatusControl.tsx',
             'components/settings/server/hooks/useServerSettingsScreenController.ts',
+            'desktop/tray/DesktopTrayRuntime.tsx',
             'setup/directRelaySelectionIntent.ts',
         ]);
     });

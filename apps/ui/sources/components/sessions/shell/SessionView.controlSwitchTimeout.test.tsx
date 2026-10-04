@@ -301,6 +301,7 @@ describe('SessionView (control switch timeout)', () => {
   function resetSession(overrides: Partial<ReturnType<typeof createSessionFixture>> = {}) {
     Object.assign(sessionState.session, createSessionFixture({
       id: 's1',
+      active: true,
       metadata: null,
       accessLevel: 'edit',
       canApprovePermissions: true,
@@ -462,6 +463,7 @@ describe('SessionView (control switch timeout)', () => {
   it('offers switch-to-remote for selected connected authentication despite ambient CLI logout', async () => {
     Object.assign(sessionState.session, createSessionFixture({
       id: 's1',
+      active: true,
       accessLevel: 'edit',
       canApprovePermissions: true,
       agentState: { controlledByUser: true },
