@@ -59,6 +59,31 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
+    it('hides empty placeholders while retaining measured, reset-only, and pinned windows', () => {
+        const meters = [
+            meter({ meterId: 'full', label: 'Full', utilizationPct: 0 }),
+            meter({ meterId: 'empty', label: 'Empty', utilizationPct: 100 }),
+            meter({ meterId: 'placeholder', label: 'Placeholder', status: 'unavailable' }),
+            meter({ meterId: 'reset', label: 'Reset', status: 'unavailable', resetsAt: 62_000 }),
+            meter({ meterId: 'expired', label: 'Expired', status: 'unavailable', resetsAt: 1_000 }),
+            meter({ meterId: 'pinned', label: 'Pinned', status: 'unavailable' }),
+        ];
+        const displayFormatter = { ...formatter, unavailable: () => 'Unavailable' };
+        const rows = buildConnectedServiceQuotaGaugeMeterRows(meters, 2_000, displayFormatter, ['pinned']);
+        expect(rows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset', 'pinned']);
+        expect(rows.map((row) => row.remainingPct)).toEqual([100, 0, null, null]);
+        expect(rows.find((row) => row.meterId === 'pinned')?.detailRightLabel).toBe('Unavailable');
+        expect(rows.find((row) => row.meterId === 'reset')?.resetLabel).toBe('1m');
+
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot(meters), windowMode: 'most_constrained', nowMs: 2_000,
+            formatter: displayFormatter, additionalMeterIds: ['pinned'],
+        });
+        expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset', 'pinned']);
+        expect(vm?.remainingPct).toBe(0);
+        expect(vm?.usageRings.map((ring) => ring.meterId)).toEqual(['empty']);
+        expect(buildConnectedServiceQuotaGaugeMeterRows([meters[2]!], 2_000, displayFormatter)).toEqual([]);
+    });
     it('keeps unmeasured reported windows in details even when no composer ring can be ranked', () => {
         const unknown = meter({ meterId: 'reached', label: 'Reached', status: 'unavailable', resetsAt: 62_000, details: { limitCategory: 'usage_limit' } });
         expect(buildConnectedServiceQuotaGaugeMeterRows([unknown], 2_000, formatter)).toMatchObject([
