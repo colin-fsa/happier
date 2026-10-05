@@ -69,6 +69,7 @@ export async function sendVoiceTextTurn(params: {
     resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId })
     ?? resolveVoiceSessionBindingByConversationSessionId({ conversationSessionId: sessionId })
     ?? null;
+  const conversationSessionId = sessionBinding?.conversationSessionId ?? null;
   const syntheticTranscriptBinding = resolveVoiceSessionBindingByControlSessionId({ controlSessionId: sessionId });
   const syntheticConversationSessionId =
     syntheticTranscriptBinding?.transcriptMode === 'synthetic'
@@ -79,11 +80,11 @@ export async function sendVoiceTextTurn(params: {
     ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId);
 
   if (conversationMode === 'agent' && !params.durableDispatch) {
-    if (!syntheticConversationSessionId) {
+    if (!conversationSessionId) {
       throw new Error('voice_session_binding_required');
     }
     const result = await submitDurableVoiceTextTurn({
-      conversationSessionId: syntheticConversationSessionId,
+      conversationSessionId,
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async (durableDispatch) => {
