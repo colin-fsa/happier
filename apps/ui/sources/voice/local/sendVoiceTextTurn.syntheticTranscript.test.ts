@@ -12,6 +12,7 @@ const submitMessage = vi.fn();
 const enqueuePendingMessage = vi.fn();
 let conversationMode: 'agent' | 'direct_session' = 'agent';
 let voiceAgentBackend: 'daemon' | 'openai_compat' = 'daemon';
+let transcriptMode: 'synthetic' | 'native_session' = 'synthetic';
 
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
@@ -20,7 +21,7 @@ vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
           adapterId: 'local_conversation',
           controlSessionId: 'voice-global',
           conversationSessionId: 'carrier-s1',
-          transcriptMode: 'synthetic',
+          transcriptMode,
           targetSessionId: 's1',
           updatedAt: 1,
         }
@@ -128,6 +129,7 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     }));
     conversationMode = 'agent';
     voiceAgentBackend = 'daemon';
+    transcriptMode = 'synthetic';
   });
 
   it('submits direct-session voice input durably before immediate provider dispatch', async () => {
@@ -198,6 +200,46 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       text: 'I found Claude and Codex.',
     });
     expect(appendNote).not.toHaveBeenCalled();
+  });
+
+  it('dispatches daemon voice turns through a native-session binding', async () => {
+    transcriptMode = 'native_session';
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    const sendTurn = vi.fn(async () => ({ assistantText: 'I found Claude and Codex.', actions: [] }));
+
+    await sendVoiceTextTurn({
+      sessionId: 'voice-global',
+      settings: {},
+      userText: 'list the backends',
+      playbackController: {
+        registerStopper: () => () => {},
+        interrupt: () => {},
+        captureEpoch: () => 1,
+        isEpochCurrent: () => true,
+      },
+      voiceAgentSessions: { sendTurn },
+    });
+
+    const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
+    expect(enqueuePendingMessage).toHaveBeenCalledWith(
+      'carrier-s1',
+      'list the backends',
+      undefined,
+      undefined,
+      expect.objectContaining({ localId }),
+    );
+    expect(sendTurn).toHaveBeenCalledWith(
+      'voice-global',
+      'list the backends',
+      {
+        userTranscript: {
+          mode: 'persist',
+          localId,
+        },
+      },
+    );
+    expect(appendUser).not.toHaveBeenCalled();
+    expect(appendAssistant).not.toHaveBeenCalled();
   });
 
   it('durably enqueues synthetic speech input before one exact local-agent dispatch', async () => {
