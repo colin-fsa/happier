@@ -547,6 +547,11 @@ describe.skipIf(!daemonIntegrationSuiteEnabled)('Daemon Integration Tests', { ti
       intervalMs: 250,
       label: 'daemon state cleanup after HTTP stop',
     });
+    if (!daemonPid) {
+      throw new Error('Expected daemon PID from beforeEach');
+    }
+    // Publication disappears before asynchronous shutdown releases the process lock.
+    await waitForDaemonExit(daemonPid, PROCESS_EXIT_WAIT);
   });
 
   it('should track both daemon-spawned and terminal sessions', { timeout: 60_000 }, async () => {

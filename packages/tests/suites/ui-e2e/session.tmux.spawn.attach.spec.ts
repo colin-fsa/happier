@@ -91,14 +91,15 @@ async function ensureTmuxSettingsInUi(params: {
 
     await page.goto(`${uiBaseUrl}/settings/session/runtime`, { waitUntil: 'domcontentloaded' });
 
-    const enabledItem = page.getByTestId('settings-session-tmux-enabled-item');
-    await expect(enabledItem).toHaveCount(1, { timeout: 60_000 });
-    await enabledItem.scrollIntoViewIfNeeded();
+    const terminalHostItem = page.getByTestId('settings-session-terminal-host-item');
+    await expect(terminalHostItem).toHaveCount(1, { timeout: 60_000 });
+    await terminalHostItem.scrollIntoViewIfNeeded();
+    await terminalHostItem.click();
+    const tmuxOption = page.getByTestId('settings-session-terminal-host-option-tmux');
+    await expect(tmuxOption).toBeVisible();
+    await tmuxOption.click();
 
     const sessionNameInput = page.getByTestId('settings-session-tmux-sessionName-input');
-    if ((await sessionNameInput.count()) === 0) {
-        await enabledItem.click();
-    }
     await expect(sessionNameInput).toHaveCount(1, { timeout: 60_000 });
     await sessionNameInput.fill(tmuxSessionName);
 
@@ -174,6 +175,7 @@ test.describe('ui e2e: tmux spawn → attach', () => {
     });
 
     test('starts and resumes a UI-created session in tmux and can attach via CLI', async ({ page }) => {
+        // CI 36709793378: this journey passed in 198s; retain its longer test budget.
         test.setTimeout(900_000);
         if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 

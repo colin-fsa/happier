@@ -1,9 +1,12 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Credentials } from '@/persistence';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
 
@@ -118,7 +121,12 @@ vi.mock('@/rpc/handlers/killSession', () => ({
   registerKillSessionHandler: vi.fn(),
 }));
 
+// Load the real runtime graph during collection, outside individual lifecycle deadlines.
+const { runCodex } = await import('./runCodex');
+
 describe('runCodex fast-start', () => {
+  let executableFixtureDir: string | undefined;
+  let executableEnv: ReturnType<typeof createEnvKeyScope> | undefined;
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     void code;
     return undefined as never;
@@ -128,7 +136,6 @@ describe('runCodex fast-start', () => {
     const prev = process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE;
     process.env.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = 'codex-acp missing; falling back to mcp';
 
-    const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
 
     let sessionRef: any = null;
@@ -165,7 +172,6 @@ describe('runCodex fast-start', () => {
 
     process.env.HAPPIER_CODEX_ACP_BIN = join(tmpdir(), `happier-missing-codex-acp-${randomUUID()}`);
 
-    const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
 
     let sessionRef: any = null;
@@ -205,7 +211,6 @@ describe('runCodex fast-start', () => {
   });
 
   it('seeds the Happy session path from an explicit directory override', async () => {
-    const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
 
     initializeBackendRunSessionImpl = async (opts: any) => {
@@ -234,13 +239,36 @@ describe('runCodex fast-start', () => {
     }
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     localStarted = createDeferred<void>();
     localExit = createDeferred<{ type: 'exit'; code: number }>();
     initResolved = false;
     codexLocalLauncherSpy.mockClear();
     initializeBackendRunSessionSpy.mockClear();
     initializeBackendRunSessionImpl = null;
+    executableEnv = createEnvKeyScope(['HAPPIER_CODEX_ACP_BIN', 'HAPPIER_CODEX_APP_SERVER_BIN']);
+    executableFixtureDir = await createTempDir('happier-codex-fast-start-');
+    // The OS executable boundary is available, with exclusive-local capability;
+    // no ambient provider install or shared-control runtime belongs to these cases.
+    const executable = await writeExecutableShim({
+      dir: executableFixtureDir,
+      fileName: 'codex.mjs',
+      contents: `#!/usr/bin/env node
+if (process.argv.includes('--version')) {
+  console.log('codex-cli 0.130.0');
+  process.exit(0);
+}
+throw new Error('Unexpected vendor launch in fast-start fixture');
+`,
+    });
+    executableEnv.patch({ HAPPIER_CODEX_ACP_BIN: executable, HAPPIER_CODEX_APP_SERVER_BIN: executable });
+  });
+
+  afterEach(async () => {
+    executableEnv?.restore();
+    if (executableFixtureDir) await removeTempDir(executableFixtureDir);
+    executableFixtureDir = undefined;
+    executableEnv = undefined;
   });
 
   afterAll(() => {
@@ -253,7 +281,6 @@ describe('runCodex fast-start', () => {
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
 
-    const { runCodex } = await import('./runCodex');
     const { logger } = await import('@/ui/logger');
 
     const credentials = { token: 'test' } as Credentials;
@@ -302,11 +329,10 @@ describe('runCodex fast-start', () => {
   });
 
   it('does not fast-start a local --resume child before resume preflight completes', async () => {
-    const { runCodex } = await import('./runCodex');
-
     const credentials = { token: 'test' } as Credentials;
 
     let testError: unknown = null;
+    let runError: unknown = null;
     const runPromise = runCodex({
       credentials,
       startedBy: 'terminal',
@@ -315,7 +341,7 @@ describe('runCodex fast-start', () => {
       permissionMode: 'default',
       permissionModeUpdatedAt: 1,
     } as any).catch((e) => {
-      testError = e;
+      runError = e;
     });
 
     try {
@@ -331,16 +357,15 @@ describe('runCodex fast-start', () => {
       await runPromise;
     }
 
-    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
-    expect(firstCall?.resumeId).toBe('resume-123');
-
+    if (runError) throw runError;
     if (testError) {
       throw testError;
     }
+    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
+    expect(firstCall?.resumeId).toBe('resume-123');
   });
 
   it('reports and closes an attached app-server session when the initial local child exits', async () => {
-    const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
     const daemonReports: Array<{ sessionId: string; metadata: Record<string, unknown> }> = [];
     let sessionRef: any = null;
@@ -403,11 +428,10 @@ describe('runCodex fast-start', () => {
   });
 
   it('passes initial resume id to local TUI after session init finishes', async () => {
-    const { runCodex } = await import('./runCodex');
-
     const credentials = { token: 'test' } as Credentials;
 
     let testError: unknown = null;
+    let runError: unknown = null;
     const runPromise = runCodex({
       credentials,
       startedBy: 'terminal',
@@ -415,7 +439,7 @@ describe('runCodex fast-start', () => {
       resume: 'resume-123',
       codexArgs: ['resume', 'native-thread-2'],
     } as any).catch((e) => {
-      testError = e;
+      runError = e;
     });
 
     try {
@@ -428,13 +452,13 @@ describe('runCodex fast-start', () => {
       await runPromise;
     }
 
-    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
-    expect(firstCall?.resumeId).toBe('resume-123');
-    expect(firstCall?.codexArgs).toEqual(['resume', 'native-thread-2']);
-
+    if (runError) throw runError;
     if (testError) {
       throw testError;
     }
+    const firstCall = codexLocalLauncherSpy.mock.calls[0]?.[0];
+    expect(firstCall?.resumeId).toBe('resume-123');
+    expect(firstCall?.codexArgs).toEqual(['resume', 'native-thread-2']);
   });
 
   it('does not attach the deferred session to an offline stub; flushes buffered writes only after reconnection swap', async () => {
@@ -512,7 +536,6 @@ describe('runCodex fast-start', () => {
       return await localExit.promise;
     });
 
-    const { runCodex } = await import('./runCodex');
     const credentials = { token: 'test' } as Credentials;
 
     let testError: unknown = null;
@@ -527,8 +550,8 @@ describe('runCodex fast-start', () => {
           new Promise<void>((resolve, reject) => {
             const startedAt = Date.now();
             const tick = () => {
-              if (initResolved) return resolve();
-              if (Date.now() - startedAt > 750) return reject(new Error('Timed out waiting for backend API initialization'));
+              if (typeof lastOnSessionSwap === 'function') return resolve();
+              if (Date.now() - startedAt > 750) return reject(new Error('Timed out waiting for backend session initialization'));
               setTimeout(tick, 0);
             };
             tick();

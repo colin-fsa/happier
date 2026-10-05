@@ -1,15 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
+async function readInstallerSource(path) {
+  // Git's native Windows checkout may use CRLF; extraction must execute the
+  // same functions regardless of checkout line endings.
+  return (await readFile(path, 'utf8')).replaceAll('\r\n', '\n');
+}
+
 test('install.ps1 only falls back to direct binary copy for legacy payload installers', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(trimmed, /\$promotionResult\.ExitCode\s*-ne\s*0/i);
@@ -64,7 +72,7 @@ test('install.ps1 only falls back to direct binary copy for legacy payload insta
 
 test('install.ps1 payload promotion timeout avoids background jobs and enforces bounded process waits', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.doesNotMatch(trimmed, /\bStart-Job\b/);
@@ -76,7 +84,7 @@ test('install.ps1 payload promotion timeout avoids background jobs and enforces 
 
 test('install.ps1 payload promotion uses the local PowerShell executable instead of hard-coded pwsh', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const helper = raw.match(/function Invoke-InstallerPayloadPromotionWithTimeout\s*\{[\s\S]*?\n\}(?=\n\nfunction )/);
 
   assert.ok(helper, 'expected Invoke-InstallerPayloadPromotionWithTimeout to exist');
@@ -102,42 +110,74 @@ test('install.ps1 payload promotion uses the local PowerShell executable instead
   );
 });
 
-test('install.ps1 runs payload promotion from a runner outside the extracted payload root', async () => {
+for (const runnerTempName of ['runner-temp', 'runner temp']) {
+test(`install.ps1 atomically promotes from an unlocked runner in ${runnerTempName} and cleans it up`, {
+  skip: process.platform !== 'win32' && 'Requires real Windows executable locking and PowerShell',
+}, async (t) => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
-  const helper = raw.match(/function Invoke-InstallerPayloadPromotionWithTimeout\s*\{[\s\S]*?\n\}(?=\n\nfunction )/);
-
-  assert.ok(helper, 'expected Invoke-InstallerPayloadPromotionWithTimeout to exist');
-  assert.match(
-    helper[0],
-    /\$runnerBinaryPath\s*=\s*Join-Path\s+\$env:TEMP\s+"happier-payload-promotion-\$runToken\.exe"/i,
-    'expected installer to allocate a temporary promotion runner outside the extracted payload root',
-  );
-  assert.match(
-    helper[0],
-    /Copy-Item\s+-Path\s+\$BinaryPath\s+-Destination\s+\$runnerBinaryPath\s+-Force/i,
-    'expected installer to copy the extracted CLI binary to the temporary runner',
-  );
-  assert.match(
-    helper[0],
-    /& '\$\(& \$escapeSingleQuotedLiteral \$runnerBinaryPath\)' self __install-payload/i,
-    'expected payload promotion to invoke the temporary runner so Windows can move the payload root atomically',
-  );
-  assert.doesNotMatch(
-    helper[0],
-    /& '\$\(& \$escapeSingleQuotedLiteral \$BinaryPath\)' self __install-payload/i,
-    'running install-payload from inside the payload root locks happier.exe on Windows and forces slow copy fallback',
-  );
-  assert.match(
-    helper[0],
-    /Remove-Item\s+-Path\s+\$runnerBinaryPath\s+-Force\s+-ErrorAction\s+SilentlyContinue/i,
-    'expected temporary promotion runner cleanup',
-  );
+  const raw = await readInstallerSource(path);
+  const functions = [
+    'Resolve-InstallerPayloadPromotionTimeoutMs',
+    'Resolve-InstallerPowerShellExecutablePath',
+    'Stop-InstallerProcessTree',
+    'Invoke-InstallerPayloadPromotionWithTimeout',
+  ].map((name) => {
+    const source = raw.match(new RegExp(`function ${name}\\s*\\{[\\s\\S]*?\\n\\}(?=\\n\\nfunction )`));
+    assert.ok(source, `Missing installer function ${name}`);
+    return source[0];
+  });
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-promotion-'));
+  t.after(() => rm(scratch, { recursive: true, force: true }));
+  const payload = join(scratch, "payload with spaces and 'quote");
+  const runnerTemp = join(scratch, runnerTempName);
+  await mkdir(runnerTemp);
+  await writeFile(join(runnerTemp, 'sentinel'), 'unrelated file');
+  await mkdir(payload);
+  await writeFile(join(payload, 'payload-marker'), 'payload contents');
+  // The CLI executable is a genuine external process boundary for the installer.
+  // Renaming its input payload proves the runner is detached from the executable
+  // Windows locks. The real compiled CLI embeds its promotion-time process owner.
+  const fixtureSource = join(scratch, 'Fixture.cs');
+  await writeFile(fixtureSource, `
+using System;
+using System.IO;
+class Fixture {
+  static int Main(string[] args) {
+    if (args.Length < 2 || args[0] != "self" || args[1] != "__install-payload") return 3;
+    Console.WriteLine("promotion-ready");
+    int payloadIndex = Array.IndexOf(args, "--payload-root");
+    if (payloadIndex < 0 || payloadIndex + 1 >= args.Length) return 4;
+    string payload = args[payloadIndex + 1];
+    Directory.Move(payload, payload + ".promoted");
+    Console.WriteLine("promoted");
+    return 0;
+  }
+}
+`);
+  const binary = join(payload, 'happier.exe');
+  const compiler = join(process.env.SystemRoot, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+  execFileSync(compiler, ['/nologo', '/target:exe', `/out:${binary}`, fixtureSource], { encoding: 'utf8' });
+  const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+  const script = join(scratch, 'exercise.ps1');
+  await writeFile(script, [
+    "$ErrorActionPreference = 'Stop'",
+    ...functions,
+    `$env:TEMP = ${quote(runnerTemp)}`,
+    `$result = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
+    '$result | ConvertTo-Json -Compress',
+  ].join('\n'));
+  const result = JSON.parse(execFileSync('pwsh', ['-NoProfile', '-File', script], { encoding: 'utf8' }).trim());
+  assert.equal(result.TimedOut, false);
+  assert.equal(result.ExitCode, 0, result.Output);
+  assert.match(result.Output, /promotion-ready[\s\S]*promoted/);
+  assert.equal(await readFile(join(`${payload}.promoted`, 'payload-marker'), 'utf8'), 'payload contents');
+  assert.deepEqual(await readdir(runnerTemp), ['sentinel']);
 });
+}
 
 test('install.ps1 fails closed on payload promotion timeout instead of accepting fallback success', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
   const fallbackSignature = trimmed.match(/\$longPathOrMissingSourceSignature\s*=\s*\$promotionOutput\s+-match\s*'([^']+)'/i);
 
@@ -156,7 +196,7 @@ test('install.ps1 fails closed on payload promotion timeout instead of accepting
 
 test('install.ps1 direct-copy fallback refuses partial temporary managed version state', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const fallbackSafety = raw.match(/function Test-InstallerPayloadDirectCopyFallbackSafe\s*\{[\s\S]*?\n\}(?=\n\nfunction )/);
 
   assert.ok(fallbackSafety, 'expected Test-InstallerPayloadDirectCopyFallbackSafe to exist');
@@ -179,7 +219,7 @@ test('install.ps1 direct-copy fallback refuses partial temporary managed version
 
 test('install.ps1 stages release archives under the install home instead of process temp', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(
@@ -206,7 +246,7 @@ test('install.ps1 stages release archives under the install home instead of proc
 
 test('install.ps1 tells install-payload when native pre-install cleanup already ran', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(
@@ -223,7 +263,7 @@ test('install.ps1 tells install-payload when native pre-install cleanup already 
 
 test('install.ps1 tells install-payload that installer-owned repair runs after promotion', async () => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
-  const raw = await readFile(path, 'utf8');
+  const raw = await readInstallerSource(path);
   const trimmed = raw.replace(/^\uFEFF?/, '').trimStart();
 
   assert.match(

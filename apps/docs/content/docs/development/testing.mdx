@@ -102,6 +102,8 @@ Browser-driven end-to-end tests against the Expo web UI, using the same server-l
 yarn test:e2e:ui
 ```
 
+The command above runs the full browser suite. In the current `dev` CI configuration, ordinary push/PR browser checks select self-contained `@smoke` journeys. The nightly Extended DB workflow and explicitly selected UI E2E in manual/release validation run the full suite unless specific spec paths are supplied.
+
 Notes:
 - These tests run Playwright against `expo start --web` and require Playwright browsers to be installed (see Playwright install docs).
 - UI E2E should stay small and focus on flows that are uniquely UI-driven (auth/login/connect, navigation, and key cross-app wiring). Lower-level server/daemon invariants belong in core E2E.
@@ -376,8 +378,11 @@ Default gate includes:
 - Release contracts (release/workflow/install/signing guards)
 - Daemon integration E2E (`CLI + Server (light/sqlite) E2E`)
 - Core E2E fast (sqlite)
+- UI E2E smoke (`@smoke`, when selected by the changed paths)
 
 The daemon integration E2E job is intentionally separate from app unit/integration lanes because it verifies cross-package boot/auth/daemon behavior against a real light server process.
+
+CLI unit tests and the import-cycle guard run even when the shared CLI build fails. The unit harness uses workspace sources and does not require CLI `dist`; integration, slow, and dist-admission checks require the downloaded build. The CI summary reports the build failure as the cause when binary consumers are skipped.
 
 ### On-demand provider contracts
 
@@ -392,9 +397,11 @@ Workflow: `CI — Provider Contracts` (`.github/workflows/providers-contracts.ym
 
 Workflow: `CI — Stress Tests` (`.github/workflows/stress-tests.yml`)
 
-### Nightly extended DB matrix
+### Nightly full E2E and extended DB
 
-Workflow: `CI — Extended DB Matrix` (`.github/workflows/extended-db-tests.yml`)
+Workflow: `Nightly — full E2E + extended DB` (`.github/workflows/extended-db-tests.yml`)
+
+Its current `dev` schedule also runs the full UI E2E suite across 12 shards.
 
 ## Contributor guidance
 

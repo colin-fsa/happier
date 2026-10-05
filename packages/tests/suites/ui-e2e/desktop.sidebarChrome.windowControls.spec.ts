@@ -115,8 +115,8 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('renders shell-owned desktop controls and update status in the wide sidebar', async ({ page }) => {
-    test.setTimeout(420_000);
+  test('renders shell-owned desktop controls and update status in the wide sidebar', { tag: "@smoke" }, async ({ page }) => {
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await launchDesktopShell(page, { uiBaseUrl, updateVersion: '9.9.9' });
@@ -127,11 +127,11 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
     await expect(page.getByTestId('desktop-window-controls-minimize')).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('desktop-window-controls-toggle-maximize')).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('desktop-window-controls-close')).toBeVisible({ timeout: 60_000 });
-    // Updates lives in the desktop top rail; activity lives only in the sidebar icon row below it.
+    // Updates lives in the desktop top rail. This fresh account has no activity needing attention.
     const utilityRow = page.getByTestId('desktop-sidebar-chrome-utility-row');
     await expect(utilityRow.getByTestId('desktop-sidebar-updates-button')).toHaveCount(1, { timeout: 60_000 });
     await expect(utilityRow.getByTestId('desktop-sidebar-action-operations')).toHaveCount(0);
-    await expect(page.getByTestId('desktop-sidebar-action-operations')).toHaveCount(1);
+    await expect(page.getByTestId('desktop-sidebar-action-operations')).toHaveCount(0);
 
     await dragFromMainContentTitlebar(page);
     await expect.poll(async () => readFakeTauriDesktopState(page), { timeout: 60_000 }).toMatchObject({
@@ -161,7 +161,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
   });
 
   test('does not render Tauri desktop controls in plain web mode', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -174,7 +174,7 @@ test.describe('ui e2e: desktop sidebar chrome window controls', () => {
   });
 
   test('excludes global desktop chrome from the desktop pet overlay route', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 800, height: 600 });

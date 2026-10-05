@@ -110,7 +110,7 @@ test.describe('ui e2e: Claude unified create/send/hydrate', () => {
   });
 
   test('creates a unified Claude session and streams UI-submitted turns live without duplicate user rows', async ({ page }) => {
-    test.setTimeout(600_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

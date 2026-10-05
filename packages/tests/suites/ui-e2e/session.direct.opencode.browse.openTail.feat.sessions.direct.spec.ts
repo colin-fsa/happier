@@ -155,7 +155,7 @@ test.describe('ui e2e: direct OpenCode sessions browse/open/tail', () => {
   });
 
   test('links a provider-backed OpenCode direct session and follows appended server messages', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!appServer || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't1-direct-opencode-browse-open-tail'));

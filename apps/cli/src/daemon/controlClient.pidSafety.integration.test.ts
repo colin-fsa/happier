@@ -84,7 +84,11 @@ describe.sequential('daemon control client PID safety', () => {
         'utf-8',
       );
 
-      await stopDaemon();
+      await expect(stopDaemon()).rejects.toMatchObject({
+        code: 'daemon_stop_incomplete',
+        reason: 'process_identity_unverified',
+        pid: child.pid,
+      });
 
       // Process should still be alive (PID reuse safety).
       expect(() => process.kill(child.pid!, 0)).not.toThrow();

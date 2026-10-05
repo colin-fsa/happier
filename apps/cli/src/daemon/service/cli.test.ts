@@ -1244,6 +1244,7 @@ describe('runDaemonServiceCliCommand', () => {
           description: 'Happier Daemon',
           execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
           env: {
+            HAPPIER_HOME_DIR: happierHomeDir,
             HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
             HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             HAPPIER_ACTIVE_SERVER_ID: 'cloud',
@@ -2172,7 +2173,9 @@ describe('runDaemonServiceCliCommand', () => {
             if (action === '/Query') {
               return {
                 status: 0,
-                stdout: Buffer.from('Status: Running\nScheduled Task State: Enabled\n'),
+                stdout: Buffer.from(args.includes('/XML')
+                  ? `<Task><Actions><Exec><Arguments>-File &quot;${paths.installedPath}&quot;</Arguments></Exec></Actions></Task>`
+                  : 'Status: Running\nScheduled Task State: Enabled\n'),
                 stderr: Buffer.from(''),
               };
             }
@@ -2226,7 +2229,7 @@ describe('runDaemonServiceCliCommand', () => {
         output.restore();
       }
 
-      expect(lifecycleEvents.slice(0, 3)).toEqual(['stopDaemon', 'powershell.exe', '/Run']);
+      expect(lifecycleEvents.filter((event) => event !== '/Query').slice(0, 3)).toEqual(['stopDaemon', 'powershell.exe', '/Run']);
     });
   });
 
@@ -2283,6 +2286,7 @@ describe('runDaemonServiceCliCommand', () => {
           description: 'Happier Daemon',
           execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
           env: {
+            HAPPIER_HOME_DIR: happierHomeDir,
             HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
             HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             HAPPIER_ACTIVE_SERVER_ID: 'cloud',
@@ -2371,6 +2375,7 @@ describe('runDaemonServiceCliCommand', () => {
           description: 'Happier Daemon',
           execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
           env: {
+            HAPPIER_HOME_DIR: happierHomeDir,
             HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
             HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             HAPPIER_ACTIVE_SERVER_ID: 'cloud',
@@ -2447,6 +2452,7 @@ describe('runDaemonServiceCliCommand', () => {
           description: 'Happier Daemon',
           execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
           env: {
+            HAPPIER_HOME_DIR: happierHomeDir,
             HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
             HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             HAPPIER_ACTIVE_SERVER_ID: 'cloud',
@@ -2810,6 +2816,7 @@ describe('runDaemonServiceCliCommand', () => {
           label: paths.label,
           programArgs: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
           env: {
+            HAPPIER_HOME_DIR: happierHomeDir,
             PATH: '/usr/bin:/bin',
             HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
             HAPPIER_DAEMON_SERVICE_LABEL: paths.label,

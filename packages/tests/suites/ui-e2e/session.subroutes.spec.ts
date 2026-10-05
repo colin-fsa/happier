@@ -127,8 +127,8 @@ test.describe('ui e2e: session subroutes', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('resolves session info/runs/files subroutes without redirecting', async ({ page }) => {
-    test.setTimeout(540_000);
+  test('resolves session info/runs/files subroutes without redirecting', { tag: "@smoke" }, async ({ page }) => {
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -220,7 +220,7 @@ test.describe('ui e2e: session subroutes', () => {
   });
 
   test('renders stable unavailable selectors for missing session routes', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui fixture');
 
     await page.setViewportSize({ width: 1440, height: 900 });

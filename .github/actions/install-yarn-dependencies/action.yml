@@ -1,5 +1,5 @@
 name: Install Yarn Dependencies
-description: Install workspace dependencies with retry handling for transient registry failures
+description: Restore workspace dependencies and install with retry handling on cache misses
 
 inputs:
   args:
@@ -10,7 +10,37 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Resolve dependency cache identity
+      id: runtime
+      shell: bash
+      run: echo "node=$(node -p 'process.versions.node')" >> "$GITHUB_OUTPUT"
+    - name: Restore installed dependencies
+      id: dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          node_modules
+          apps/*/node_modules
+          packages/*/node_modules
+        # Exact keys only: never restore a tree installed for another lockfile,
+        # patch set, Node runtime, architecture, or install scope.
+        key: modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.node }}-${{ inputs.args }}-${{ env.HAPPIER_INSTALL_SCOPE }}-${{ hashFiles('yarn.lock', '.yarnrc*', '.node-version', '**/package.json', '**/patches/**', 'scripts/postinstall/**', 'apps/ui/tools/**', 'apps/cli/scripts/postinstall/**') }}
+    - name: Verify restored dependencies and refresh workspace setup
+      if: steps.dependencies.outputs.cache-hit == 'true'
+      shell: bash
+      env:
+        ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      run: |
+        set -euo pipefail
+        if ! yarn install ${{ inputs.args }} --offline --non-interactive; then
+          echo "::warning::Offline dependency verification failed; repairing with the canonical installer"
+          bash scripts/ci/yarn-install-with-retry.sh ${{ inputs.args }} --network-timeout 600000 --prefer-offline --non-interactive
+        fi
+        # Yarn's no-op install does not regenerate outputs outside node_modules.
+        # Delegate that setup to the same workspace postinstall owners as a miss.
+        node scripts/ci/refresh-workspace-postinstall.mjs ${{ inputs.args }}
     - name: Install dependencies with retry
+      if: steps.dependencies.outputs.cache-hit != 'true'
       shell: bash
       env:
         ONNXRUNTIME_NODE_INSTALL_CUDA: skip

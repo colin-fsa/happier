@@ -652,7 +652,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('shows the provider quota composer badge and remaining-first popover', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
 
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -677,7 +677,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('renders connected-service switch event rows and notification topic controls', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);
@@ -732,7 +732,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('routes reconnect-required connected profiles through the same profile identity', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
 
         const serviceId = 'claude-subscription' satisfies ConnectedServiceId;
@@ -831,7 +831,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('shows connected-service restart status before inactive resume status', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
 
         const serviceId = 'claude-subscription' satisfies ConnectedServiceId;
@@ -888,7 +888,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('records a switch event emitted by the real auth-group switch path', async ({ page }) => {
-        test.setTimeout(720_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
 
         const serviceId = 'claude-subscription' satisfies ConnectedServiceId;
@@ -1027,7 +1027,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
     });
 
     test('hides app-server quota affordances for non-app-server Codex sessions', async ({ page }) => {
-        test.setTimeout(540_000);
+        test.setTimeout(180_000);
         if (!server || !uiBaseUrl) throw new Error('missing ui e2e fixtures');
         await page.setViewportSize({ width: 1440, height: 900 });
         await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 180_000);

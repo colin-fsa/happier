@@ -52,7 +52,7 @@ test.describe('ui e2e: server override reachability', () => {
   });
 
   test('connects without requiring a manual Retry click on first load', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
 

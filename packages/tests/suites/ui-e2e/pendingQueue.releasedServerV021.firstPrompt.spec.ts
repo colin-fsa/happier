@@ -122,7 +122,7 @@ describeReleasedServer(releasedServerSuiteName, () => {
   });
 
   test('uses a real new-session submit to enqueue and deliver the first prompt once', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing released-server/UI fixtures');
 
     const providerObservationStartedAt = Date.now();

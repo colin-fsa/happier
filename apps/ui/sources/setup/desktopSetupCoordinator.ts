@@ -551,9 +551,12 @@ export function createDesktopSetupCoordinator(deps: Readonly<{
             // answers a prompt emitted between native start and the retained subscription.
             let unsubscribe: (() => void) | null = null;
             let settled = false;
-            unsubscribe = runner.subscribe(taskId, onEvent, () => {
+            unsubscribe = runner.subscribe(taskId, onEvent, (result) => {
                 settled = true;
                 unsubscribe?.();
+                // Setup outlives its initiating route. Its successful mutation invalidates the
+                // ambient facts for every reader, including one reopened after completion.
+                if (result.ok) void inspect({ fresh: true });
                 notify();
             });
             if (settled) unsubscribe();
@@ -568,7 +571,7 @@ export function createDesktopSetupCoordinator(deps: Readonly<{
         }
     };
 
-    const runInspection = async (): Promise<DesktopLocalInspection> => {
+    const runInspection = async (isCurrent: () => boolean): Promise<DesktopLocalInspection> => {
         // The facts are read against the app's identity as it is NOW, when the read is requested.
         // Recording it when the read settles instead would hide every server change that lands
         // inside the acquisition window from the relay-change discriminator: a navigation-,
@@ -581,8 +584,10 @@ export function createDesktopSetupCoordinator(deps: Readonly<{
         try {
             runner = deps.runner();
             taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec('daemon.service.status.v1'));
-            inspectionTaskId = taskId;
-            notify();
+            if (isCurrent()) {
+                inspectionTaskId = taskId;
+                notify();
+            }
         } catch (error) {
             return {
                 status: 'failed',
@@ -602,7 +607,10 @@ export function createDesktopSetupCoordinator(deps: Readonly<{
             refreshing = true;
             inspectionTaskId = null;
             notify();
-            inspection = runInspection().then((result) => {
+            const request: Promise<DesktopLocalInspection> = runInspection(() => inspection === request).then((result) => {
+                // An older read still answers its caller, but cannot replace facts or progress
+                // from a later read requested after setup changed this computer.
+                if (inspection !== request) return result;
                 if (result.status === 'failed') {
                     inspection = null;
                 }
@@ -611,7 +619,8 @@ export function createDesktopSetupCoordinator(deps: Readonly<{
                 notify();
                 return result;
             });
-            return inspection;
+            inspection = request;
+            return request;
         }
         if (observedExpectation !== null && observedExpectation.accountId === null) {
             // R5/INV4 — the pre-auth warm-up starts this read at app open, before the user has

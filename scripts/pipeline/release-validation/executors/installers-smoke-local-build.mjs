@@ -1,7 +1,7 @@
 // @ts-check
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { access, copyFile, mkdtemp, mkdir, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { loadCliCommonDistModule } from '../../../ensureCliCommonDistModule.mjs';
@@ -102,14 +102,15 @@ function resolveSigningEnv({ repoRoot, scratchDir, baseEnv = process.env }) {
 export const resolveSigningEnvForTests = resolveSigningEnv;
 
 /**
- * @param {{ repoRoot: string; platform: 'linux' | 'darwin' | 'win32'; releaseChannel: 'stable' | 'preview' | 'publicdev' }} params
+ * @param {{ repoRoot: string; platform: 'linux' | 'darwin' | 'win32'; releaseChannel: 'stable' | 'preview' | 'publicdev'; baseEnv?: NodeJS.ProcessEnv; runCommand?: typeof execFileSync }} params
  */
-export async function prepareInstallersSmokeLocalBuildAssets({ repoRoot, platform, releaseChannel }) {
+export async function prepareInstallersSmokeLocalBuildAssets({ repoRoot, platform, releaseChannel, baseEnv = process.env, runCommand = execFileSync }) {
   const scratchDir = await mkdtemp(join(tmpdir(), 'happier-installers-local-build-'));
-  const { env: signingEnv, keyPathEntries } = resolveSigningEnv({ repoRoot, scratchDir });
+  const { env: signingEnv, keyPathEntries } = resolveSigningEnv({ repoRoot, scratchDir, baseEnv });
   const componentArtifacts = await loadCliCommonDistModule({
     repoRoot,
     subpath: 'componentArtifacts',
+    execFileSync: runCommand,
   });
   const target = componentArtifacts.resolveCurrentBinaryTarget({
     availableTargets: componentArtifacts.CLI_BINARY_TARGETS,
@@ -122,13 +123,40 @@ export async function prepareInstallersSmokeLocalBuildAssets({ repoRoot, platfor
   await mkdir(keyDir, { recursive: true });
   const publicKeyPath = join(keyDir, 'installers-smoke.pub');
   const secretKeyPath = join(keyDir, 'installers-smoke.key');
-  execFileSync('minisign', ['-G', '-p', publicKeyPath, '-s', secretKeyPath, '-W'], {
+  runCommand('minisign', ['-G', '-p', publicKeyPath, '-s', secretKeyPath, '-W'], {
     cwd: repoRoot,
     env: signingEnv,
     stdio: 'ignore',
   });
 
-  const rawOutput = execFileSync(
+  const preparedDir = String(baseEnv.HAPPIER_RELEASE_ASSETS_DIR ?? '').trim();
+  if (preparedDir) {
+    const version = JSON.parse(await readFile(join(repoRoot, 'apps/cli/package.json'), 'utf8')).version;
+    const assetsDir = join(scratchDir, 'release-assets');
+    await mkdir(assetsDir);
+    for (const entry of await readdir(preparedDir, { withFileTypes: true })) {
+      if (entry.isFile() && (entry.name.endsWith('.tar.gz') || entry.name.endsWith('.txt'))) {
+        await copyFile(join(preparedDir, entry.name), join(assetsDir, entry.name));
+      }
+    }
+    await access(join(assetsDir, `happier-v${version}-${targetId}.tar.gz`));
+    const checksums = join(assetsDir, `checksums-happier-v${version}.txt`);
+    await access(checksums);
+    // Only the consumer's private scratch copy is signed. Keys never travel in
+    // the CI artifact, and the real installer still verifies signed checksums.
+    runCommand('minisign', ['-S', '-s', secretKeyPath, '-m', checksums, '-x', `${checksums}.minisig`], {
+      cwd: repoRoot, env: signingEnv, stdio: 'inherit',
+    });
+    return {
+      assetsDir,
+      installVersion: version,
+      publicKey: await readFile(publicKeyPath, 'utf8'),
+      envPathEntries: keyPathEntries,
+      cleanup: () => rm(scratchDir, { recursive: true, force: true }),
+    };
+  }
+
+  const rawOutput = runCommand(
     process.execPath,
     [
       resolve(repoRoot, 'scripts', 'pipeline', 'release', 'build-cli-binaries.mjs'),

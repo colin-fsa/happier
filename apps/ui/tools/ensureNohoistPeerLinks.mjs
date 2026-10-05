@@ -28,6 +28,11 @@ export function ensureNohoistPeerLinks(opts) {
         if (!fs.existsSync(target)) continue;
 
         try {
+            // A restored junction may occupy this path without resolving on
+            // the current runner. Remove only that dangling link, not its target.
+            if (fs.lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink()) {
+                fs.unlinkSync(link);
+            }
             fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir');
         } catch (e) {
             const message = e instanceof Error ? e.message : String(e);
@@ -35,4 +40,3 @@ export function ensureNohoistPeerLinks(opts) {
         }
     }
 }
-

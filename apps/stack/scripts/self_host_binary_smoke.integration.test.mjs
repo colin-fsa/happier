@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { prepareBinarySmokeArtifact, usesPreparedBinarySmokeArtifacts } from './testkit/core/build_binary_smoke_artifact.mjs';
 
 function formatSpawnSyncResult(result) {
   const stdout = String(result.stdout || '').trim();
@@ -35,7 +36,7 @@ function currentTarget() {
 }
 
 test('compiled hstack binary runs self-host help outside repo checkout', async (t) => {
-  if (!commandExists('bun')) {
+  if (!usesPreparedBinarySmokeArtifacts() && !commandExists('bun')) {
     t.skip('bun is required for compiled binary smoke tests');
     return;
   }
@@ -46,29 +47,35 @@ test('compiled hstack binary runs self-host help outside repo checkout', async (
   }
 
   const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
-  const version = `0.0.0-smoke.${Date.now()}`;
-  const build = spawnSync(
-    process.execPath,
-    [
-      'scripts/pipeline/release/build-hstack-binaries.mjs',
-      '--channel=preview',
-      `--version=${version}`,
-      `--targets=${target}`,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf-8',
-      env: {
-        ...process.env,
-      },
-      // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
-      timeout: 15 * 60 * 1000,
-      maxBuffer: 50 * 1024 * 1024,
-    }
-  );
-  assert.equal(build.status, 0, formatSpawnSyncResult(build));
-
+  const version = usesPreparedBinarySmokeArtifacts()
+    ? JSON.parse(await readFile(join(repoRoot, 'apps/stack/package.json'), 'utf8')).version
+    : `0.0.0-smoke.${Date.now()}`;
   const artifact = join(repoRoot, 'dist', 'release-assets', 'stack', `hstack-v${version}-${target}.tar.gz`);
+  await prepareBinarySmokeArtifact({
+    artifactPath: artifact,
+    build: () => {
+      const build = spawnSync(
+        process.execPath,
+        [
+          'scripts/pipeline/release/build-hstack-binaries.mjs',
+          '--channel=preview',
+          `--version=${version}`,
+          `--targets=${target}`,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          env: {
+            ...process.env,
+          },
+          // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+          timeout: 15 * 60 * 1000,
+          maxBuffer: 50 * 1024 * 1024,
+        }
+      );
+      assert.equal(build.status, 0, formatSpawnSyncResult(build));
+    },
+  });
   const extractDir = await mkdtemp(join(tmpdir(), 'hstack-binary-smoke-'));
   t.after(() => {
     spawnSync('bash', ['-lc', `rm -rf "${extractDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });

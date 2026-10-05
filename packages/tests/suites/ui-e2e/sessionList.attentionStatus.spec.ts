@@ -529,7 +529,7 @@ test.describe('ui e2e: session list attention', () => {
   });
 
   test('keeps narrow rows compact while quiet rows have no attention indicator', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !token || !uiBaseUrl || !quiet || !working || !ready) throw new Error('missing session list attention fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -558,7 +558,7 @@ test.describe('ui e2e: session list attention', () => {
   });
 
   test('shows ready subtitle outside narrow mode and uses static working text when animation is disabled', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!server || !token || !uiBaseUrl || !working || !ready) throw new Error('missing session list attention fixtures');
 
     // The narrow-density scenario intentionally leaves its shared session in progress. Use a
@@ -623,7 +623,7 @@ test.describe('ui e2e: session list attention', () => {
   });
 
   test('keeps live working placement stable and moves unread completion to attention without reload', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !token || !uiBaseUrl) throw new Error('missing session list attention fixtures');
 
     const background = await createPlainSession({

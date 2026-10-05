@@ -490,7 +490,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('runtime guard: requestAnimationFrame ticks within 400ms (plan E10)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui fixtures');
 
     await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
@@ -516,7 +516,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('seeds a session past the initial-fetch cap and viewport telemetry is readable', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await installViewportTelemetryOverride(page);
@@ -601,7 +601,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   }
 
   test('cold open: captures telemetry, bounded owner targets, lands at bottom (invariant A infra)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
 
     const snapshot = await openSeededSessionColdAndSettle(page);
     expect(snapshot.droppedCount).toBe(0);
@@ -617,7 +617,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('cold open: bounded entry writes, only bottom-bound follow repins beyond (invariant A strict)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
 
     const snapshot = await openSeededSessionColdAndSettle(page);
     expect(snapshot.droppedCount).toBe(0);
@@ -626,7 +626,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('manual scroll without pagination produces zero viewport writes (invariant E)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!sessionId) throw new Error('missing seeded session fixtures');
 
     const olderPageRequests: string[] = [];
@@ -684,7 +684,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('warm reopen restores the anchor with one bounded entry transaction (invariant B)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl || !sessionId || !accountSecretKeyFormatted) throw new Error('missing seeded session fixtures');
 
     await installViewportTelemetryOverride(page);
@@ -787,7 +787,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('exact-top older-page prepend preserves one keyed row exactly (invariants D/H)', async ({ page }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(180_000);
     if (!sessionId) throw new Error('missing seeded session fixtures');
 
     const isOlderPageRequest = (url: string): boolean =>

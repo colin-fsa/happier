@@ -73,7 +73,7 @@ happier --server-url https://api.company.example --webapp-url https://app.compan
 
 ## Multiple daemons on one machine
 
-These multi-daemon recipes and the desktop's **Connect to {relay} too** option require Happier 0.2.13 or later. On an earlier version, update before connecting the same computer to multiple Relays.
+These multi-daemon recipes and the desktop's **Connect to \{relay\} too** option require Happier 0.2.13 or later. On an earlier version, update before connecting the same computer to multiple Relays.
 
 Install one background service per server profile. `--instance <id>` pins each service to that profile; without it, `daemon service install` installs the single default service, which follows whichever server `happier server use` selected:
 
@@ -82,7 +82,7 @@ happier --server personal daemon service install --instance personal
 happier --server company daemon service install --instance company
 ```
 
-In the desktop app, when you switch to a Relay while this computer's background service is connected to another one, the app asks what to do: **Move it** (the service follows you to the new Relay), **Connect to {relay} too** (this computer gets its own background service for the new Relay and keeps answering on the previous one), or **Keep it as is**. After connecting to both, switching the app between those Relays shows this computer as connected on each, and the connection popover lists every Relay this computer serves.
+In the desktop app, when you switch to a Relay while this computer's background service is connected to another one, the app asks what to do: **Move it** (the service follows you to the new Relay), **Connect to \{relay\} too** (this computer gets its own background service for the new Relay and keeps answering on the previous one), or **Keep it as is**. After connecting to both, switching the app between those Relays shows this computer as connected on each, and the connection popover lists every Relay this computer serves.
 
 Check status:
 

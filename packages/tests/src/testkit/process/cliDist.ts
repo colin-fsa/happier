@@ -637,26 +637,31 @@ export async function withCliDistBuildLock<T>(
   });
 }
 
+function skipsCliTestBuild(env: NodeJS.ProcessEnv): boolean {
+  return ['1', 'true', 'yes'].includes(String(env.HAPPIER_CLI_TEST_SKIP_BUILD ?? '').trim().toLowerCase());
+}
+
 export async function ensureCliDistBuilt(
   params: { testDir: string; env: NodeJS.ProcessEnv },
   options: EnsureCliDistBuiltOptions = {},
 ): Promise<string> {
   const rootDir = options.repoRoot ?? repoRootDir();
+  const skipBuild = skipsCliTestBuild(params.env);
   // Daemon processes execute `apps/cli/dist/*` which imports from workspace deps.
   // Ensure those deps are compiled first so we don't start with a stale/partial protocol build.
   await ensureCliSharedDepsBuilt(params, {
     repoRoot: rootDir,
     runCommand: options.runCommand,
-    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? skipBuild,
     timeoutMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
     staleAfterMs: options.staleAfterMs,
   });
   const distDir = resolveCliDistDir(rootDir);
   const entrypoint = resolveCliDistEntrypoint(distDir);
-  const allowRebuild = options.allowRebuild ?? true;
+  const allowRebuild = options.allowRebuild ?? !skipBuild;
   const skipDistIntegrityCheck = options.skipDistIntegrityCheck ?? false;
-  const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? false;
+  const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? skipBuild;
   const resolveReusableEntrypoint = (): string | null => {
     const reusableDir = resolveExistingCliDistDir({
       rootDir,
@@ -829,6 +834,7 @@ export async function ensureCliDistSnapshotEntrypoint(
   options: EnsureCliDistSnapshotOptions,
 ): Promise<string> {
   const rootDir = options.repoRoot ?? repoRootDir();
+  const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? skipsCliTestBuild(params.env);
   const distLockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-dist-build.lock');
   const snapshotDistDir = resolve(options.snapshotDir, 'dist');
   const snapshotEntrypoint = resolve(snapshotDistDir, 'index.mjs');
@@ -926,7 +932,7 @@ export async function ensureCliDistSnapshotEntrypoint(
           const distDir = resolveExistingCliDistDir({
             rootDir,
             skipDistIntegrityCheck: options.skipDistIntegrityCheck ?? false,
-            skipSourceFreshnessCheck: options.skipSourceFreshnessCheck ?? false,
+            skipSourceFreshnessCheck,
           });
           if (!distDir) {
             const canonicalDistDir = resolveCliDistDir(rootDir);

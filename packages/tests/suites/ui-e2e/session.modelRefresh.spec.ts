@@ -58,7 +58,7 @@ test.describe('UI e2e: inactive session model refresh', () => {
     });
 
     test('refreshes the machine catalog, keeps usable stale results on failure, and never resumes the session', async ({ page }) => {
-        test.setTimeout(600_000);
+        test.setTimeout(180_000);
         if (!server || !ui) throw new Error('Missing live fixtures');
         const diagnostics = collectBrowserDiagnostics({ page });
         const uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);

@@ -93,7 +93,7 @@ test.describe('ui e2e: pets desktop overlay tray session interaction', () => {
   });
 
   test('opens the active session from a no-drag desktop overlay tray item', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

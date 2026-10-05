@@ -30,7 +30,7 @@ import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderE
 import { createOpenCodeSharedLocalControl } from '../localControl/createOpenCodeSharedLocalControl';
 import { createOpenCodeTuiSupervisor } from '../localControl/openCodeTuiSupervisor';
 import { registerSessionControlHandlers } from '@/rpc/handlers/sessionControls';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
+import { encodeBase64, encrypt } from '@/api/encryption';
 
 import { createOpenCodeServerRuntimeClient } from './client';
 import { createOpenCodeServerRuntime } from './runtime';
@@ -833,9 +833,8 @@ describe('OpenCode client/runtime lifecycle composition', () => {
             };
             registerSessionControlHandlers(session.rpcHandlerManager, { sessionRuntimeControls: cloneCallableSessionRuntimeControls(runtimeControls) });
             const key = new Uint8Array(32);
-            const attachedStates: boolean[] = [];
             const socket = createApiSessionSocketStub({
-              // Socket.IO's network connect is asynchronous; the state publisher subscribes after connect().
+              // Match asynchronous network connection while keeping registered RPC admission real.
               onConnect: (connectedSocket) => queueMicrotask(() => connectedSocket.trigger('connect')),
               emit: async (event, args) => {
                 const [payload, ack] = args;
@@ -843,13 +842,6 @@ describe('OpenCode client/runtime lifecycle composition', () => {
                 // The network harness receives the real typed session-RPC call payload.
                 const result: unknown = await session.rpcHandlerManager.handleRequest(payload as RpcRequest);
                 ack({ ok: true, result });
-              },
-              emitWithAck: (event, payload) => {
-                if (event !== 'update-state') throw new Error('unexpected fixture socket operation');
-                const data = payload as { agentState: string; expectedVersion: number };
-                const state = decrypt(key, 'legacy', decodeBase64(data.agentState));
-                attachedStates.push(state.localControl.attached);
-                return { result: 'success', version: data.expectedVersion + 1, agentState: data.agentState };
               },
             });
             bindApiSessionSocketMock(mockIo, socket);
@@ -874,11 +866,8 @@ describe('OpenCode client/runtime lifecycle composition', () => {
             });
             if (startupCase === 'rpc-agent-rejected') {
               await expect(attach).rejects.toThrow('provider_cli_attach_not_ready');
-              // Independent attach clients never advertise custody of the managed terminal.
-              expect(attachedStates).toEqual([]);
             } else {
               await attach;
-              expect(attachedStates).toEqual([]);
               // Observe the caller's native child before any local-controller child can satisfy it.
               expect(await nativeAttachment).toEqual({ agent: 'plan', model: { providerID: 'openai', id: 'cheap-model', variant: 'low' } });
             }

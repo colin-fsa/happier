@@ -191,6 +191,7 @@ jobs:
     if: ${{ always() && inputs.dry_run != true && inputs.waive_ci != true && needs.source_plan.result == 'success' && needs.ci.result == 'success' && needs.source_plan.outputs.run_mysql == 'true' }}
     permissions:
       contents: read
+      pull-requests: read
     uses: ./.github/workflows/extended-db-tests.yml
     with:
       checkout_sha: ${{ needs.source_plan.outputs.source_sha }}

@@ -98,7 +98,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
   });
 
   test('links a provider-backed Codex direct session and follows appended rollout lines', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't1-direct-codex-browse-open-tail'));

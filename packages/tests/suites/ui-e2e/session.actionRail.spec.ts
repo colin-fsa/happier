@@ -85,7 +85,7 @@ test.describe('ui e2e: session action rail', () => {
   });
 
   test('opens independent panes and preserves access across responsive layouts', async ({ page }, testInfo) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const browserDiagnostics = collectBrowserDiagnostics({ page });

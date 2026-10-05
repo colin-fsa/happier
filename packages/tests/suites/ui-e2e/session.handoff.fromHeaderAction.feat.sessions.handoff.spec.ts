@@ -279,7 +279,7 @@ test.describe('ui e2e: session handoff from header action menu via direct peer',
   });
 
   test('hands off a Claude session to a second online machine and updates the session machine binding', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -476,7 +476,7 @@ test.describe('ui e2e: session handoff from header action menu via forced server
   });
 
   test('hands off a Claude session to a second online machine and updates the session machine binding', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const fakeClaudePath = fakeClaudeFixturePath();
@@ -669,7 +669,7 @@ test.describe('ui e2e: session handoff pre-acceptance failure from header action
   });
 
   test('fails closed when the target runner is rejected before acceptance', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const fakeClaudePath = fakeClaudeFixturePath();

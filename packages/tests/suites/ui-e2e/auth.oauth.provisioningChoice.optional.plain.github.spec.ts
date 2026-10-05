@@ -99,7 +99,7 @@ test.describe('ui e2e: OAuth provisioning choice (optional → plain) (GitHub)',
   });
 
   test('shows provisioning choice and provisions a keyless plaintext account', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauthBaseUrl) throw new Error('missing oauth base url');

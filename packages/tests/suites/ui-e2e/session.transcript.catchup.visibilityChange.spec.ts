@@ -217,7 +217,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
   });
 
   test('catches up transcript after simulated tab hidden/visible', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await installViewportTelemetryOverride(page);

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { prepareBinarySmokeArtifact, usesPreparedBinarySmokeArtifacts } from './testkit/core/build_binary_smoke_artifact.mjs';
 
 function formatSpawnSyncResult(result) {
   const stdout = String(result.stdout || '').trim();
@@ -85,7 +86,7 @@ async function extractBinaryFromArtifact({ artifactPath, binaryName }) {
 }
 
 test('compiled happier and server binaries execute from isolated cwd', async (t) => {
-  if (!commandExists('bun')) {
+  if (!usesPreparedBinarySmokeArtifacts() && !commandExists('bun')) {
     t.skip('bun is required for compiled binary smoke tests');
     return;
   }
@@ -100,31 +101,35 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   const version = String(cliPackage.version ?? '').trim();
   assert.ok(version, 'expected apps/cli/package.json to declare a version');
 
-  const buildCli = runWithHardTimeout(
-    process.execPath,
-    [
-      'scripts/pipeline/release/build-cli-binaries.mjs',
-      // Keep integration tests aligned with the centralized pipeline release scripts.
-      // (This repo no longer uses scripts/release/* build entrypoints.)
-      // NOTE: path is repo-root relative.
-      '--channel=preview',
-      `--version=${version}`,
-      `--targets=${target}`,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf-8',
-      env: { ...process.env },
-      // `inherit` makes it easier to read interactively, but on CI failures we need the full output.
-      // Increase buffer because build logs can be large.
-      maxBuffer: 50 * 1024 * 1024,
-      // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
-      timeout: 15 * 60 * 1000,
-    }
-  );
-  assert.equal(buildCli.status, 0, formatSpawnSyncResult(buildCli));
-
   const cliArtifactPath = join(repoRoot, 'dist', 'release-assets', 'cli', `happier-v${version}-${target}.tar.gz`);
+  await prepareBinarySmokeArtifact({
+    artifactPath: cliArtifactPath,
+    build: () => {
+      const buildCli = runWithHardTimeout(
+        process.execPath,
+        [
+          'scripts/pipeline/release/build-cli-binaries.mjs',
+          // Keep integration tests aligned with the centralized pipeline release scripts.
+          // (This repo no longer uses scripts/release/* build entrypoints.)
+          // NOTE: path is repo-root relative.
+          '--channel=preview',
+          `--version=${version}`,
+          `--targets=${target}`,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: 'utf-8',
+          env: { ...process.env },
+          // `inherit` makes it easier to read interactively, but on CI failures we need the full output.
+          // Increase buffer because build logs can be large.
+          maxBuffer: 50 * 1024 * 1024,
+          // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+          timeout: 15 * 60 * 1000,
+        }
+      );
+      assert.equal(buildCli.status, 0, formatSpawnSyncResult(buildCli));
+    },
+  });
   const cliExtract = await extractBinaryFromArtifact({ artifactPath: cliArtifactPath, binaryName: 'happier' });
   t.after(() => {
     spawnSync('bash', ['-lc', `rm -rf "${cliExtract.extractDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
@@ -141,26 +146,30 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   assert.equal(versionText, version, `expected CLI version ${version}, got: ${versionText || '<empty>'}`);
 
   if (isLinuxTarget(target)) {
-    const buildServer = runWithHardTimeout(
-      process.execPath,
-      [
-        'scripts/pipeline/release/build-server-binaries.mjs',
-        '--channel=preview',
-        `--version=${version}`,
-        `--targets=${target}`,
-      ],
-      {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        env: { ...process.env },
-        maxBuffer: 50 * 1024 * 1024,
-        // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
-        timeout: 15 * 60 * 1000,
-      }
-    );
-    assert.equal(buildServer.status, 0, formatSpawnSyncResult(buildServer));
-
     const serverArtifactPath = join(repoRoot, 'dist', 'release-assets', 'server', `happier-server-v${version}-${target}.tar.gz`);
+    await prepareBinarySmokeArtifact({
+      artifactPath: serverArtifactPath,
+      build: () => {
+        const buildServer = runWithHardTimeout(
+          process.execPath,
+          [
+            'scripts/pipeline/release/build-server-binaries.mjs',
+            '--channel=preview',
+            `--version=${version}`,
+            `--targets=${target}`,
+          ],
+          {
+            cwd: repoRoot,
+            encoding: 'utf-8',
+            env: { ...process.env },
+            maxBuffer: 50 * 1024 * 1024,
+            // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+            timeout: 15 * 60 * 1000,
+          }
+        );
+        assert.equal(buildServer.status, 0, formatSpawnSyncResult(buildServer));
+      },
+    });
     const serverExtract = await extractBinaryFromArtifact({ artifactPath: serverArtifactPath, binaryName: 'happier-server' });
     t.after(() => {
       spawnSync('bash', ['-lc', `rm -rf "${serverExtract.extractDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });

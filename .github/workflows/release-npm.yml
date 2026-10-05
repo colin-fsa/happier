@@ -307,11 +307,6 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Run release contract tests
-        run: |
-          unset NODE_AUTH_TOKEN NPM_TOKEN
-          yarn -s test:release:contracts
-
       - name: Verify installer assets are synced
         run: node scripts/pipeline/run.mjs release-sync-installers --check
 
