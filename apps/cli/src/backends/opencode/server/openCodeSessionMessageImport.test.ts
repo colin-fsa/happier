@@ -1,6 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractOpenCodeTextHistoryItems } from './openCodeSessionMessageImport';
+import { extractOpenCodeTextHistoryItems, reconcileOpenCodeCommittedHistoryIdentities } from './openCodeSessionMessageImport';
+
+describe('reconcileOpenCodeCommittedHistoryIdentities', () => {
+  it('does not confuse opaque import identities from different native sessions', () => {
+    const items = [{ messageId: 'a:mid', role: 'assistant' as const, createdAtMs: 1, text: 'current answer' }];
+    const result = reconcileOpenCodeCommittedHistoryIdentities({ remoteSessionId: 'sid', items, metadata: {},
+      baseline: { complete: true, rows: [{ localId: 'opencode:import:history:sid:a:mid', role: 'agent',
+        provider: 'opencode', meta: { remoteSessionId: 'sid:a' } }] } });
+    expect([...result.observedMessageIds]).toEqual([]);
+    expect(result.complete).toBe(true);
+    const legacy = reconcileOpenCodeCommittedHistoryIdentities({ remoteSessionId: 'sid', items, metadata: {},
+      baseline: { complete: true, rows: [{ localId: 'opencode:import:history:sid:a:mid', role: 'agent',
+        provider: 'opencode', meta: { remoteSessionId: 'sid' } }] } });
+    expect([...legacy.observedMessageIds]).toEqual(['a:mid']);
+    const unwitnessed = reconcileOpenCodeCommittedHistoryIdentities({ remoteSessionId: 'sid', items, metadata: {},
+      baseline: { complete: true, rows: [{ localId: 'opencode:import:history:sid:a:mid', role: 'agent',
+        provider: 'opencode', meta: null }] } });
+    expect([...unwitnessed.observedMessageIds]).toEqual([]);
+    expect(unwitnessed.complete).toBe(false);
+  });
+});
 
 describe('extractOpenCodeTextHistoryItems', () => {
   it('includes inline assistant text from non-reasoning parts', () => {

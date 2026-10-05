@@ -14,6 +14,16 @@ import { extractSemanticTranscriptItem } from '@/session/services/transcript/ext
 
 type EncryptionVariant = 'legacy' | 'dataKey';
 
+export type CommittedTranscriptIdentitySnapshot = Readonly<{
+  complete: boolean;
+  rows: ReadonlyArray<Readonly<{
+    localId: string | null;
+    role: 'user' | 'agent';
+    provider?: string;
+    meta: Readonly<Record<string, unknown>> | null;
+  }>>;
+}>;
+
 type SessionTranscriptQueryParams = {
   token: string;
   sessionId: string;

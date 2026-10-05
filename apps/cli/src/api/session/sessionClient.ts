@@ -188,7 +188,9 @@ import { buildUsageReportFromAcpTokenCount } from './acpTokenCountUsageReport';
 import {
     fetchLatestUserPermissionIntentFromEncryptedTranscript,
     fetchRecentTranscriptTextItemsForAcpImportFromServer,
+    type CommittedTranscriptIdentitySnapshot,
 } from './transcriptQueries';
+import { extractSemanticTranscriptItemFromDecryptedPayload } from '@/session/services/transcript/extractSemanticTranscriptItem';
 import {
     discardPendingQueueV2Messages,
     enqueuePendingQueueV2MessageViaHttp,
@@ -4892,6 +4894,54 @@ export class ApiSessionClient extends EventEmitter {
             requireOnline: false,
             request,
         });
+    }
+
+    async fetchCommittedTranscriptIdentitySnapshot(opts?: { sidechainId: string }): Promise<CommittedTranscriptIdentitySnapshot> {
+        const request = async (): Promise<CommittedTranscriptIdentitySnapshot> => {
+            const rows: Array<CommittedTranscriptIdentitySnapshot['rows'][number]> = [];
+            let complete = true;
+            let beforeSeq: number | undefined;
+            for (;;) {
+                const page = await fetchEncryptedTranscriptMessagesPage({
+                    token: this.token, sessionId: this.sessionId, limit: 500,
+                    ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+                    scope: opts ? 'all' : 'main', roles: ['user', 'agent'],
+                });
+                for (const row of page.messages) {
+                    const stored = SessionMessageContentSchema.safeParse(row.content);
+                    if (!stored.success) { complete = false; continue; }
+                    let decoded: unknown;
+                    try { decoded = this.decodeStoredSessionMessageContent(stored.data); }
+                    catch { complete = false; continue; }
+                    if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) { complete = false; continue; }
+                    const item = extractSemanticTranscriptItemFromDecryptedPayload({
+                        decrypted: decoded, row, index: rows.length,
+                        options: { mode: 'transcript', transcriptRoles: ['user', 'assistant'] },
+                    }).item;
+                    if (!item || (item.role !== 'user' && item.role !== 'assistant')) continue;
+                    const payload = decoded as Record<string, unknown>;
+                    const meta = payload.meta && typeof payload.meta === 'object' && !Array.isArray(payload.meta)
+                        ? payload.meta as Record<string, unknown> : null;
+                    // Released imported user rows can carry sidechain identity only in metadata.
+                    // Read both forms rather than assuming the relay materialized the column.
+                    if (opts ? (row.sidechainId ?? meta?.sidechainId) !== opts.sidechainId
+                        : row.sidechainId || meta?.sidechainId) continue;
+                    rows.push({ localId: readNonBlankOpaqueIdentifier(row.localId), role: item.role === 'user' ? 'user' : 'agent',
+                        ...(item.provider ? { provider: item.provider } : {}), meta });
+                }
+                if (!page.hasMore) break;
+                if (page.messages.length === 0 || page.nextBeforeSeq === null
+                    || (beforeSeq !== undefined && page.nextBeforeSeq >= beforeSeq)) {
+                    complete = false;
+                    break;
+                }
+                beforeSeq = page.nextBeforeSeq;
+            }
+            return { rows, complete };
+        };
+        return this.sessionConnectionSupervisor
+            ? runSupervisedRequest({ supervisor: this.sessionConnectionSupervisor, requireAuth: true, requireOnline: false, request })
+            : request();
     }
 
     async fetchCommittedClaudeJsonlMessageBaseline(opts?: { take?: number }): Promise<CommittedClaudeJsonlMessageBaseline> {

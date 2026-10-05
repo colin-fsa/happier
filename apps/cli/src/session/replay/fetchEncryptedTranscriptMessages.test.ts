@@ -23,7 +23,7 @@ describe('fetchEncryptedTranscriptMessages', () => {
   it('uses the canonical endpoint selected by loaded configuration', async () => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
-      data: { messages: [] },
+      data: { messages: [], hasMore: false },
     } as any);
 
     const { fetchEncryptedTranscriptMessages } = await import('./fetchEncryptedTranscriptMessages');
@@ -40,7 +40,7 @@ describe('fetchEncryptedTranscriptMessages', () => {
   it('passes beforeSeq through to the server query params when provided', async () => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
-      data: { messages: [] },
+      data: { messages: [], hasMore: false },
     } as any);
 
     const { fetchEncryptedTranscriptMessages } = await import('./fetchEncryptedTranscriptMessages');
@@ -60,10 +60,10 @@ describe('fetchEncryptedTranscriptMessages', () => {
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
       data: {
-        messages: [{ seq: 1, localId: 'claude-jsonl:main:assistant:a1' }],
+        messages: [{ seq: 6, localId: 'claude-jsonl:main:assistant:a1' }],
         hasMore: true,
-        nextBeforeSeq: 1,
-        nextAfterSeq: null,
+        nextBeforeSeq: null,
+        nextAfterSeq: 6,
       },
     } as any);
 
@@ -77,10 +77,10 @@ describe('fetchEncryptedTranscriptMessages', () => {
     });
 
     expect(res).toEqual({
-      messages: [{ seq: 1, localId: 'claude-jsonl:main:assistant:a1' }],
+      messages: [{ seq: 6, localId: 'claude-jsonl:main:assistant:a1' }],
       hasMore: true,
-      nextBeforeSeq: 1,
-      nextAfterSeq: null,
+      nextBeforeSeq: null,
+      nextAfterSeq: 6,
     });
   });
 
@@ -102,5 +102,27 @@ describe('fetchEncryptedTranscriptMessages', () => {
       name: 'HttpStatusError',
       response: { status: 401 },
     } satisfies Partial<HttpStatusError>);
+  });
+
+  it.each([
+    {},
+    { messages: 'not-a-page', hasMore: false },
+    { messages: [null], hasMore: false },
+    { messages: [] },
+    { messages: [], hasMore: true, nextBeforeSeq: 1 },
+    { messages: [{ seq: 1 }], hasMore: true, nextBeforeSeq: null },
+  ])('rejects malformed successful responses rather than claiming complete history: %j', async (data) => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 10 })).rejects.toThrow();
+  });
+
+  it('rejects a continuation that cannot advance the requested cursor', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { messages: [{ seq: 3 }], hasMore: true, nextAfterSeq: 3, nextBeforeSeq: null },
+    });
+    const { fetchEncryptedTranscriptMessagesPage } = await import('./fetchEncryptedTranscriptMessages');
+    await expect(fetchEncryptedTranscriptMessagesPage({ token: 't', sessionId: 'sess_1', limit: 10, afterSeq: 3 })).rejects.toThrow();
   });
 });

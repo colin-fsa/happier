@@ -32,6 +32,10 @@ export async function fetchEncryptedTranscriptMessagesPage(params: Readonly<{
   roles?: readonly ('user' | 'agent' | 'event' | 'unknown')[];
 }>): Promise<FetchEncryptedTranscriptMessagesPageResult> {
   const serverUrl = resolveServerHttpBaseUrl();
+  const beforeSeq = typeof params.beforeSeq === 'number' && Number.isFinite(params.beforeSeq)
+    ? Math.max(0, Math.floor(params.beforeSeq)) : undefined;
+  const afterSeq = typeof params.afterSeq === 'number' && Number.isFinite(params.afterSeq)
+    ? Math.max(0, Math.floor(params.afterSeq)) : undefined;
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.token}`,
@@ -39,8 +43,8 @@ export async function fetchEncryptedTranscriptMessagesPage(params: Readonly<{
     },
     params: {
       limit: params.limit,
-      ...(typeof params.beforeSeq === 'number' && Number.isFinite(params.beforeSeq) ? { beforeSeq: Math.max(0, Math.floor(params.beforeSeq)) } : {}),
-      ...(typeof params.afterSeq === 'number' && Number.isFinite(params.afterSeq) ? { afterSeq: Math.max(0, Math.floor(params.afterSeq)) } : {}),
+      ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+      ...(afterSeq !== undefined ? { afterSeq } : {}),
       ...(params.scope ? { scope: params.scope } : {}),
       ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
       ...(params.role ? { role: params.role } : {}),
@@ -57,13 +61,37 @@ export async function fetchEncryptedTranscriptMessagesPage(params: Readonly<{
     throw new Error(`Unexpected status from /v1/sessions/:id/messages: ${response.status}`);
   }
 
-  const raw = (response.data as any)?.messages;
-  const messages = Array.isArray(raw) ? (raw as RawTranscriptRow[]) : [];
-  const hasMore = (response.data as any)?.hasMore === true;
-  const nextBeforeSeqRaw = (response.data as any)?.nextBeforeSeq;
-  const nextAfterSeqRaw = (response.data as any)?.nextAfterSeq;
-  const nextBeforeSeq = typeof nextBeforeSeqRaw === 'number' && Number.isFinite(nextBeforeSeqRaw) ? nextBeforeSeqRaw : null;
-  const nextAfterSeq = typeof nextAfterSeqRaw === 'number' && Number.isFinite(nextAfterSeqRaw) ? nextAfterSeqRaw : null;
+  // Released server-v0.2.12 returns an explicit page and continuation. A malformed
+  // successful response is not proof of empty/complete committed history.
+  const data: unknown = response.data;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    throw new Error('Invalid transcript messages page');
+  }
+  const page = data as Record<string, unknown>;
+  if (!Array.isArray(page.messages) || typeof page.hasMore !== 'boolean') {
+    throw new Error('Invalid transcript messages page');
+  }
+  const messages: RawTranscriptRow[] = page.messages.map((row: unknown) => {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      throw new Error('Invalid transcript message row');
+    }
+    return row as Record<string, unknown>;
+  });
+  const hasMore = page.hasMore;
+  const readCursor = (value: unknown): number | null => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new Error('Invalid transcript page cursor');
+    }
+    return value;
+  };
+  const nextBeforeSeq = readCursor(page.nextBeforeSeq);
+  const nextAfterSeq = readCursor(page.nextAfterSeq);
+  if (hasMore && (messages.length === 0 || (afterSeq !== undefined
+    ? nextAfterSeq === null || nextAfterSeq <= afterSeq
+    : nextBeforeSeq === null || (beforeSeq !== undefined && nextBeforeSeq >= beforeSeq)))) {
+    throw new Error('Transcript page continuation cannot advance');
+  }
 
   return { messages, hasMore, nextBeforeSeq, nextAfterSeq };
 }

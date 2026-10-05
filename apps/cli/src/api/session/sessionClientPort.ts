@@ -111,6 +111,7 @@ export interface SessionClientPort {
   hasActiveCanonicalTurn?(): boolean;
   fetchCommittedClaudeJsonlMessageBaseline?(opts?: { take?: number }): Promise<import('@/backends/claude/utils/claudeJsonlMessageKey').CommittedClaudeJsonlMessageBaseline>;
   fetchRecentTranscriptTextItemsForAcpImport?(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>>;
+  fetchCommittedTranscriptIdentitySnapshot?(): Promise<import('./transcriptQueries').CommittedTranscriptIdentitySnapshot>;
   sendAgentMessage(provider: ACPProvider, body: ACPMessageData, opts?: { localId?: string; meta?: Record<string, unknown> }): void;
   sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
   sendAgentMessageEphemeral?(

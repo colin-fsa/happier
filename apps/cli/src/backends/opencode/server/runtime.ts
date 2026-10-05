@@ -33,7 +33,7 @@ import {
   type OpenCodeGlobalEventDelivery,
   type OpenCodeServerRuntimeClient,
 } from './client';
-import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted } from './openCodeSessionMessageImport';
+import { extractOpenCodeTextHistoryItems, importOpenCodeTextHistoryCommitted, reconcileOpenCodeCommittedHistoryIdentities } from './openCodeSessionMessageImport';
 import { extractOpenCodeTaskChildSessionId, importOpenCodeTaskSidechainBestEffort } from './openCodeTaskSidechainImport';
 import { createOpenCodeTranscriptStreamBridge } from './openCodeTranscriptStreamBridge';
 import { asRecord, normalizeString, normalizeStringArray } from './openCodeParsing';
@@ -1995,6 +1995,9 @@ export function createOpenCodeServerRuntime(params: {
   //   completion evidence (so partial in-progress assistant text is never committed).
   let passiveTranscriptProjectionInFlight = false;
   let passiveTranscriptProjectionRerunRequested = false;
+  // A restored controller must reconcile committed identities before treating older native rows
+  // as external. Failed reads stay pending for the existing idle/reconnect projection owner.
+  let externalHistoryReconciliationPending = false;
 
   const buildSettledExternalTranscriptItems = (rawMessages: unknown[]): ReturnType<typeof extractOpenCodeTextHistoryItems> => {
     const settledMessageIds = new Set<string>();
@@ -2033,10 +2036,12 @@ export function createOpenCodeServerRuntime(params: {
       do {
         passiveTranscriptProjectionRerunRequested = false;
         if (!sessionId || turnPromptActive) return;
+        const projectionSessionId: string = sessionId;
         const c = await ensureClient();
+        if (turnPromptActive || sessionId !== projectionSessionId) return;
         // Ownership: only this session's OpenCode session id and its discovered sidechains.
         const ownedSessions: Array<Readonly<{ remoteSessionId: string; sidechainId: string | null }>> = [
-          { remoteSessionId: sessionId, sidechainId: null },
+          { remoteSessionId: projectionSessionId, sidechainId: null },
           ...Array.from(sidechainIdByRemoteSessionId.entries()).map(([remoteSessionId, sidechainId]) => ({
             remoteSessionId,
             sidechainId,
@@ -2045,15 +2050,48 @@ export function createOpenCodeServerRuntime(params: {
         for (const owned of ownedSessions) {
           let raw: unknown;
           try {
-            raw = await c.sessionMessagesList({ sessionId: owned.remoteSessionId });
+            raw = c.sessionMessagesListRaw
+              ? await c.sessionMessagesListRaw({ sessionId: owned.remoteSessionId })
+              : await c.sessionMessagesList({ sessionId: owned.remoteSessionId });
+            if (!Array.isArray(raw)) throw new Error('OpenCode session message inventory was malformed');
           } catch (error) {
+            logger.infoFile('[OpenCodeServer] opencode_passive_transcript_projection_failed', { phase: 'history_read' });
             logger.debug('[OpenCodeServer] passive transcript projection: list failed (non-fatal)', {
               sessionId: owned.remoteSessionId,
               error,
             });
             continue;
           }
-          const items = buildSettledExternalTranscriptItems(Array.isArray(raw) ? raw : []);
+          // A live prompt can acquire ownership while the passive HTTP inventory is in flight.
+          if (turnPromptActive || sessionId !== projectionSessionId) return;
+          if (externalHistoryReconciliationPending && owned.sidechainId === null) {
+            const historicalItems = extractOpenCodeTextHistoryItems(raw);
+            let baseline;
+            try {
+              baseline = await params.session.fetchCommittedTranscriptIdentitySnapshot();
+            } catch (error) {
+              logger.infoFile('[OpenCodeServer] opencode_history_reconciliation_incomplete', { reason: 'baseline_read_failed' });
+              logger.debug('[OpenCodeServer] Failed reading committed history identities (non-fatal)', error);
+              return;
+            }
+            if (turnPromptActive || sessionId !== projectionSessionId) return;
+            const reconciliation = reconcileOpenCodeCommittedHistoryIdentities({ baseline,
+              metadata: params.session.getMetadataSnapshot(), remoteSessionId: projectionSessionId, items: historicalItems });
+            for (const messageId of reconciliation.observedMessageIds) observedRemoteTextMessageIds.add(messageId);
+            if (!reconciliation.complete) {
+              // Missing legacy identities cannot prove absence. Suppress only the historical rows
+              // present in this snapshot; later new native turns still use the ordinary importer.
+              markObservedTextHistoryItems(historicalItems);
+              logger.infoFile('[OpenCodeServer] opencode_history_reconciliation_incomplete', {
+                reason: 'unproven_committed_identities', unmappedUsers: reconciliation.unmappedUsers,
+                unmappedAgents: reconciliation.unmappedAgents, baselineComplete: baseline.complete,
+              });
+              params.session.sendSessionEvent({ type: 'message', message:
+                'Some earlier OpenCode messages could not be reconciled safely because their saved message identities are incomplete. New messages will continue to sync.' });
+            }
+            externalHistoryReconciliationPending = false;
+          }
+          const items = buildSettledExternalTranscriptItems(raw);
           if (items.length === 0) continue;
           await importOpenCodeTextHistoryCommitted({
             session: params.session,
@@ -2067,6 +2105,7 @@ export function createOpenCodeServerRuntime(params: {
         }
       } while (passiveTranscriptProjectionRerunRequested);
     } catch (error) {
+      logger.infoFile('[OpenCodeServer] opencode_passive_transcript_projection_failed', { phase: 'history_commit' });
       logger.debug('[OpenCodeServer] passive transcript projection failed (non-fatal)', error);
     } finally {
       passiveTranscriptProjectionInFlight = false;
@@ -2935,6 +2974,7 @@ export function createOpenCodeServerRuntime(params: {
                   { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
                 );
               })().catch((error) => {
+                logger.infoFile('[OpenCodeServer] opencode_task_sidechain_import_failed', { phase: 'history_import' });
                 logger.debug('[OpenCodeServer] Failed to import Task sidechain (non-fatal)', error);
               });
 
@@ -3698,6 +3738,8 @@ export function createOpenCodeServerRuntime(params: {
           idleSignalSeen = true;
           idleSignalSeenViaControlPlane = false;
           void maybeResolveTurnOnIdleSignal();
+        } else {
+          scheduleExternalSessionTranscriptProjection();
         }
         settleThinkingOnOpenCodeIdleSignal();
       }
@@ -3713,6 +3755,10 @@ export function createOpenCodeServerRuntime(params: {
         idleSignalSeen = true;
         idleSignalSeenViaControlPlane = false;
         void maybeResolveTurnOnIdleSignal();
+      } else {
+        // V2 emits execution completion (normalized to idle), not V1 message.updated.
+        // The existing settled-history owner captures turns authored in the native TUI.
+        scheduleExternalSessionTranscriptProjection();
       }
       settleThinkingOnOpenCodeIdleSignal();
       return;
@@ -4021,20 +4067,16 @@ export function createOpenCodeServerRuntime(params: {
           (existingVendorSessionId && existingVendorSessionId === resumeId) ||
           Boolean(marker && typeof marker === 'object' && (marker as any).v === 1 && String((marker as any).remoteSessionId ?? '') === resumeId);
         if (shouldSkipHistoryImport) {
-          try {
-            const raw = await c.sessionMessagesList({ sessionId: resumeId });
-            markObservedTextHistoryItems(extractOpenCodeTextHistoryItems(Array.isArray(raw) ? raw : []));
-          } catch {
-            // non-fatal
-          }
+          externalHistoryReconciliationPending = true;
+          await projectExternalSessionMessagesBestEffort();
         }
 
         // Best-effort: import remote history into a fresh Happier session when resuming. This powers
         // the provider contract scenario `acp_resume_fresh_session_imports_history`.
         void (async () => {
           try {
-            // If we're resuming inside an existing Happier session that already has an OpenCode sessionId,
-            // do not import remote history again (avoids transcript duplication and resume flakiness).
+            // Existing Happier sessions reconcile through the settled passive owner above. Fresh
+            // Happier sessions retain the explicit full native-history import contract.
             if (shouldSkipHistoryImport) {
               return;
             }
@@ -4537,6 +4579,7 @@ export function createOpenCodeServerRuntime(params: {
       resetServerConnectedReadiness();
       setThinking(false);
       sessionId = null;
+      externalHistoryReconciliationPending = false;
       foregroundToolTracker.resetForProviderSession(null);
       selectedAgent = null;
       selectedModel = null;

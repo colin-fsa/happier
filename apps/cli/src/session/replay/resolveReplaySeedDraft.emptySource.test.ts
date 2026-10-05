@@ -78,7 +78,7 @@ describe('resolveReplaySeedDraft — empty source vs failed retrieval', () => {
         }
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: replayRows(sourceMode) }));
+        res.end(JSON.stringify({ messages: replayRows(sourceMode), hasMore: false, nextBeforeSeq: null, nextAfterSeq: null }));
         return;
       }
       res.statusCode = 404;

@@ -301,6 +301,10 @@ function createFakeSession(sessionId = 'happy_sess_opencode') {
     },
     sendUserTextMessageCommitted: vi.fn(async (_input?: unknown) => {}),
     sendAgentMessageCommitted: vi.fn(async (_input?: unknown) => {}),
+    fetchCommittedTranscriptIdentitySnapshot: vi.fn(async (): Promise<import('@/api/session/transcriptQueries').CommittedTranscriptIdentitySnapshot> => ({
+      complete: true,
+      rows: [],
+    })),
     ensureMetadataSnapshot: vi.fn(async () => ({ ok: true })),
     setRuntimeWorkingDirectory: vi.fn(),
     getMetadataSnapshot: () => meta,
@@ -3718,7 +3722,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(session.__getMetadata()?.opencodeUserMessageIdMapV1).toBeUndefined();
   });
 
-  it('does not import externally-originated OpenCode TUI text through owned runtime live sync', async () => {
+  it('imports native user history at idle without treating incomplete assistant text as settled', async () => {
     const client = createFakeClient() as any;
     const session = createFakeSession();
     let stage: 'initial' | 'busy' | 'idle' = 'initial';
@@ -3776,13 +3780,15 @@ describe('createOpenCodeServerRuntime', () => {
     });
     await flushTranscriptCommitMicrotasks();
 
-    expect(client.sessionMessagesList).not.toHaveBeenCalled();
-    expect(session.sendUserTextMessageCommitted).not.toHaveBeenCalled();
+    expect(client.sessionMessagesList).toHaveBeenCalledWith({ sessionId: 'ses_1' });
+    expect(session.sendUserTextMessageCommitted).toHaveBeenCalledWith('hello from the TUI', expect.objectContaining({
+      localId: 'opencode:import:history:ses_1:msg_live_user_1',
+    }));
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(session.keepAlive).toHaveBeenCalledWith(false, 'remote');
   });
 
-  it('does not import remote assistant text for externally-originated turns in owned runtime mode', async () => {
+  it('requires authoritative assistant completion evidence even after a native idle event', async () => {
     const client = createFakeClient() as any;
     const session = createFakeSession();
     let stage: 'initial' | 'busy' | 'idle' = 'initial';
@@ -3844,7 +3850,7 @@ describe('createOpenCodeServerRuntime', () => {
     });
     await flushTranscriptCommitMicrotasks();
 
-    expect(client.sessionMessagesList).not.toHaveBeenCalled();
+    expect(client.sessionMessagesList).toHaveBeenCalledWith({ sessionId: 'ses_1' });
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
   });
 
@@ -9736,17 +9742,21 @@ describe('createOpenCodeServerRuntime', () => {
     expect(importedAssistant).toBeTruthy();
   });
 
-  it('does not import remote history when resuming into an existing Happier session', async () => {
+  it('does not import already committed remote history when resuming into an existing Happier session', async () => {
     const client = createFakeClient() as any;
     client.sessionMessagesList = vi.fn(async () => ([
       {
-        info: { role: 'assistant', id: 'msg_a1', time: { created: 2 }, sessionID: 'ses_remote' },
+        info: { role: 'assistant', id: 'msg_a1', time: { created: 2, completed: 3 }, finish: 'stop', sessionID: 'ses_remote' },
         parts: [{ type: 'text', text: 'SHOULD_NOT_IMPORT' }],
       },
     ]));
 
     const session = createFakeSession();
     session.__getMetadata().opencodeSessionId = 'ses_remote';
+    session.fetchCommittedTranscriptIdentitySnapshot.mockResolvedValue({ complete: true, rows: [{
+      localId: 'prior-assistant', role: 'agent', provider: 'opencode',
+      meta: { opencodeMessageId: 'msg_a1', opencodeRemoteSessionId: 'ses_remote' },
+    }] });
 
     const runtime = createOpenCodeServerRuntime({
       directory: '/tmp',
