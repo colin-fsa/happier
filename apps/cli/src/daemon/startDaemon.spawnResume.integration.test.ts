@@ -483,18 +483,15 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
-vi.mock('@/integrations/herdr/runtimeBinary', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/integrations/herdr/runtimeBinary')>(),
-  resolveHerdrRuntimeBinary: vi.fn(async () => '/fake/herdr'),
-}));
+vi.mock('@/integrations/herdr/runtimeBinary', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/integrations/herdr/runtimeBinary')>();
+  return { ...actual, resolveHerdrRuntimeBinary: vi.fn(actual.resolveHerdrRuntimeBinary) };
+});
 
-vi.mock('@/integrations/herdr/client', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@/integrations/herdr/client')>(),
-  createHerdrClient: vi.fn(() => ({
-    ...herdrSpawnCapture,
-    socketPath: '/tmp/herdr-test.sock',
-  })),
-}));
+vi.mock('@/integrations/herdr/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/integrations/herdr/client')>();
+  return { ...actual, createHerdrClient: vi.fn(actual.createHerdrClient) };
+});
 
 vi.mock('@/integrations/caffeinate', () => ({
   startCaffeinate: vi.fn(() => false),
@@ -1066,15 +1063,36 @@ const [actualReattachmentOwner, actualChildExitOwner, actualMetadataUpdateOwner,
 ]);
 
 describe('startDaemon spawn resume wiring (integration)', () => {
-  beforeEach(() => {
+  let closeHerdrFixture: (() => void) | undefined;
+  let herdrFixtureRun: Promise<void> | undefined;
+  let previousHerdrFixtureBinary: string | undefined;
+  beforeEach(async () => {
+    previousHerdrFixtureBinary = process.env.HERDR_BIN_PATH;
     if (ORIGINAL_PLATFORM_DESCRIPTOR) {
       // Most cases exercise platform-independent daemon lifecycle behavior. Keep their
       // launch adapter deterministic; dedicated cases below opt into Linux/macOS behavior.
       Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'darwin' });
     }
+    let fixtureReady!: () => void;
+    const ready = new Promise<void>(resolve => { fixtureReady = resolve; });
+    const closed = new Promise<void>(resolve => { closeHerdrFixture = resolve; });
+    herdrFixtureRun = withHerdrApi(async api => {
+      process.env.HERDR_BIN_PATH = api.binary;
+      const clients = await import('@/integrations/herdr/client');
+      const actualClients = await vi.importActual<typeof import('@/integrations/herdr/client')>('@/integrations/herdr/client');
+      // Keep endpoint admission and version parsing real, substituting only the native socket.
+      vi.mocked(clients.createHerdrClient).mockImplementation(params => actualClients.createHerdrClient({ ...params, socketPath: api.socketPath }));
+      fixtureReady();
+      await closed;
+    });
+    await Promise.race([ready, herdrFixtureRun]);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    closeHerdrFixture?.();
+    await herdrFixtureRun;
+    if (previousHerdrFixtureBinary === undefined) delete process.env.HERDR_BIN_PATH;
+    else process.env.HERDR_BIN_PATH = previousHerdrFixtureBinary;
     resetActiveAccountSettingsSnapshotForTests();
     vi.restoreAllMocks();
     harness.resetControlRefs();
@@ -2247,6 +2265,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const previousHeartbeatInterval = process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
     const previousTmuxInlineLimit = process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
     const previousHerdrBinary = process.env.HERDR_BIN_PATH;
+    const previousClaudeBinary = process.env.HAPPIER_CLAUDE_PATH;
     const isTmuxCreation = contract === 'tmux_creation_unconfirmed' || contract === 'tmux_creation_not_started';
     const isHerdrCreation = contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped';
     const isTmux = contract === 'tmux_binding_exit_overlap' || isTmuxCreation;
@@ -2258,6 +2277,21 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const isWrapperPromotion = contract === 'wrapper_promotion';
     const isExitBeforeFirstReport = contract === 'exit_before_first_report';
     const isEarlyRegularExit = contract === 'early_regular_exit' || contract === 'early_regular_report_exit' || isWrapperPromotion || isExitBeforeFirstReport;
+    const fixtureAgent = isEarlyRegularExit || isRestoredPlain || isWindows ? 'codex' : 'claude';
+    const childProcessBoundary = await import('node:child_process');
+    const actualChildProcessBoundary = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+    // Synthetic runner PIDs must have matching OS census evidence. Returning an
+    // actual process row keeps classification and report-marker custody real,
+    // without falling through to the shared machine's unrelated process census.
+    vi.spyOn(childProcessBoundary, 'execFileSync').mockImplementation(((file, args, options) => {
+      if (file === 'ps' && Array.isArray(args) && args.includes('-p')
+        && (args.includes('12345') || args.includes('23456'))) {
+        const command = `/test/apps/cli/dist/index.mjs ${fixtureAgent} --started-by daemon`;
+        if (args.includes('stat=,ucomm=,command=')) return `S node ${command}\n`;
+        if (args.includes('command=')) return `${command}\n`;
+      }
+      return actualChildProcessBoundary.execFileSync(file, args, options);
+    }) as typeof childProcessBoundary.execFileSync);
     const isNonceReplay = contract.endsWith('_nonce_replay');
     const recoveredReady = contract === 'ready_nonce_replay' || isRestoredPlain || contract === 'missing_id_nonce_replay' || contract === 'legacy_windows_nonce_replay'
       || contract === 'console_nonce_replay' || contract === 'tmux_nonce_replay' || contract === 'zellij_nonce_replay';
@@ -2316,12 +2350,15 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         if (previous) target.mockImplementation(previous);
       });
     };
-    if (isHerdrCreation || isTmuxCreation) {
+    if (fixtureAgent === 'claude') {
+      process.env.HAPPIER_CLAUDE_PATH = await writeExecutableShim({
+        dir: fixtureHome, fileName: 'claude', contents: `#!${process.execPath}\nprocess.exit(0);\n`,
+      });
       setActiveAccountSettingsSnapshot({
         source: 'network', settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
         settings: accountSettingsParse({ claudeUnifiedTerminalEnabled: false }),
       });
-      vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
+      delegateToActual(vi.mocked(fetchSessionByIdCompat), async () => createSessionRecordFixture({
         id: 'sess_plain', encryptionMode: 'plain', dataEncryptionKey: null,
         metadata: JSON.stringify({ flavor: 'claude', claudeSessionId: 'vendor-claude-1', path: '/tmp' }),
       }));
@@ -2329,10 +2366,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     if (isHerdrCreation && api) {
       // The shim substitutes only the external native executable; registry, version
       // admission, socket protocol, and creation/cleanup decisions remain real.
-      process.env.HERDR_BIN_PATH = await writeExecutableShim({
-        dir: fixtureHome, fileName: 'herdr-inventory',
-        contents: `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === '--version') console.log('herdr 0.9.2');\nelse if (process.argv.slice(2).join(' ') === 'session list --json') console.log(${JSON.stringify(JSON.stringify({ sessions: [{ name: 'default', socket_path: api.socketPath, running: true }] }))});\nelse process.exit(1);\n`,
-      });
+      process.env.HERDR_BIN_PATH = api.binary;
       const binaries = await import('@/integrations/herdr/runtimeBinary');
       const actualBinaries = await vi.importActual<typeof import('@/integrations/herdr/runtimeBinary')>('@/integrations/herdr/runtimeBinary');
       delegateToActual(vi.mocked(binaries.resolveHerdrRuntimeBinary), actualBinaries.resolveHerdrRuntimeBinary);
@@ -2347,6 +2381,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       delegateToActual(vi.mocked(hosts.createDefaultTerminalHostRegistry), () => actualHosts.createDefaultTerminalHostRegistry({ zellijBinary: null }));
     }
     delegateToActual(vi.mocked(catalog.requireCatalogEntry), actualCatalog.requireCatalogEntry);
+    delegateToActual(vi.mocked(catalog.resolveCatalogAgentId), actualCatalog.resolveCatalogAgentId);
+    delegateToActual(vi.mocked(catalog.resolveAgentCliSubcommand), actualCatalog.resolveAgentCliSubcommand);
     if (isWindows) {
       Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'win32' });
       const modes = await import('./platform/windows/windowsSessionConsoleMode');
@@ -2569,8 +2605,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }
       guardedRpc.mockClear();
       const accepting = spawnSession({
-        directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: isHerdrCreation || isTmuxCreation ? 'claude' : 'codex' },
-        existingSessionId: 'sess_plain', ...(!isHerdrCreation && !isTmuxCreation ? { codexBackendMode: 'appServer' as const } : {}),
+        directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: fixtureAgent },
+        existingSessionId: 'sess_plain', ...(fixtureAgent === 'codex' ? { codexBackendMode: 'appServer' as const } : {}),
         terminal: isTmux ? { mode: 'tmux', tmux: { sessionName: 'happier-fixture' } } : isEarlyRegularExit || isRestoredPlain || isWindows ? { mode: 'plain' } : { mode: 'herdr', herdr: { sessionName: 'default' } },
         ...(isWindows ? { windowsRemoteSessionLaunchMode: 'console' as const } : {}),
         token: 'token-daemon', ...(contract !== 'resume_after_stop' ? { spawnNonce: `hosted-completion-${contract}` } : {}),
@@ -2578,7 +2614,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       const metadata = {
         path: '/tmp', host: 'test-host', homeDir: '/tmp/home', happyHomeDir: fixtureHome,
         happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools', hostPid: 12345,
-        startedBy: 'daemon' as const, flavor: 'codex', codexSessionId: 'vendor-plain-1',
+        startedBy: 'daemon' as const, flavor: fixtureAgent,
+        ...(fixtureAgent === 'claude' ? { claudeSessionId: 'vendor-claude-1' } : { codexSessionId: 'vendor-plain-1' }),
       };
       if (contract === 'early_webhook' || contract === 'early_webhook_marker_failed') {
         await markerEntered;
@@ -2948,7 +2985,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         await report!('sess_plain', {
           path: '/tmp', host: 'test-host', homeDir: '/tmp/home', happyHomeDir: fixtureHome,
           happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools', hostPid: 12345,
-          startedBy: 'daemon', flavor: 'codex', codexSessionId: 'vendor-plain-1',
+          startedBy: 'daemon', flavor: fixtureAgent,
+          ...(fixtureAgent === 'claude' ? { claudeSessionId: 'vendor-claude-1' } : { codexSessionId: 'vendor-plain-1' }),
         });
         if (contract === 'respawn_with_nonce') {
           // The original caller keeps its idempotent receipt; recovery is a different launch attempt.
@@ -2959,6 +2997,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (previousHerdrBinary === undefined) delete process.env.HERDR_BIN_PATH;
       else process.env.HERDR_BIN_PATH = previousHerdrBinary;
+      if (previousClaudeBinary === undefined) delete process.env.HAPPIER_CLAUDE_PATH;
+      else process.env.HAPPIER_CLAUDE_PATH = previousClaudeBinary;
       replayClock?.mockRestore();
       releaseMarker();
       releaseBinding();
@@ -3053,7 +3093,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('launches an app-created Codex App Server session as a local Happier runner in Herdr', async () => {
+  it('launches an app-created Codex App Server controller with an optional local Herdr client', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const previousRefresh = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -3089,17 +3129,17 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
       if (result.type !== 'success') throw new Error(JSON.stringify(result));
       expect(result).toMatchObject({ type: 'success' });
-      expect(herdrSpawnCapture.createPane).toHaveBeenCalledWith(expect.objectContaining({
-        argv: expect.arrayContaining([
+      const [argv, options] = spawnHappyCLI.mock.calls[0];
+      expect(argv).toEqual(expect.arrayContaining([
           'codex',
           '--happy-starting-mode', 'local',
-          '--happy-terminal-mode', 'herdr',
+          '--happy-terminal-mode', 'plain',
           '--happy-terminal-requested', 'herdr',
           '--happy-herdr-session-name', 'default',
-        ]),
-        env: expect.objectContaining({ HAPPIER_CODEX_BACKEND_MODE: 'appServer' }),
-      }));
-      expect(spawnHappyCLI).not.toHaveBeenCalled();
+          '--happy-herdr-socket-path', expect.any(String),
+        ]));
+      expect(options).toMatchObject({ env: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } });
+      expect(herdrSpawnCapture.createPane).not.toHaveBeenCalled();
     } finally {
       if (run) {
         harness.requestShutdown('happier-cli');
@@ -3117,7 +3157,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it('launches an app-created Codex App Server session as a local Happier runner in Zellij', async () => {
+  it('launches an app-created Codex App Server controller with an optional local Zellij client', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const previousRefresh = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
@@ -3152,11 +3192,13 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       });
 
       if (result.type !== 'success') throw new Error(JSON.stringify(result));
-      expect(zellijSpawnCapture.createOrAttachHost).toHaveBeenCalledWith(expect.objectContaining({
-        spawnArgv: expect.arrayContaining(['codex', '--happy-starting-mode', 'local']),
-        spawnEnv: expect.objectContaining({ HAPPIER_CODEX_BACKEND_MODE: 'appServer' }),
-      }));
-      expect(spawnHappyCLI).not.toHaveBeenCalled();
+      const [argv, options] = spawnHappyCLI.mock.calls[0];
+      expect(argv).toEqual(expect.arrayContaining([
+        'codex', '--happy-starting-mode', 'local',
+        '--happy-terminal-mode', 'plain', '--happy-terminal-requested', 'zellij',
+      ]));
+      expect(options).toMatchObject({ env: { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } });
+      expect(zellijSpawnCapture.createOrAttachHost).not.toHaveBeenCalled();
     } finally {
       if (run) {
         harness.requestShutdown('happier-cli');

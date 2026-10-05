@@ -4,12 +4,14 @@ import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 
 type ApiFault = 'error' | 'disconnect' | 'timeout';
 
 /** The real client talks to this external Herdr socket boundary. No Happier logic is replaced. */
 export async function withHerdrApi<T>(run: (api: Readonly<{
   socketPath: string;
+  binary: string;
   faults: Map<string, ApiFault>;
   panes: Set<string>;
   tabs: Set<string>;
@@ -22,6 +24,14 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
   response?: (method: string, params: Record<string, unknown>) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 }> = {}): Promise<T> {
   return await withTempDir('herdr-api-', async (directory) => {
+    // Only the version probe crosses this executable boundary. All Herdr API
+    // operations still use the real socket client and the server below.
+    const binary = await writeExecutableShim({ dir: directory,
+      fileName: process.platform === 'win32' ? 'herdr.cmd' : 'herdr',
+      contents: process.platform === 'win32'
+        ? '@echo off\r\nif "%1"=="--version" (echo herdr 0.9.2 & exit /b 0)\r\nexit /b 1\r\n'
+        : '#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo "herdr 0.9.2"\n  exit 0\nfi\nexit 1\n',
+    });
     const socketPath = options.socketPath ?? (process.platform === 'win32'
       ? `\\\\.\\pipe\\happier-herdr-test-${randomUUID()}`
       : join(directory, 'api.sock'));
@@ -109,7 +119,7 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
     };
     await start();
     try {
-      return await run({ socketPath, faults, panes, tabs, requests, beforeResponse, setEmpty: () => { empty = true; }, start, stop });
+      return await run({ socketPath, binary, faults, panes, tabs, requests, beforeResponse, setEmpty: () => { empty = true; }, start, stop });
     } finally {
       await stop();
     }
