@@ -63,12 +63,10 @@ describe('SlideTransitionBlurLayer testID forwarding', () => {
         }
 
         const screen = await renderScreen(<Harness />);
-        // First render may return null while expo-blur loads asynchronously; let
-        // microtasks drain and re-render to surface the cached component.
+        // Await the actual lazy import, then let React commit its state update.
         await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            await vi.dynamicImportSettled();
         });
-        await screen.update(<Harness />);
 
         // The native blur path renders an `AnimatedBlurView` (a host component named
         // 'BlurView' under the test mock). The testID prop must be forwarded onto it
