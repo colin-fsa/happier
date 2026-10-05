@@ -1772,6 +1772,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
@@ -1912,6 +1913,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
             { createdAt: 3, content: { t: 'encrypted', c: encryptedThree } },
@@ -2011,6 +2013,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } } },
           ],
@@ -2088,6 +2091,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } } },
           ],
@@ -2183,7 +2187,7 @@ describe('registerMachineRpcHandlers', () => {
       } as any)
       .mockResolvedValueOnce({
         status: 200,
-        data: { messages },
+        data: { hasMore: false, messages },
       } as any);
 
     postSpy.mockImplementationOnce(echoCreatedSessionRow({
@@ -2303,6 +2307,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
@@ -2674,6 +2679,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'one' } } } },
             { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'two' } } } },
@@ -2800,6 +2806,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 20,
@@ -2832,6 +2839,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             ...encryptedMessages.map((ciphertext, idx) => ({
               seq: idx + 1,
@@ -2966,6 +2974,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
           ],
@@ -2993,6 +3002,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
             { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
@@ -3125,7 +3135,7 @@ describe('registerMachineRpcHandlers', () => {
       // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages (beforeSeq=1 yields empty)
       .mockResolvedValueOnce({
         status: 200,
-        data: { messages: [] },
+        data: { hasMore: false, messages: [] },
       } as any);
 
     const result = await handler!({
@@ -3245,6 +3255,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             ...encryptedMessages.map((ciphertext, idx) => ({
               seq: idx + 1,
@@ -3372,6 +3383,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } },
             { seq: 2, createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
@@ -3495,6 +3507,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -3638,6 +3651,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -4323,6 +4337,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } } },
           ],
@@ -4701,6 +4716,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -4839,6 +4855,7 @@ describe('registerMachineRpcHandlers', () => {
 	      .mockResolvedValueOnce({
 	        status: 200,
 	        data: {
+	          hasMore: false,
 	          messages: [{ seq: 2, createdAt: 21, content: { t: 'encrypted', c: encryptedChildMessages[1] } }],
 	        },
 	      } as any)
@@ -4884,6 +4901,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: encryptedChildMessages.map((ciphertext, idx) => ({
             seq: idx + 1,
             createdAt: 20 + idx,
@@ -4895,6 +4913,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: encryptedRootMessages.map((ciphertext, idx) => ({
             seq: idx + 1,
             createdAt: idx + 1,
@@ -5470,6 +5489,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -5982,6 +6002,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 3,
@@ -6250,6 +6271,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
           ],
@@ -6342,6 +6364,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
           ],
@@ -6469,6 +6492,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -6673,6 +6697,7 @@ describe('registerMachineRpcHandlers', () => {
 	      .mockResolvedValueOnce({
 	        status: 200,
 	        data: {
+	          hasMore: false,
 	          messages: [
 	            { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
 	          ],
@@ -6702,6 +6727,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
             { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'hi fork' } } } },
@@ -6883,6 +6909,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello fork' } } } },
           ],
@@ -7044,6 +7071,7 @@ describe('registerMachineRpcHandlers', () => {
       .mockResolvedValueOnce({
         status: 200,
         data: {
+          hasMore: false,
           messages: [{ seq: 1, createdAt: 1, content: { t: 'encrypted', c: encryptedOne } }],
         },
       } as any);

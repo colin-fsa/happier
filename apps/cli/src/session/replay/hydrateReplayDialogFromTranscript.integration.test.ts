@@ -68,6 +68,7 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
+            hasMore: false,
             messages: [
               {
                 seq: 1,
@@ -162,6 +163,7 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
+            hasMore: false,
             messages: [
               {
                 seq: 1,
@@ -269,6 +271,7 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
+            hasMore: false,
             messages: [
               {
                 seq: 1,
@@ -373,7 +376,7 @@ describe('hydrateReplayDialogFromTranscript (integration)', () => {
       if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages }));
+        res.end(JSON.stringify({ hasMore: false, messages }));
         return;
       }
 

@@ -61,9 +61,10 @@ describe('daemon control server: /continue-with-replay (integration)', () => {
         api.get('/v1/sessions/:id/messages', async (req) => {
             const id = String((req.params as any).id);
             if (id !== previousSessionId) {
-                return { messages: [] };
+                return { hasMore: false, messages: [] };
             }
             return {
+                hasMore: false,
                 messages: [
                     {
                         seq: 1,
@@ -218,6 +219,7 @@ describe('daemon control server: /continue-with-replay (integration)', () => {
 
         api.get('/v1/sessions/:id/messages', async () => {
             return {
+                hasMore: false,
                 messages: [
                     {
                         seq: 1,

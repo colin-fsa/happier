@@ -86,6 +86,7 @@ describe('hydrateVoiceReplayDialogFromTranscript (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
+          hasMore: false,
           messages: [
             {
               seq: 1,
@@ -198,6 +199,7 @@ describe('hydrateVoiceReplayDialogFromTranscript (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
+          hasMore: false,
           messages: [
             {
               seq: 1,

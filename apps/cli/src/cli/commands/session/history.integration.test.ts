@@ -171,6 +171,7 @@ describe('happier session history (integration)', () => {
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
+            hasMore: false,
             messages: [
               {
                 seq: 2,
@@ -451,6 +452,7 @@ describe('happier session history (plaintext integration)', () => {
         res.setHeader('content-type', 'application/json');
         res.end(
           JSON.stringify({
+            hasMore: false,
             messages: [
               {
                 seq: 3,

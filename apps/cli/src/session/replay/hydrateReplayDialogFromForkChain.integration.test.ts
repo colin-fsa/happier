@@ -101,7 +101,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: messages.get(messagesMatch[1]!) ?? [] }));
+        res.end(JSON.stringify({ hasMore: false, messages: messages.get(messagesMatch[1]!) ?? [] }));
         return;
       }
       res.statusCode = 404;
@@ -206,7 +206,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: messages.get(messagesMatch[1]!) ?? [] }));
+        res.end(JSON.stringify({ hasMore: false, messages: messages.get(messagesMatch[1]!) ?? [] }));
         return;
       }
       res.statusCode = 404;
@@ -313,7 +313,11 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
 
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: picked }));
+        res.end(JSON.stringify({
+          messages: picked,
+          hasMore: eligible.length > picked.length,
+          nextBeforeSeq: eligible.length > picked.length ? picked[picked.length - 1]!.seq : null,
+        }));
         return;
       }
 
@@ -421,7 +425,11 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
 
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: picked }));
+        res.end(JSON.stringify({
+          messages: picked,
+          hasMore: eligible.length > picked.length,
+          nextBeforeSeq: eligible.length > picked.length ? picked[picked.length - 1]!.seq : null,
+        }));
         return;
       }
 
@@ -544,7 +552,11 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
 
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: picked }));
+        res.end(JSON.stringify({
+          messages: picked,
+          hasMore: eligible.length > picked.length,
+          nextBeforeSeq: eligible.length > picked.length ? picked[picked.length - 1]!.seq : null,
+        }));
         return;
       }
 
@@ -662,7 +674,11 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
 
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: picked }));
+        res.end(JSON.stringify({
+          messages: picked,
+          hasMore: eligible.length > picked.length,
+          nextBeforeSeq: eligible.length > picked.length ? picked[picked.length - 1]!.seq : null,
+        }));
         return;
       }
 
@@ -780,7 +796,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         if (respondTranscriptMessagesQueryRejection(url.searchParams, res)) return;
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
-        res.end(JSON.stringify({ messages: [] }));
+        res.end(JSON.stringify({ hasMore: false, messages: [] }));
         return;
       }
       res.statusCode = 404;
@@ -810,6 +826,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'readable' } } } },
             { seq: 2, createdAt: 2, content: { t: 'encrypted', c: 'bm90LWRlY3J5cHRhYmxl' } },
@@ -838,6 +855,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
+          hasMore: false,
           messages: [
             { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'readable' } } } },
           ],
@@ -906,6 +924,7 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({
+          hasMore: false,
           messages: [{
             seq: 1,
             createdAt: 1,
