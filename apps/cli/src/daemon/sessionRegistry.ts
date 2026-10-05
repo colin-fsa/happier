@@ -424,7 +424,9 @@ export async function removeSessionMarker(pid: number): Promise<void> {
   });
 }
 
-export async function listSessionMarkers(): Promise<DaemonSessionMarker[]> {
+export async function listSessionMarkers(
+  options: Readonly<{ requireComplete?: boolean }> = {},
+): Promise<DaemonSessionMarker[]> {
   const markersByPid = new Map<number, DaemonSessionMarker>();
 
   for (const dir of markerReadDirs()) {
@@ -438,6 +440,7 @@ export async function listSessionMarkers(): Promise<DaemonSessionMarker[]> {
         const parsed = DaemonSessionMarkerSchema.safeParse(JSON.parse(raw));
         if (!parsed.success) {
           logger.debug(`[sessionRegistry] Failed to parse session marker ${name}`, parsed.error);
+          if (options.requireComplete) throw new Error(`Session custody marker is invalid: ${name}`);
           continue;
         }
         // Extra safety: only accept markers for our home dir.
@@ -447,6 +450,7 @@ export async function listSessionMarkers(): Promise<DaemonSessionMarker[]> {
         }
       } catch (e) {
         logger.debug(`[sessionRegistry] Failed to read or parse session marker ${name}`, e);
+        if (options.requireComplete) throw e;
         // ignore unreadable marker
       }
     }

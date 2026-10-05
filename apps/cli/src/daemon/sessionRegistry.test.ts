@@ -104,6 +104,17 @@ describe('sessionRegistry', () => {
     expect(markers2[0].happySessionId).toBe('sess-2');
   });
 
+  it('reports an incomplete marker listing when cleanup requires complete custody evidence', async () => {
+    const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
+    await writeSessionMarker({ pid: 12345, happySessionId: 'valid-session', flavor: 'opencode' });
+    writeFileSync(join(happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12346.json'), '{invalid-json', 'utf8');
+
+    await expect(listSessionMarkers()).resolves.toEqual([
+      expect.objectContaining({ pid: 12345, happySessionId: 'valid-session' }),
+    ]);
+    await expect(listSessionMarkers({ requireComplete: true })).rejects.toThrow();
+  });
+
   it('atomically upgrades pre-webhook placeholder custody without losing the spawn nonce', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
     const respawn = {
