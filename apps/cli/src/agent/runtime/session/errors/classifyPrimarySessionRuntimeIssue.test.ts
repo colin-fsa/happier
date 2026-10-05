@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { classifyPrimarySessionRuntimeIssue } from './classifyPrimarySessionRuntimeIssue';
+import { requireProviderCliCommand } from '@/runtime/managedTools/requireProviderCliCommand';
+import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 
 describe('classifyPrimarySessionRuntimeIssue', () => {
+  it.each([requireProviderCliCommand, requireProviderCliLaunchSpec])('preserves CLI resolution failures as actionable dependency errors', (requireCli) => {
+    let error: unknown;
+    try {
+      requireCli('pi', { processEnv: { HOME: '/missing-pi-home', HAPPIER_HOME_DIR: '/missing-happier-home', PATH: '' } });
+    } catch (failure) {
+      error = failure;
+    }
+    expect(error).toBeInstanceOf(ReferenceError);
+    expect(classifyPrimarySessionRuntimeIssue({ provider: 'pi', cause: 'session_error', error })).toMatchObject({
+      source: 'dependency_failure',
+      code: 'provider_cli_not_found',
+      sanitizedPreview: expect.stringContaining('Install'),
+    });
+  });
+
   it('preserves a Pi-owned provider failure code and sanitized preview', () => {
     const error = Object.assign(new Error('Pi provider reported provider failure after prompt acceptance'), {
       piProviderFailure: {

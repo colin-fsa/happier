@@ -50,6 +50,11 @@ export type ProviderCliManagedInstallSpec =
 
 export type ProviderCliKnownCommandCandidate =
   | Readonly<{
+      kind: 'envBinDir';
+      envVar: string;
+      relativeDir: string;
+    }>
+  | Readonly<{
       kind: 'homeBinDir';
       relativeDir: string;
     }>
@@ -388,7 +393,10 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     id: 'pi',
     title: 'Pi Coding Agent CLI',
     binaryName: 'pi',
-    knownCommandCandidates: null,
+    knownCommandCandidates: [
+      { kind: 'envBinDir', envVar: 'PI_CODING_AGENT_DIR', relativeDir: 'bin' },
+      { kind: 'homeBinDir', relativeDir: '.pi/agent/bin' },
+    ],
     sourcePreferenceDefault: 'system-first',
     managedInstall: {
       kind: 'managed_package',

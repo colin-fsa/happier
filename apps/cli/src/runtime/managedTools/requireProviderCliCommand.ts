@@ -2,6 +2,14 @@ import type { AgentId } from '@happier-dev/agents';
 
 import { readProviderCliOverride, resolveProviderCliCommand } from './providerCliResolution';
 
+/** Resolution failed before a provider process or session could be created. */
+export class ProviderCliNotFoundError extends ReferenceError {
+  constructor(agentId: AgentId, opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {}) {
+    super(buildMissingProviderCliCommandErrorMessage(agentId, opts));
+    this.name = 'ProviderCliNotFoundError';
+  }
+}
+
 export function buildMissingProviderCliCommandErrorMessage(
   agentId: AgentId,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
@@ -26,7 +34,7 @@ export function requireProviderCliCommand(
 ): string {
   const resolved = resolveProviderCliCommand(agentId, { processEnv: opts.processEnv });
   if (resolved) return resolved.command;
-  throw new ReferenceError(buildMissingProviderCliCommandErrorMessage(agentId, opts));
+  throw new ProviderCliNotFoundError(agentId, opts);
 }
 
 function capitalize(value: string): string {

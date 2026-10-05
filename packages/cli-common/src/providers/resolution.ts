@@ -287,9 +287,18 @@ function basenameForKnownCandidatePath(path: string): string {
 function resolveKnownCommandCandidate(agentId: AgentId, candidate: ProviderCliKnownCommandCandidate, processEnv: NodeJS.ProcessEnv): ResolvedProviderCliSystemCommand | null {
   const homeDir = resolveHomeDirFromEnvironment(processEnv);
   switch (candidate.kind) {
+    case 'envBinDir':
     case 'homeBinDir': {
+      const root = candidate.kind === 'envBinDir'
+        ? expandHomeDirPath(processEnv[candidate.envVar]?.trim() ?? '', processEnv)
+        : homeDir;
+      if (!root) return null;
       for (const binaryName of getProviderCliBinaryNames(agentId, processEnv)) {
-        const commandPath = join(homeDir, candidate.relativeDir, binaryName);
+        const candidatePath = join(root, candidate.relativeDir, binaryName);
+        const commandPath = process.platform === 'win32'
+          ? resolveWindowsCommandPath(candidatePath, processEnv)
+          : candidatePath;
+        if (!commandPath) continue;
         if (providerCliCandidatePathExists(agentId, commandPath)) return { command: commandPath, binaryName };
       }
       return null;

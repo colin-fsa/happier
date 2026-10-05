@@ -5,8 +5,24 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { resolveOpenCodeCliLaunchSpec } from './resolveOpenCodeCliCommand';
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 
 describe('resolveOpenCodeCliLaunchSpec', () => {
+  it('preserves the canonical dependency error when no CLI candidate exists', () => {
+    let error: unknown;
+    try {
+      resolveOpenCodeCliLaunchSpec({ HAPPIER_OPENCODE_PATH: '/missing-opencode-launcher' });
+    } catch (failure) {
+      error = failure;
+    }
+    expect(error).toBeInstanceOf(ReferenceError);
+    expect(classifyPrimarySessionRuntimeIssue({ provider: 'opencode', cause: 'session_error', error })).toMatchObject({
+      source: 'dependency_failure',
+      code: 'provider_cli_not_found',
+      sanitizedPreview: expect.stringContaining('HAPPIER_OPENCODE_PATH'),
+    });
+  });
+
   it('lets the OpenCode generation setting select between co-installed stable and V2 CLIs', () => {
     if (process.platform === 'win32') return;
 

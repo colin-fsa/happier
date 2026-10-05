@@ -6,7 +6,7 @@ import { resolveProviderCliCommandCandidates } from '@happier-dev/cli-common/pro
 
 import { buildProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import type { ProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
-import { buildMissingProviderCliCommandErrorMessage } from '@/runtime/managedTools/requireProviderCliCommand';
+import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
 function isOpenCodeV2Command(command: string): boolean {
   return /^opencode2(?:\.(?:cmd|exe))?$/i.test(basename(command));
@@ -45,7 +45,7 @@ export function resolveOpenCodeCliLaunchSpec(
       );
     }
     if (candidates.length === 0) {
-      throw new ReferenceError(buildMissingProviderCliCommandErrorMessage('opencode', { processEnv }));
+      throw new ProviderCliNotFoundError('opencode', { processEnv });
     }
     throw new ReferenceError(
       generation === 'v2'
