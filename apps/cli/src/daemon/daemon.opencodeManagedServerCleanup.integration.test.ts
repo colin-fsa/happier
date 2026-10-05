@@ -1,15 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { mkdir, rm, writeFile, readFile, readdir } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { mkdir, rename, writeFile, readFile, readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { createServer } from 'node:net';
 
-import { configuration, reloadConfiguration } from '@/configuration';
+import { configuration } from '@/configuration';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { readCredentials } from '@/persistence';
+import { readCredentials, readDaemonState } from '@/persistence';
 import { spawnDetachedInlineNodeTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 import { prepareIsolatedDaemonTestHome, type PreparedDaemonTestHome } from './testkit/realIntegration.testkit';
-import { isOpenCodeServerPidAlive } from '@/backends/opencode/server/openCodeServerProcessState';
+import { getOpenCodeServerProcessInfoBestEffort, isOpenCodeServerPidAlive } from '@/backends/opencode/server/openCodeServerProcessState';
+import { withOpenCodeServerFileLock } from '@/backends/opencode/server/openCodeServerFileLock';
+import { resolveOpenCodeManagedServerLaunchFingerprint } from '@/backends/opencode/server/openCodeManagedServerEnv';
+import {
+  readSharedManagedOpenCodeServerStateBestEffort,
+  resolveManagedOpenCodeDaemonOwnerIdFromState,
+  resolveSharedManagedOpenCodeServerBaseUrl,
+  resolveSharedManagedOpenCodeServerStatePathForEnv,
+} from '@/backends/opencode/server/sharedManagedServer';
 
 let preparedDaemonHome: PreparedDaemonTestHome | null = null;
 
@@ -183,17 +191,6 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
     const fake = await startFakeOpenCodeHealthServer();
     let daemon: Awaited<ReturnType<typeof startDaemonStartSync>> | null = null;
     try {
-      const statePath = process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH
-        ? process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH.trim()
-        : join(configuration.happyHomeDir, 'opencode', 'managed-server.json');
-      await mkdir(dirname(statePath), { recursive: true });
-      await rm(statePath, { force: true }).catch(() => {});
-      await writeFile(
-        statePath,
-        JSON.stringify({ baseUrl: fake.baseUrl, pid: fake.pid, startedAtMs: Date.now(), testRun: basename(configuration.happyHomeDir) }),
-        'utf8',
-      );
-
       daemon = await startDaemonStartSync();
       const startedDaemon = daemon;
       const daemonPid = startedDaemon.child.pid ?? -1;
@@ -202,6 +199,34 @@ describe('daemon OpenCode managed server cleanup', { timeout: 120_000 }, () => {
         pid: daemonPid,
         needle: '[DAEMON RUN] Daemon started successfully, waiting for shutdown request',
         timeoutMs: 30_000,
+      }).catch((error: unknown) => {
+        throw new Error(`${error instanceof Error ? error.message : String(error)}\n${startedDaemon.output()}`, { cause: error });
+      });
+
+      const daemonState = await readDaemonState();
+      expect(daemonState?.pid).toBe(daemonPid);
+      const statePath = resolveSharedManagedOpenCodeServerStatePathForEnv();
+      // The fake replaces the external OpenCode process. Keep state production real so shutdown
+      // receives this daemon's custody proof, rather than trusting a legacy PID-only fixture.
+      await resolveSharedManagedOpenCodeServerBaseUrl({
+        withLock: async (fn) => await withOpenCodeServerFileLock(`${statePath}.lock`, fn),
+        readState: readSharedManagedOpenCodeServerStateBestEffort,
+        writeState: async (state) => {
+          const tmpPath = `${statePath}.tmp`;
+          await writeFile(tmpPath, JSON.stringify(state), { encoding: 'utf8', mode: 0o600 });
+          await rename(tmpPath, statePath);
+        },
+        isPidAlive: isOpenCodeServerPidAlive,
+        getProcessInfo: getOpenCodeServerProcessInfoBestEffort,
+        probeHealth: async (baseUrl) => (await fetch(`${baseUrl}/global/health`)).ok,
+        currentLaunchFingerprint: resolveOpenCodeManagedServerLaunchFingerprint({
+          baseEnv: process.env,
+          xdgRootDir: null,
+          isolateConfig: false,
+        }),
+        currentActiveServerDir: configuration.activeServerDir,
+        currentDaemonInstanceId: resolveManagedOpenCodeDaemonOwnerIdFromState(daemonState, configuration.activeServerId),
+        startServer: async () => ({ baseUrl: fake.baseUrl, pid: fake.pid }),
       });
 
       process.kill(daemonPid, 'SIGTERM');
