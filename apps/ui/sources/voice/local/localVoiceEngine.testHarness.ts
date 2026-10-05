@@ -404,10 +404,9 @@ vi.mock('expo-audio', () => {
         RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
         AudioModule: {
             get AudioRecorder() {
-                return platformOs === 'web' ? undefined : MockAudioRecorder;
-            },
-            get AudioRecorderWeb() {
-                return platformOs === 'web' ? MockAudioRecorder : undefined;
+                // Deliberately non-constructible on web. The production web path must use
+                // the browser MediaRecorder implementation, not Expo's native recorder.
+                return platformOs === 'web' ? {} : MockAudioRecorder;
             },
         },
         createAudioPlayer: (source?: any) => {
