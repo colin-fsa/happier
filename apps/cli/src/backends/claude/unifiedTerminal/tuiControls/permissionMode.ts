@@ -136,6 +136,9 @@ export async function applyPermissionModeControl(
 
   const acceptable = new Set<ClaudeTuiModeMarker>(target.markers);
   const canonicalMarker = target.markers[0];
+  if (state.modeMarker === null) {
+    return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'permission_mode_not_visible' };
+  }
   if (acceptable.has(state.modeMarker)) {
     return { kind: 'already_effective', effective: state.modeMarker };
   }
@@ -158,6 +161,9 @@ export async function applyPermissionModeControl(
     if (captured.kind !== 'state') return captureFailureToResult(captured);
     state = captured.state;
 
+    if (state.modeMarker === null) {
+      return { kind: 'scheduled', timing: 'queued_until_safe_window', reason: 'permission_mode_not_visible' };
+    }
     if (acceptable.has(state.modeMarker)) {
       return { kind: 'applied', effective: state.modeMarker, timing: 'current_window' };
     }

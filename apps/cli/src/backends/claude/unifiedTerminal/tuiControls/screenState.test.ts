@@ -242,8 +242,23 @@ describe('parseClaudeScreenState — usage-limit chooser', () => {
   });
 });
 
-describe('parseClaudeScreenState — mode markers (default by absence)', () => {
-  it('detects default mode by the absence of any cycle marker', () => {
+describe('parseClaudeScreenState — mode markers (visible footer evidence)', () => {
+  it('keeps a clipped permission footer unknown rather than inferring default or a historical mode', () => {
+    const screen = ['⏵⏵ auto mode on', '────────────────────', '❯ ', '────────────────────', '  Opus 5.5'].join('\n');
+    expect(parseClaudeScreenState(screen).modeMarker).toBeNull();
+  });
+
+  it.each([
+    ['⏸ manual', 'default'],
+    ['⏸ plan', 'plan'],
+    ['⏵⏵ accept edits', 'acceptEdits'],
+    ['⏵⏵ auto', 'auto'],
+    ['⏵⏵ bypass permissions', 'bypassPermissions'],
+  ] as const)('recognizes the compact Claude footer %s', (footer, mode) => {
+    const screen = ['────────────────────', '❯ ', '────────────────────', `  ${footer} · 1 background`].join('\n');
+    expect(parseClaudeScreenState(screen).modeMarker).toBe(mode);
+  });
+  it('detects default mode from the visible shortcuts footer', () => {
     const state = parseClaudeScreenState(CLAUDE_2_1_170.idleDefault);
     expect(state.modeMarker).toBe('default');
     expect(state.inputBoxInteractive).toBe(true);

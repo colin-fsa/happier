@@ -27,7 +27,7 @@ const IDLE = ['╭─────╮', '│ >   │', '╰─────╯', '
 const ACCEPT = ['╭─────╮', '│ >   │', '╰─────╯', '  ⏵⏵ accept edits on (shift+tab to cycle)'].join('\n');
 const MODEL_OK = ['Set model to Sonnet 4.6 and saved as your default', '╭─────╮', '│ >   │', '╰─────╯'].join('\n');
 const PLAN = ['╭─╮', '│ >│', '╰─╯', '  ⏸ plan mode on (shift+tab to cycle)'].join('\n');
-const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)'].join('\n');
+const GENERATING = ['● working', '✶ Forging… (10s · esc to interrupt)', '  ⏸ manual'].join('\n');
 const USER_DRAFT = ['╭─────╮', '│ > unsent terminal draft', '╰─────╯'].join('\n');
 
 async function makeGuard(): Promise<SettingsGuard> {
