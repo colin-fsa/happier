@@ -504,7 +504,8 @@ class ApiSocket {
         const canDedupe =
             (method === 'GET' || method === 'HEAD')
             && !hasBody
-            && !hasSignal;
+            && !hasSignal
+            && options?.cache !== 'no-store';
 
         const requestKey = canDedupe
             // Intentionally exclude `snapshot.generation` from the de-dupe key so concurrent callers still share

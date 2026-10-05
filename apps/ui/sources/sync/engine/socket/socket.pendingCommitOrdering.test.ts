@@ -309,6 +309,40 @@ describe('socket pending -> committed ordering', () => {
         expect(carriesTheUtterance(storage.getState())).toBe(true);
     });
 
+    it('publishes a queued settlement version before an older pending snapshot can finish', async () => {
+        armSession({ enabled: false, windowMs: 0 });
+        const params = buildBaseParams({ applySessions: (sessions) => storage.getState().applySessions(sessions) });
+        const server = upsertServerProfile({ serverUrl: 'https://crossover.example.test', name: 'Crossover' });
+        const encryption = await Encryption.create(new Uint8Array(32).fill(6));
+        vi.useFakeTimers();
+        try {
+            // The first session apply opens the window; the settlement behind it would be queued.
+            await handleUpdateContainer({ ...params, updateData: buildPendingChangedUpdate({ seq: 2, pendingCount: 1, pendingVersion: 3 }) });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            const oldRefresh = fetchAndApplyPendingMessagesV2({
+                sessionId: SESSION_ID, encryption,
+                outboxScope: { serverId: server.id, accountId: 'account' }, isOutboxScopeCurrent: () => true,
+                request: async () => {
+                    await gate;
+                    return Response.json({ pending: [{
+                        localId: LOCAL_ID, status: 'queued', deliveryState: 'delivering', position: 0,
+                        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hello' } } },
+                        createdAt: 1_000, updatedAt: 1_000, discardedAt: null, discardedReason: null,
+                    }] });
+                },
+            });
+            await handleUpdateContainer({ ...params, updateData: buildEmptyQueueUpdate(3) });
+            release();
+            await oldRefresh;
+            expect(storage.getState().sessionPending[SESSION_ID]?.messages ?? []).toEqual([]);
+            expect(storage.getState().sessions[SESSION_ID]?.pendingVersion).toBe(4);
+        } finally {
+            await vi.runOnlyPendingTimersAsync();
+            vi.useRealTimers();
+        }
+    });
+
     it('still retires the pending rows when no message materialization is in flight', async () => {
         armSession({ enabled: false, windowMs: 0 });
         const params = buildBaseParams();

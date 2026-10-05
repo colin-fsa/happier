@@ -893,7 +893,7 @@ describe('sync.sendMessage optimistic thinking', () => {
 
         expect(requestSpy).toHaveBeenCalledWith(
             `/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
-            { method: 'GET' },
+            { method: 'GET', cache: 'no-store' },
         );
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([
             expect.objectContaining({
@@ -948,7 +948,7 @@ describe('sync.sendMessage optimistic thinking', () => {
         await vi.waitFor(() => {
             expect(requestSpy).toHaveBeenCalledWith(
                 `/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
-                { method: 'GET' },
+                { method: 'GET', cache: 'no-store' },
             );
             expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([]);
         });
@@ -999,7 +999,7 @@ describe('sync.sendMessage optimistic thinking', () => {
             await vi.waitFor(() => {
                 expect(requestSpy).toHaveBeenCalledWith(
                     `/v2/sessions/${sessionId}/pending?includeDiscarded=1`,
-                    { method: 'GET' },
+                    { method: 'GET', cache: 'no-store' },
                 );
             });
         });

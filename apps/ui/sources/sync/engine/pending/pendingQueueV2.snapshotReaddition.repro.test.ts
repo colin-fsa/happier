@@ -17,28 +17,9 @@ import {
 } from './pendingQueueV2.testHelpers';
 
 /**
- * The DECISION TABLE of `withholdPendingRowsCommittedAfterSnapshotCapture`, taken by ordering.
- *
- * The fence withholds a snapshot row when its committed twin was SEQUENCED ABOVE the session
- * sequence high-water mark this client held when the request was issued. The shape measured on
- * device for the flap is `source: 'server_pending'`, no `pendingOutboxScope`,
- * `pendingDeliveryStatus: 'server_queued'`
- * (`.project/reviews/2026-08-06-simplify-and-native/traces/C6/captures/raw_C35.json`) — and it was
- * measured with a LOADED transcript of 106 rows, which is why `armSession` seeds one: an empty,
- * never-loaded transcript is the session-open state, where the fence must assert nothing at all.
- *
- * The capture point is the RESPONSE's, not the caller's: a refresh that starts while another
- * refresh for the same scoped session is still running inherits that refresh's mark, because
- * `apiSocket.request` may answer it with that refresh's in-flight GET
- * (`.project/reviews/2026-08-07-snapshot-readdition/DESIGN.md` §4). So:
- *
- *   A / B — the twin is a NEW commit above the mark, applied after the request was issued:
- *           withheld.
- *   C     — no refresh in flight, transcript already carried the twin at capture: republished. This
- *           is the durable-coexistence contract (7 live server rows depend on it); it must not flip.
- *   D     — a second refresh inherits the in-flight mark, but the twin it learns about is OLD news
- *           (sequenced below the mark): republished. Inheritance must not hide a durable row.
- *   E     — the same inheritance with a NEW commit above the mark and one shared response: withheld.
+ * Snapshot ordering contracts: commits above the capture sequence must not restore a settled row;
+ * older committed twins can coexist with durable pending rows. A changed transcript or local edit
+ * starts a fresh read, while callers with unchanged freshness share the complete refresh.
  */
 
 const SESSION_ID = 'readdition-session';
@@ -124,7 +105,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         return { serverId: server.id, accountId: 'account' } as const;
     }
 
-    /** A — twin committed while the GET is outstanding: withheld (C5). */
+
     it('withholds a row whose twin commits while the request is outstanding', async () => {
         const scope = armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
@@ -145,7 +126,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedPending()).toEqual([]);
     });
 
-    /** B — twin committed after the response, before the publish: withheld (C5). */
+
     it('withholds a row whose twin commits between the response and the publish', async () => {
         const scope = armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
@@ -164,13 +145,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedPending()).toEqual([]);
     });
 
-    /**
-     * C — the twin was already in the transcript when the refresh captured, so it RAISED the mark to
-     * its own `seq` and cannot be above it; the fence's above-the-mark test simply does not select
-     * it. This is no longer a named exemption: "escape hatch" belonged to the superseded
-     * set-membership predicate, which had to carve this case out explicitly (`committedNow &&
-     * !committedAtCapture`) because membership alone could not tell it from a settlement.
-     */
+
     it('republishes a row whose twin was already committed at capture', async () => {
         const scope = armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
@@ -187,35 +162,29 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedPending()).toEqual([REPUBLISHED_ROW]);
     });
 
-    /**
-     * E — the LIVE chain: `apiSocket.request` de-dupes in-flight GETs by URL and only deletes the
-     * map entry in the FIRST caller's continuation, so on a congested thread a refresh that starts
-     * AFTER the committed twin still adopts the response of a GET issued long BEFORE it — with no
-     * second request on the wire (which is what the device capture shows: one GET per flapping
-     * send, issued ~1.2 s before the twin). The adopting refresh would capture AFTER the twin,
-     * taking a mark that already includes it, so the settled row is republished — unless the
-     * adopting refresh inherits the in-flight refresh's capture point, which is the response's own.
-     */
-    it('withholds a row when a late refresh adopts an in-flight response captured before the twin', async () => {
+
+    it('uses a fresh read when the transcript changes during an outstanding refresh', async () => {
         const scope = armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
 
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
-        // One server read, shared by both refreshes — the in-flight de-dupe, modelled.
+        // Hold the old read while the successor requests current server truth.
         const sharedRead = (async () => { await gate; return queuedRowResponse(LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : Response.json({ pending: [] });
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
-        // The settlement lands while the read is outstanding: twin applied, then the pendingVersion
-        // bump schedules the next refresh, which starts before the first caller's continuation has
-        // run and therefore adopts the very same response.
+        // Transcript repair must issue a fresh read even if the pending-version receipt is lost.
         release();
         storage.getState().applyMessages(SESSION_ID, [committedTwin(LOCAL_ID)]);
         const second = fetchAndApplyPendingMessagesV2({
@@ -223,43 +192,18 @@ describe('pending snapshot re-addition after a committed twin', () => {
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
         await Promise.all([first, second]);
 
         expect(publishedPending()).toEqual([]);
     });
 
-    /**
-     * D — a second refresh starts while the first is still outstanding and inherits its mark, but
-     * the twin it learns about is OLD news.
-     *
-     * This ordering is NOT the flap, and the previous round asserted a withhold for it in error:
-     * the second refresh issues its OWN request, whose response is therefore genuinely fresh — and
-     * a fresh response cannot list a row a settlement just deleted. A response that still lists the
-     * row is the server asserting it still owns it, i.e. the durable-coexistence shape (7 such rows
-     * live on the user's server, 3 of them blocked/`delivery_outcome_uncertain`). Withholding here
-     * hides a real queued message, which is worse than the flap. Only ordering E — where BOTH
-     * refreshes are answered by one shared, pre-settlement read — is the flap.
-     */
-    /**
-     * F — the OTHER half of the same capture point, taken by the same ordering as E.
-     *
-     * The token carries two capture-time facts: the session-sequence mark above, and the set of
-     * localIds the SERVER acknowledged after the request was issued. The accepted set is the fence
-     * against message loss: a response read before an ACK cannot list the row that ACK created, so
-     * applying it deletes a message the user sent and the server already owns
-     * (`pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture`, whose empty set short-circuits to
-     * "safe" — an EMPTY set is the trivially-passing state, so forgetting an accept is silent).
-     *
-     * `markPendingLocalIdAcceptedAfterSnapshotCapture` writes to the LATEST registered token only —
-     * the map holds one token per scoped session — so every accept recorded while the predecessor
-     * was latest lives on the predecessor. A successor that adopts the predecessor's in-flight
-     * response therefore has to carry those accepts too, for exactly the reason the sequence mark is
-     * inherited: the capture point belongs to the RESPONSE.
-     */
-    it('withholds an adopted pre-ACK response that omits a localId accepted while it was in flight', async () => {
+
+
+    it('preserves an in-flight acceptance when callers share an unchanged refresh', async () => {
         const scope = armSession();
+        const isCurrent = () => true;
         setActiveServerId(scope.serverId, { scope: 'tab' });
         storage.getState().activateProfileScope(scope);
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
@@ -275,7 +219,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
-            isOutboxScopeCurrent: () => true,
+            isOutboxScopeCurrent: isCurrent,
             request: dedupedRequest,
         });
 
@@ -294,13 +238,12 @@ describe('pending snapshot re-addition after a committed twin', () => {
         });
         expect(publishedLocalIds()).toEqual([ACCEPTED_LOCAL_ID]);
 
-        // The ACK bumps `pendingVersion`, which schedules the next refresh; it starts before the
-        // first caller's continuation has run and is answered by that same pre-ACK read.
+        // With no new receipt or transcript, both callers retain the same ACK fence.
         const second = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
-            isOutboxScopeCurrent: () => true,
+            isOutboxScopeCurrent: isCurrent,
             request: dedupedRequest,
         });
         release();
@@ -309,24 +252,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedLocalIds()).toEqual([ACCEPTED_LOCAL_ID]);
     });
 
-    /**
-     * G — ordering F with one ordinary step inserted: the user edits a queued row's requested action
-     * while the same pre-ACK read is still outstanding.
-     *
-     * `updatePendingRequestedActionV2` (and `updatePendingMessageV2`) end by invalidating the
-     * in-flight snapshot refresh, because a read issued BEFORE the PATCH must not overwrite the
-     * projection the PATCH just wrote. That job is real. But the invalidation was expressed by
-     * DELETING the map entry, which also erased the capture-time facts the successor inherits — so
-     * the successor took a fresh EMPTY accepted set while the predecessor's pre-ACK GET was still
-     * outstanding and could still answer it. An empty set is the trivially-passing state of
-     * `pendingSnapshotContainsEveryAcceptedLocalIdAfterCapture`, so the pre-ACK response applied and
-     * deleted a row the user sent and the server already owns.
-     *
-     * The two facts on the token have OPPOSITE failure directions — losing the sequence mark
-     * republishes a settled row (a flap), losing an accept DROPS a message — but neither is made
-     * invalid by a PATCH: the response's capture point is a property of the response, and the PATCH
-     * does not move it. So the invalidation must discard the refresh's AUTHORITY only.
-     */
+
     it('keeps a localId accepted in flight when a requested-action PATCH invalidates the refresh', async () => {
         const scope = armSession();
         setActiveServerId(scope.serverId, { scope: 'tab' });
@@ -336,14 +262,18 @@ describe('pending snapshot re-addition after a committed twin', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowResponse(SEED_LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : queuedRowResponse(ACCEPTED_LOCAL_ID);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
 
         await enqueuePendingMessageV2({
@@ -375,7 +305,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
         release();
         await Promise.all([first, second]);
@@ -383,16 +313,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedLocalIds()).toContain(ACCEPTED_LOCAL_ID);
     });
 
-    /**
-     * H — the OTHER capture-time fact, taken by the same ordering as G.
-     *
-     * The two facts fail in OPPOSITE directions — losing an accept drops a message, losing the
-     * sequence mark republishes a settled row — but a PATCH invalidates NEITHER: the capture point
-     * belongs to the response, and a local write does not move it. So the same invalidation that
-     * must stop erasing the accepted set must stop erasing the mark, for the same reason ordering E
-     * inherits it. This is ordering E with the PATCH inserted, and its accepted set is empty
-     * throughout, so only the mark can decide it.
-     */
+
     it('withholds a settled row for a refresh registered after a requested-action PATCH', async () => {
         const scope = armSession();
         setActiveServerId(scope.serverId, { scope: 'tab' });
@@ -417,14 +338,18 @@ describe('pending snapshot re-addition after a committed twin', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowResponse(LOCAL_ID); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1 ? (await sharedRead).clone() : Response.json({ pending: [] });
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
 
         await updatePendingRequestedActionV2({
@@ -443,7 +368,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
         release();
         await Promise.all([first, second]);
@@ -451,7 +376,7 @@ describe('pending snapshot re-addition after a committed twin', () => {
         expect(publishedPending()).toEqual([]);
     });
 
-    it('republishes a row when a second refresh inherits an in-flight mark and the twin is old news', async () => {
+    it('preserves durable coexistence when an older transcript page triggers a fresh read', async () => {
         const scope = armSession();
         const encryption = await Encryption.create(new Uint8Array(32).fill(6));
         let release!: () => void;

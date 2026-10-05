@@ -115,6 +115,10 @@ describe('pendingQueueV2 scoped refresh reconciliation', () => {
         });
         await olderScopeCheckStartedGate;
 
+        // Unchanged callers share the complete refresh. A new receipt is what requires a fresh
+        // read, and must invalidate the older publication even while its scope check is awaited.
+        storage.getState().applySessions([{ ...storage.getState().sessions[sessionId], pendingVersion: 1 }]);
+
         await fetchAndApplyPendingMessagesV2({
             sessionId,
             encryption,

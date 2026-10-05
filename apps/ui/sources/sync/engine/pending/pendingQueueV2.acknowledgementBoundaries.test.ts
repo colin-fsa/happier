@@ -25,9 +25,9 @@ import {
  * THE INVARIANT
  *
  * A pending snapshot response may not delete a row the server has already told this client it
- * holds. `apiSocket.request` de-dupes in-flight GETs, so a refresh registered AFTER an
- * acknowledgement can be ANSWERED by a GET issued before it; the accepted-localId fence exists so
- * that such a response is skipped rather than applied. The fence only works if EVERY point at which
+ * holds. Callers can share a pending refresh while its freshness is unchanged; the accepted-localId
+ * fence skips a response captured before an acknowledgement. Successful local edits invalidate the
+ * refresh and their successors read current server truth. The fence only works if EVERY point at which
  * this client learns the server took custody of a localId records it into the live refresh token.
  *
  * That recording is a call-site opt-in — acknowledgement is a property of the HTTP RESPONSE, while
@@ -347,9 +347,8 @@ describe('pending acknowledgement boundaries', () => {
         /**
          * The losing ordering, driven per boundary: one GET is issued BEFORE the boundary and lists
          * only the seed row; the boundary is the SOLE proof the server holds `ACKNOWLEDGED_LOCAL_ID`;
-         * a successor refresh registered after it is answered by that same pre-boundary GET. If the
-         * boundary did not record, the successor's accepted set is empty, the fence passes trivially,
-         * and the response deletes a message the server owns.
+         * callers share that read unless a local edit invalidates it. Shared readers retain the ACK
+         * fence; readers after a successful edit must obtain current server truth.
          */
         it(`${exportName} keeps the localId it acknowledged when a pre-boundary read answers a successor`, async () => {
             const scope = armSession();
@@ -358,14 +357,20 @@ describe('pending acknowledgement boundaries', () => {
             let release!: () => void;
             const gate = new Promise<void>((resolve) => { release = resolve; });
             const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-            const dedupedRequest = async () => (await sharedRead).clone();
+            let reads = 0;
+            const request = async (_path: string, init?: RequestInit) => {
+                expect(init?.cache).toBe('no-store');
+                return ++reads === 1
+                    ? (await sharedRead).clone()
+                    : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+            };
 
             const first = fetchAndApplyPendingMessagesV2({
                 sessionId: SESSION_ID,
                 encryption,
                 outboxScope: scope,
                 isOutboxScopeCurrent: () => true,
-                request: dedupedRequest,
+                request,
             });
 
             await contract.drive({
@@ -381,7 +386,7 @@ describe('pending acknowledgement boundaries', () => {
                 encryption,
                 outboxScope: scope,
                 isOutboxScopeCurrent: () => true,
-                request: dedupedRequest,
+                request,
             });
             release();
             await Promise.all([first, second]);
@@ -419,14 +424,20 @@ describe('pending acknowledgement boundaries', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1
+                ? (await sharedRead).clone()
+                : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
 
         await updatePendingMessageV2({
@@ -443,7 +454,7 @@ describe('pending acknowledgement boundaries', () => {
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
         release();
         await Promise.all([first, second]);
@@ -680,8 +691,8 @@ describe('pending acknowledgement boundaries', () => {
     /**
      * The mirror-image hazard of recording: a localId the server acknowledges and then STOPS
      * listing — settled, cancelled, discarded — must not wedge the queue. The accepted set lives on
-     * the token, and a token is only inherited while its predecessor is still registered, so the
-     * chain has to self-clear as soon as no predecessor is in flight.
+     * the token and is discarded when that refresh settles. A fresh read must apply the server's
+     * current queue rather than retain the prior acknowledgement fence.
      */
     it('does not skip forever when the server stops listing a localId a PATCH acknowledged', async () => {
         const scope = armSession();
@@ -690,14 +701,20 @@ describe('pending acknowledgement boundaries', () => {
         let release!: () => void;
         const gate = new Promise<void>((resolve) => { release = resolve; });
         const sharedRead = (async () => { await gate; return queuedRowsResponse([SEED_LOCAL_ID]); })();
-        const dedupedRequest = async () => (await sharedRead).clone();
+        let reads = 0;
+        const request = async (_path: string, init?: RequestInit) => {
+            expect(init?.cache).toBe('no-store');
+            return ++reads === 1
+                ? (await sharedRead).clone()
+                : queuedRowsResponse([SEED_LOCAL_ID, ACKNOWLEDGED_LOCAL_ID]);
+        };
 
         const first = fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         });
 
         await enqueueWithoutClientAcknowledgement({
@@ -715,13 +732,13 @@ describe('pending acknowledgement boundaries', () => {
             request: async () => new Response('{}', { status: 200 }),
         });
 
-        // Four overlapping successors, all adopting the same pre-PATCH read.
+        // Four overlapping successors share one fresh post-PATCH refresh.
         const chain = [1, 2, 3, 4].map(() => fetchAndApplyPendingMessagesV2({
             sessionId: SESSION_ID,
             encryption,
             outboxScope: scope,
             isOutboxScopeCurrent: () => true,
-            request: dedupedRequest,
+            request,
         }));
         release();
         await Promise.all([first, ...chain]);

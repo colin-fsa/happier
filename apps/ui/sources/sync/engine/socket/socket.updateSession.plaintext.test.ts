@@ -122,6 +122,96 @@ describe('socket update handling: plaintext update-session', () => {
         ]);
     });
 
+    it.each(['hydrated', 'cache-only'] as const)('does not resurrect %s working state from an equal-timestamp heartbeat after a stop', async (kind) => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_delayed_working_heartbeat'),
+            updatedAt: 200,
+            activeAt: 100,
+            thinking: true,
+            thinkingAt: 100,
+        };
+        if (kind === 'hydrated') {
+            storage.getState().applySessions([session]);
+        } else {
+            storage.getState().replaceSessionListRenderables([{ ...session, archivedAt: null }]);
+        }
+        const applySessions = storage.getState().applySessions;
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: false,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRenderables[session.id].thinking).toBe(false);
+
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: true,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRenderables[session.id].thinking).toBe(false);
+
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 201, thinking: true,
+            }]]),
+            applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRenderables[session.id].thinking).toBe(true);
+    });
+
+    it('applies cache-only working-to-online activity after a newer durable projection', async () => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_cached_working_to_online'),
+            updatedAt: 200,
+            activeAt: 100,
+            thinking: true,
+            thinkingAt: 100,
+            archivedAt: null,
+        };
+        storage.getState().replaceSessionListRenderables([session]);
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 150, thinking: false,
+            }]]),
+            applySessions: storage.getState().applySessions,
+        });
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRenderables[session.id]).toMatchObject({
+            active: true, activeAt: 150, thinking: false, thinkingAt: 150,
+        });
+    });
+
+    it('rechecks a queued cache-only working heartbeat against a stop published before its flush', async () => {
+        vi.useFakeTimers();
+        const session = {
+            ...buildSession('s_cached_queued_working'),
+            updatedAt: 100,
+            activeAt: 100,
+            thinkingAt: 100,
+            archivedAt: null,
+        };
+        storage.getState().replaceSessionListRenderables([session]);
+        flushActivityUpdates({
+            updates: new Map([[session.id, {
+                type: 'activity', id: session.id, active: true, activeAt: 200, thinking: true,
+            }]]),
+            applySessions: storage.getState().applySessions,
+        });
+        storage.getState().applySessionListRenderablePatches([{
+            sessionId: session.id,
+            patch: { thinking: false, thinkingAt: 200, activeAt: 200, updatedAt: 200 },
+        }]);
+        await vi.advanceTimersByTimeAsync(16);
+        expect(storage.getState().sessionListRenderables[session.id].thinking).toBe(false);
+    });
+
     afterEach(() => {
         clearActiveViewingSessionsForServerScopeReset();
         clearMountedSessionRealtimeTranscriptConsumers();
