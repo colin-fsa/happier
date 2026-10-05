@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { execFileSync, spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -68,6 +68,12 @@ import { createCodexSharedLocalControl } from '@/backends/codex/localControl/cre
 import { writeCodexSharedControlEndpoint } from '@/backends/codex/localControl/codexSharedControlEndpoint';
 import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import { readProcessRunState } from '@/daemon/processRunState';
+import { isSupportedHerdrVersion } from '@/integrations/herdr/runtimeBinary';
+
+// Real-host cases require the same supported binary as production; socket-fixture
+// cases below provide their own executable boundary and always remain runnable.
+const herdrVersion = spawnSync(process.env.HERDR_BIN_PATH?.trim() || 'herdr', ['--version'], { encoding: 'utf8' });
+const hasSupportedHerdr = herdrVersion.status === 0 && isSupportedHerdrVersion(herdrVersion.stdout);
 
 const httpCleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -137,7 +143,7 @@ async function createSharedSession(homeDir: string, id: string, beforeMetadataAc
 }
 
 describe('shared hosted native presentation', () => {
-  it.skipIf(process.platform !== 'linux')('proves released Herdr foreground custody and retires only the actual launcher tree', async ({ task }) => {
+  it.skipIf(process.platform !== 'linux' || !hasSupportedHerdr)('proves released Herdr foreground custody and retires only the actual launcher tree', async ({ task }) => {
     await withConfiguredDaemonTestHome({ prefix: 'native-custody-' }, async ({ homeDir }) => {
       const session = await createSharedSession(homeDir, 'native-custody-session');
       const binary = process.env.HERDR_BIN_PATH ?? 'herdr';
@@ -215,6 +221,7 @@ describe('shared hosted native presentation', () => {
       let apiSocketPath = '';
       try {
         await withHerdrApi(async api => {
+          vi.stubEnv('HERDR_BIN_PATH', api.binary);
           apiSocketPath = api.socketPath;
           try {
           const terminal = { mode: 'herdr', herdr: { sessionName: 'work', socketPath: api.socketPath,
@@ -370,6 +377,7 @@ describe('shared hosted native presentation', () => {
         if (!child.launcherIdentity) throw new Error('Real launcher identity unavailable');
         let mutateDescriptorDuringProof = false;
         await withHerdrApi(async api => {
+          vi.stubEnv('HERDR_BIN_PATH', api.binary);
           const terminal = { mode: 'herdr', herdr: { sessionName: 'work', socketPath: api.socketPath,
             paneId: 'managed', terminalId: ending === 'old_host_alive' ? 'terminal_1' : 'old-terminal' } } as const;
           await writeTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId: session.sessionId, attachmentId: 'old-attachment', terminal,
@@ -597,7 +605,7 @@ describe('shared hosted native presentation', () => {
       }
     });
   });
-  it.skipIf(process.platform === 'win32').each(['normal', 'descriptor_retry'] as const)('keeps the admitted Herdr endpoint after native authentication changes its configuration root (%s)', async ending => {
+  it.skipIf(process.platform === 'win32' || !hasSupportedHerdr).each(['normal', 'descriptor_retry'] as const)('keeps the admitted Herdr endpoint after native authentication changes its configuration root (%s)', async ending => {
     await withConfiguredDaemonTestHome({ prefix: 'ep-' }, async ({ homeDir }) => {
       const session = await createSharedSession(homeDir, 'endpoint-native');
       const sessionName = `ep-${process.pid}`;
@@ -652,7 +660,7 @@ describe('shared hosted native presentation', () => {
       }
     });
   });
-  it.skipIf(process.platform === 'win32')('retains a created unbound presenter when exact binding cleanup fails, without launching a replacement', async () => {
+  it.skipIf(process.platform === 'win32' || !hasSupportedHerdr)('retains a created unbound presenter when exact binding cleanup fails, without launching a replacement', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'shared-hosted-unbound-' }, async ({ homeDir }) => {
       const session = await createSharedSession(homeDir, 'unbound-native');
       const sessionName = `happier-unbound-host-${process.pid}-${Date.now()}`;
@@ -709,7 +717,7 @@ describe('shared hosted native presentation', () => {
       }
     });
   });
-  it.skipIf(process.platform === 'win32' || Boolean(process.versions.bun))('disposes an exact hosted presenter before awaiting its pending native startup receipt', async () => {
+  it.skipIf(process.platform === 'win32' || Boolean(process.versions.bun) || !hasSupportedHerdr)('disposes an exact hosted presenter before awaiting its pending native startup receipt', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'shared-hosted-pending-' }, async ({ homeDir }) => {
       const session = await createSharedSession(homeDir, 'pending-hosted-native');
       const sessionName = `happier-pending-host-${process.pid}-${Date.now()}`;
@@ -748,7 +756,7 @@ describe('shared hosted native presentation', () => {
       }
     });
   });
-  it.skipIf(process.platform === 'win32')('keeps admitted shared remote control available when the optional native executable cannot spawn', async () => {
+  it.skipIf(process.platform === 'win32' || !hasSupportedHerdr)('keeps admitted shared remote control available when the optional native executable cannot spawn', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'shared-native-failure-' }, async ({ homeDir }) => {
       const session = await createSharedSession(homeDir, 'failed-native-presentation');
       const sessionName = `happier-failed-host-${process.pid}-${Date.now()}`;
@@ -803,7 +811,7 @@ describe('shared hosted native presentation', () => {
       }
     });
   });
-  it.skipIf(process.platform === 'win32')('keeps the headless shared controller writable after its exact optional Herdr pane closes, then reopens only explicitly', async () => {
+  it.skipIf(process.platform === 'win32' || !hasSupportedHerdr)('keeps the headless shared controller writable after its exact optional Herdr pane closes, then reopens only explicitly', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'shared-hosted-native-' }, async ({ homeDir }) => {
       const sessionName = `happier-host-test-${process.pid}-${Date.now()}`;
       const binary = process.env.HERDR_BIN_PATH ?? 'herdr';
