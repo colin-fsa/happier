@@ -267,7 +267,9 @@ describe('happier resume', () => {
           await result;
           expect(chdirFn).not.toHaveBeenCalled();
           expect(nativeBoundary.foregroundSpawn).toHaveBeenCalledWith(expect.any(String),
-            ['--session', 'work', 'terminal', 'attach', 'terminal_1'], expect.any(Object));
+            ['terminal', 'attach', 'terminal_1'], expect.objectContaining({
+              env: expect.objectContaining({ HERDR_SESSION: 'work', HERDR_SOCKET_PATH: api.socketPath }),
+            }));
           expect(api.requests.some(request => request.method === 'pane.close' || request.method === 'layout.apply')).toBe(false);
         } finally {
           if (lock?.ok) await lock.release();
