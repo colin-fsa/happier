@@ -8,7 +8,7 @@ import {
 
 import { isBun } from '@/utils/runtime';
 
-import { buildMissingProviderCliCommandErrorMessage } from './requireProviderCliCommand';
+import { ProviderCliNotFoundError } from './requireProviderCliCommand';
 
 export type ProviderCliLaunchSpec = Readonly<{
   source: ProviderCliCommandResolution['source'];
@@ -66,5 +66,5 @@ export function requireProviderCliLaunchSpec(
 ): ProviderCliLaunchSpec {
   const resolved = resolveProviderCliLaunchSpec(agentId, opts);
   if (resolved) return resolved;
-  throw new ReferenceError(buildMissingProviderCliCommandErrorMessage(agentId, opts));
+  throw new ProviderCliNotFoundError(agentId, opts);
 }

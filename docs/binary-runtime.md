@@ -23,6 +23,16 @@ Before adding or changing a provider/runtime/install/update flow, classify it as
 
 Provider detection, install status, daemon validation, runtime spawning, and UI/installables must reuse the same source of truth. Backend CLIs should prefer user/system installs by default over Happier-managed installs unless an explicit setting says otherwise.
 
+In current development source, Pi's vendor-managed launcher is a system-install candidate
+in the shared provider resolver: `PI_CODING_AGENT_DIR/bin/pi`, then `~/.pi/agent/bin/pi`,
+when `PATH` has no matching executable. Explicit `HAPPIER_PI_PATH` remains exclusive and
+the existing Happier-managed source preference remains authoritative. Detection, version
+probing and launch all consume that resolution; the launcher owns its pinned Pi release.
+An unresolved required CLI throws `ProviderCliNotFoundError` at the shared command/launch
+boundary. The primary-session classifier preserves it as `dependency_failure` with code
+`provider_cli_not_found` and the canonical remediation, without exposing raw paths or
+mistaking runner turn allocation for provider prompt acceptance.
+
 ## Desktop-initiated CLI acquisition
 
 The desktop app acquires the Happier CLI itself; the user never runs an installer to connect the

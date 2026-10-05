@@ -88,6 +88,17 @@ If Pi is not detected:
 2. Restart Happier.
 3. Set `HAPPIER_PI_PATH` if your binary is not in `PATH`.
 
+Pi's vendor-managed installer can put its launcher at `~/.pi/agent/bin/pi`, or
+under `PI_CODING_AGENT_DIR/bin/pi` when that directory is configured. An already
+running daemon may retain a `PATH` from before installation. Point
+`HAPPIER_PI_PATH` at the launcher and restart the daemon if terminal launches
+work but daemon launches fail.
+
+Current development builds also discover these locations when `PATH` has no Pi
+executable. If launch resolution still fails, they report `provider_cli_not_found`
+with installation or override guidance. An invalid `HAPPIER_PI_PATH` must be
+corrected or unset; it does not fall back to another installation.
+
 ## Related
 
 - [Agent capabilities](/agents/capabilities) — what this agent supports, generated from the manifest.

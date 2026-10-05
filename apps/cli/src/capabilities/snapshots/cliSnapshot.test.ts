@@ -18,6 +18,8 @@ const SCOPED_ENV_KEYS = [
   'HAPPIER_CLAUDE_PATH',
   'HAPPIER_CODEX_PATH',
   'HAPPIER_OPENCODE_PATH',
+  'HAPPIER_PI_PATH',
+  'PI_CODING_AGENT_DIR',
   'HAPPIER_PNPM_BIN',
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
@@ -70,11 +72,26 @@ describe('detectCliSnapshotOnDaemonPath', () => {
     setEnv('HAPPIER_CLAUDE_PATH', undefined);
     setEnv('HAPPIER_CODEX_PATH', undefined);
     setEnv('HAPPIER_OPENCODE_PATH', undefined);
+    setEnv('HAPPIER_PI_PATH', undefined);
+    setEnv('PI_CODING_AGENT_DIR', undefined);
   });
 
   afterEach(() => {
     restoreEnvValues(envBaseline);
     if (workDir) removeTempDirSync(workDir);
+  });
+
+  it('detects and versions Pi outside PATH and refreshes when its configured install root changes', async () => {
+    const firstDir = join(workDir, 'pi-first');
+    const secondDir = join(workDir, 'pi-second');
+    const firstPath = makeExecutableShim({ dir: join(firstDir, 'bin'), name: 'pi', stdout: 'echo "1.0.2"' });
+    const secondPath = makeExecutableShim({ dir: join(secondDir, 'bin'), name: 'pi', stdout: 'echo "1.0.3"' });
+    setEnv('PI_CODING_AGENT_DIR', firstDir);
+    const first = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['pi'] });
+    expect(first.clis.pi).toMatchObject({ available: true, resolvedPath: firstPath, version: '1.0.2' });
+    setEnv('PI_CODING_AGENT_DIR', secondDir);
+    const second = await detectCliSnapshotOnDaemonPath({ requestedCliNames: ['pi'] });
+    expect(second.clis.pi).toMatchObject({ available: true, resolvedPath: secondPath, version: '1.0.3' });
   });
 
   it.skipIf(process.platform === 'win32')(

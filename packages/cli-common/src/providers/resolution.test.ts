@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   readBackendCliSourcePreference,
@@ -58,6 +58,45 @@ describe('resolveProviderCliManagedCommandPath', () => {
 });
 
 describe('resolveProviderCliCommandCandidates', () => {
+  it('finds Pi vendor-managed launchers outside PATH and preserves source selection', () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-pi-managed-resolution-'));
+    const binaryName = process.platform === 'win32' ? 'pi.cmd' : 'pi';
+    const homeLauncher = join(root, '.pi', 'agent', 'bin', binaryName);
+    const configuredLauncher = join(root, 'custom-agent', 'bin', binaryName);
+    const pathLauncher = join(root, 'path-bin', binaryName);
+    const env = { HOME: root, USERPROFILE: root, PATH: '', HAPPIER_HOME_DIR: join(root, 'happier') };
+    try {
+      for (const candidate of [homeLauncher, configuredLauncher, pathLauncher]) {
+        mkdirSync(dirname(candidate), { recursive: true });
+        writeFileSync(candidate, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
+        chmodSync(candidate, 0o755);
+      }
+      expect(resolveProviderCliCommand('pi', { processEnv: env })).toEqual({ source: 'system', command: homeLauncher });
+      const configuredEnv = { ...env, PI_CODING_AGENT_DIR: '~/custom-agent' };
+      expect(resolveProviderCliCommand('pi', { processEnv: configuredEnv })).toEqual({ source: 'system', command: configuredLauncher });
+      expect(resolveProviderCliCommandCandidates('pi', { processEnv: configuredEnv })).toEqual([
+        { source: 'system', command: configuredLauncher },
+        { source: 'system', command: homeLauncher },
+      ]);
+      expect(resolveProviderCliCommand('pi', { processEnv: { ...configuredEnv, PATH: join(root, 'path-bin') } })).toEqual({ source: 'system', command: pathLauncher });
+      expect(resolveProviderCliCommand('pi', { processEnv: { ...configuredEnv, HAPPIER_PI_PATH: pathLauncher } })).toEqual({ source: 'override', command: pathLauncher });
+      expect(resolveProviderCliCommand('pi', { processEnv: { ...configuredEnv, HAPPIER_PI_PATH: join(root, 'missing') } })).toBeNull();
+      if (process.platform === 'win32') rmSync(configuredLauncher);
+      else chmodSync(configuredLauncher, 0o644);
+      expect(resolveProviderCliCommand('pi', { processEnv: configuredEnv })).toEqual({ source: 'system', command: homeLauncher });
+      const managedLauncher = resolveProviderCliManagedCommandPath('pi', { processEnv: env });
+      mkdirSync(dirname(managedLauncher), { recursive: true });
+      writeFileSync(managedLauncher, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n');
+      chmodSync(managedLauncher, 0o755);
+      expect(resolveProviderCliCommand('pi', { processEnv: {
+        ...env,
+        HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON: JSON.stringify({ 'agent:pi': 'managed-first' }),
+      } })).toEqual({ source: 'managed', command: managedLauncher });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('prefers stable opencode over opencode2 while keeping the explicit override authoritative', () => {
     if (process.platform === 'win32') return;
     const root = mkdtempSync(join(tmpdir(), 'happier-opencode-v2-resolution-'));

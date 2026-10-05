@@ -160,7 +160,12 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         : '';
 
     // Include all HAPPIER_*_PATH overrides for known agents
-    const agentIds = Object.keys(AGENTS);
+    const agentIds = Object.keys(AGENTS) as DetectCliName[];
+    const resolutionEnvKeys = new Set(agentIds.flatMap((id) =>
+        (getProviderCliRuntimeSpec(id).knownCommandCandidates ?? [])
+            .flatMap((candidate) => candidate.kind === 'envBinDir' ? [candidate.envVar] : []),
+    ));
+    const resolutionEnv = JSON.stringify([...resolutionEnvKeys].map((key) => [key, process.env[key] ?? '']));
     const pathOverrides = agentIds
         .map((id) => {
             const envKey = `HAPPIER_${id.toUpperCase()}_PATH`;
@@ -168,7 +173,7 @@ function buildCliSnapshotCacheKey(params: DetectCliRequest, pathEnv: string | nu
         })
         .join(':');
 
-    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}`;
+    return `${includeLoginStatus}:${verifyVersion}:${requestedCliNames}:${pathExt}:${path}:${home}:${userProfile}:${happierHomeDir}:${sourcePrefs}:${authEnvFingerprint}:${pathOverrides}:${resolutionEnv}`;
 }
 
 async function resolveCommandOnPath(command: string, pathEnv: string | null): Promise<string | null> {

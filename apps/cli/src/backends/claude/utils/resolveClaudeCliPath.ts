@@ -1,4 +1,5 @@
 import { resolveProviderCliCommand } from '@happier-dev/cli-common/providers';
+import { ProviderCliNotFoundError } from '@/runtime/managedTools/requireProviderCliCommand';
 
 let cachedResolvedClaudeCliPath: string | null = null;
 
@@ -12,9 +13,7 @@ export function resolveClaudeCliPath(): string {
     currentExecPath: process.execPath,
   });
   if (!resolved) {
-    throw new ReferenceError(
-      'Claude CLI (claude) is not available from any configured source. Install Claude Code or set HAPPIER_CLAUDE_PATH, then restart the daemon.',
-    );
+    throw new ProviderCliNotFoundError('claude');
   }
 
   cachedResolvedClaudeCliPath = resolved.command;
