@@ -34,6 +34,7 @@ import {
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
 } from './localVoiceSettings';
+import { createBrowserAudioRecorder } from './browserAudioRecorder';
 import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
 
 export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
@@ -49,12 +50,12 @@ type LocalAudioRecorder = {
 type AudioRecorderConstructor = new (options: unknown) => LocalAudioRecorder;
 
 function createLocalAudioRecorder(): LocalAudioRecorder {
-  const audioModule = AudioModule as unknown as {
-    AudioRecorder?: AudioRecorderConstructor;
-    AudioRecorderWeb?: AudioRecorderConstructor;
-  };
-  const Recorder = Platform.OS === 'web' ? audioModule.AudioRecorderWeb : audioModule.AudioRecorder;
-  if (!Recorder) {
+  if (Platform.OS === 'web') {
+    return createBrowserAudioRecorder();
+  }
+
+  const Recorder = (AudioModule as unknown as { AudioRecorder?: AudioRecorderConstructor }).AudioRecorder;
+  if (typeof Recorder !== 'function') {
     throw new Error('audio_recorder_unavailable');
   }
   return new Recorder(RecordingPresets.HIGH_QUALITY);
