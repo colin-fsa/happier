@@ -17,6 +17,8 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import type { SessionTurnMutationV1 } from '@/api/session/mutations/sessionMutationTypes';
 import { createSessionProviderInputConsumer } from './sessionInput/SessionProviderInputConsumer';
+import { createPermissionModeQueueState } from './createPermissionModeQueueState';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 
 type PromptLoopMetadata = Metadata & {
   replaySeedV1?: any;
@@ -62,6 +64,44 @@ async function waitForPromptLoopTick(): Promise<void> {
 }
 
 describe('runPermissionModePromptLoop', () => {
+  it('restores saved permission intent before eager native attachment even when its timestamp was already read', async () => {
+    const session = createMutableApiSessionClientFixture<PromptLoopMetadata>({ overrides: { onUserMessage: () => undefined } });
+    session.__setMetadata(createPromptLoopMetadata({ permissionMode: 'read-only', permissionModeUpdatedAt: 77 }));
+    const state = createPermissionModeQueueState({ session, initialPermissionMode: 'yolo' });
+    const observedPermissions: Array<string | undefined> = [];
+    let shouldExit = false;
+    const permissionHandler = createProviderEnforcedPermissionHandler({ session, logPrefix: '[PermissionStartupTest]' });
+    permissionHandler.setPermissionMode('yolo');
+    expect(permissionHandler.getImmediateDecision('before-start', 'Edit', {})).toEqual({ decision: 'approved' });
+    const runtime = {
+      ...createRuntime(),
+      getSessionId: () => 'existing-native-session',
+      startOrLoad: async () => {
+        observedPermissions.push(state.getCurrentPermissionMode());
+        expect(permissionHandler.getImmediateDecision('after-start', 'Edit', {})).toBeNull();
+      },
+      setSessionMode: async () => undefined,
+      setSessionModel: async () => undefined,
+      setSessionConfigOption: async () => undefined,
+    };
+    await runPermissionModePromptLoop({
+      providerName: 'Test Provider', agentMessageType: 'qwen', explicitPermissionMode: undefined,
+      session, messageQueue: state.messageQueue, permissionHandler, runtime,
+      createOverrideSynchronizer: (isStarted) => createRuntimeOverrideSynchronizers({ session, runtime, isStarted }),
+      messageBuffer: new MessageBuffer(), shouldExit: () => shouldExit,
+      getAbortSignal: () => new AbortController().signal,
+      keepAlive: () => undefined, setThinking: () => undefined, sendReady: () => undefined,
+      currentPermissionModeUpdatedAt: state.getCurrentPermissionModeUpdatedAt(),
+      setCurrentPermissionMode: state.setCurrentPermissionMode,
+      setCurrentPermissionModeUpdatedAt: state.setCurrentPermissionModeUpdatedAt,
+      initialResumeId: 'existing-native-session', strictInitialResume: true, startRuntimeBeforeFirstPrompt: true,
+      onAfterStart: () => { shouldExit = true; },
+      formatPromptErrorMessage: String,
+    });
+    expect(observedPermissions).toEqual(['read-only']);
+    expect(state.getCurrentPermissionModeUpdatedAt()).toBe(77);
+  });
+
   it('applies replay seed exactly once to the first real user prompt', async () => {
     const session = createPromptLoopSession();
     session.__setMetadata({

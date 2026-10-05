@@ -4,7 +4,7 @@ import {
   resolveModelOverrideFromMetadataSnapshot,
   resolvePermissionIntentFromMetadataSnapshot,
 } from './permission/permissionModeFromMetadata';
-import { resolveStartupPermissionModeFromSession } from './permission/startupPermissionModeSeed';
+import { applyStartupPermissionModeSeed } from './permission/permissionModeStateSync';
 
 type RuntimePermissionModeRef = { current: PermissionMode; updatedAt: number };
 type RuntimeModelOverrideRef = { current: string | null; updatedAt: number };
@@ -63,16 +63,21 @@ export async function initializeRuntimeOverridesSynchronizer(params: Readonly<{
       return;
     }
 
-    const resolved = await resolveStartupPermissionModeFromSession({
+    await applyStartupPermissionModeSeed({
+      explicitPermissionMode,
       sessionKind: params.sessionKind,
       session: params.session,
+      currentPermissionModeUpdatedAt: snapshot.permissionMode.updatedAt,
       take:
         typeof params.take === 'number' && Number.isFinite(params.take) && params.take > 0
           ? Math.floor(params.take)
           : 50,
+      apply: ({ mode, updatedAt }) => {
+        snapshot.permissionMode.current = mode;
+        snapshot.permissionMode.updatedAt = updatedAt;
+        params.onPermissionModeApplied?.();
+      },
     });
-    if (!resolved) return;
-    applyPermissionMode({ intent: resolved.mode, updatedAt: resolved.updatedAt });
   };
 
   const syncFromMetadata = (): void => {

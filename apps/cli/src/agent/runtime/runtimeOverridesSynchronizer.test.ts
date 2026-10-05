@@ -3,6 +3,21 @@ import { describe, expect, it, vi } from 'vitest';
 import { initializeRuntimeOverridesSynchronizer } from './runtimeOverridesSynchronizer';
 
 describe('initializeRuntimeOverridesSynchronizer', () => {
+  it('adopts saved mode during initialization even when the timestamp was copied with a different default', async () => {
+    const sync = await initializeRuntimeOverridesSynchronizer({
+      explicitPermissionMode: undefined,
+      sessionKind: 'resume',
+      session: {
+        getMetadataSnapshot: () => ({ permissionMode: 'read-only', permissionModeUpdatedAt: 77 } as import('@/api/types').Metadata),
+        fetchLatestUserPermissionIntentFromTranscript: async () => null,
+      },
+      permissionMode: { current: 'yolo', updatedAt: 77 },
+      modelOverride: { current: null, updatedAt: 0 },
+    });
+    await sync.seedFromSession();
+    expect(sync.getSnapshot().permissionMode).toEqual({ current: 'read-only', updatedAt: 77 });
+  });
+
   it('prefers newer transcript intent over older metadata when seeding attach sessions', async () => {
     const fetchLatestUserPermissionIntentFromTranscript = vi.fn(async () => ({ intent: 'safe-yolo' as any, updatedAt: 20 }));
 
