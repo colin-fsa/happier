@@ -119,6 +119,8 @@ test('CLI result assertion reports all source failures and accepts unavailable a
     [{ UNIT_TESTS_OUTCOME: 'failure', IMPORT_CYCLES_OUTCOME: 'failure' }, 1],
     [{ IMPORT_CYCLES_OUTCOME: 'failure' }, 1],
     [{ INTEGRATION_TESTS_OUTCOME: 'failure' }, 1],
+    [{ SLOW_TESTS_OUTCOME: 'failure' }, 1],
+    [{ SLOW_TESTS_OUTCOME: 'skipped' }, 1],
     [{ CLI_PART: '2', IMPORT_CYCLES_OUTCOME: 'skipped', CLI_COMMON_DIST_OUTCOME: 'skipped', INTEGRATION_TESTS_OUTCOME: 'skipped', SLOW_TESTS_OUTCOME: 'skipped' }, 0],
   ]) {
     const result = spawnSync('bash', ['-e', '-c', assertion.run], { env: { ...baseEnv, ...overrides }, encoding: 'utf8' });

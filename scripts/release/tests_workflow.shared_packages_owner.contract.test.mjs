@@ -59,18 +59,6 @@ test('shared-package CI materializes stable and unreleased discovery trees for w
   assert.ok(checkouts.every((step) => job.steps.indexOf(step) < job.steps.indexOf(run)));
 });
 
-test('CLI part one owns slow tests and the all-lane result collector', async () => {
-  const workflow = YAML.parse(await readFile(new URL('.github/workflows/tests.yml', root), 'utf8'));
-  const steps = workflow.jobs.cli.steps;
-  const slow = steps.find((step) => step.id === 'slow-tests');
-  const collector = steps.find((step) => step.name === 'Require all cli test lanes');
-  assert.equal(slow.if, '${{ matrix.part == 1 && !cancelled() }}');
-  assert.equal(slow['continue-on-error'], true);
-  assert.equal(slow.run, 'yarn workspace @happier-dev/cli test:slow');
-  assert.equal(collector.env.SLOW_TESTS_OUTCOME, '${{ steps.slow-tests.outcome }}');
-  assert.match(collector.run, /SLOW_TESTS_OUTCOME/u);
-});
-
 test('build smoke owns the four production build surfaces with a final result collector', async () => {
   const workflow = YAML.parse(await readFile(new URL('.github/workflows/tests.yml', root), 'utf8'));
   const job = workflow.jobs['build-smoke'];

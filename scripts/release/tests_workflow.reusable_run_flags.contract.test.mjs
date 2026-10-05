@@ -127,7 +127,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     ['shared-packages-unit', 'run_shared_packages'],
     ['server', 'run_server'],
     ['server-db-contract', 'run_server_db_contract'],
-    ['cli', 'run_cli'],
     ['stack', 'run_stack'],
     ['release-contracts', 'run_release_contracts'],
     ['binary-smoke', 'run_binary_smoke'],
