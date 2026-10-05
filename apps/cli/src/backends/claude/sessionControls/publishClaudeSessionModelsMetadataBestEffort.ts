@@ -2,7 +2,9 @@ import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
 
 import { reconcileClaudeSessionModelsState } from '../sessionModels/reconcileClaudeSessionModelsState';
-import type { ClaudeInstalledRuntimeCapabilities } from './probeClaudeInstalledRuntimeCapabilities';
+import { resolveClaudeEffortLevelsFromModelDescriptor } from '../models/resolveClaudeModelCatalog';
+import { resolveClaudeEffortLevelsForModel } from '../utils/claudeEffort';
+import { probeClaudeInstalledRuntimeCapabilities, type ClaudeInstalledRuntimeCapabilities } from './probeClaudeInstalledRuntimeCapabilities';
 import { resolveClaudeSessionModelsState } from './resolveClaudeSessionModelsState';
 
 /** Options that only exist while the installed CLI can apply `--effort`. */
@@ -65,24 +67,34 @@ export async function publishClaudeSessionModelsMetadataBestEffort(params: Reado
   const snapshot = await params.session.ensureMetadataSnapshot({ timeoutMs: 60_000 }).catch(() => null);
   if (!snapshot) return;
 
+  const installedCapabilities = await (params.probeInstalledRuntimeCapabilities ?? probeClaudeInstalledRuntimeCapabilities)(
+    { cwd: params.cwd, timeoutMs: params.timeoutMs },
+  ).catch(() => null);
+  if (!installedCapabilities) return;
+
   const state = await resolveClaudeSessionModelsState({
     cwd: params.cwd,
     timeoutMs: params.timeoutMs,
     currentModelId,
     nowMs: params.nowMs ?? (() => Date.now()),
     accountSettings: params.accountSettings,
-    ...(params.probeInstalledRuntimeCapabilities
-      ? { probeInstalledRuntimeCapabilities: params.probeInstalledRuntimeCapabilities }
-      : {}),
+    probeInstalledRuntimeCapabilities: async () => installedCapabilities,
   }).catch(() => null);
   if (!state) return;
 
   const selectedModel = state.availableModels.find(
     (model) => model.id === currentModelId || model.extendedContextModelId === currentModelId,
   );
-  const selectedModelOptionIds = new Set(
-    (selectedModel?.modelOptions ?? []).map((option) => option.id),
+  // Membership is not capability evidence for bare aliases. Use the same model policy as launch,
+  // including curated models that deliberately reject effort and discovered models' reported tiers.
+  const effortLevels = resolveClaudeEffortLevelsForModel(
+    currentModelId, resolveClaudeEffortLevelsFromModelDescriptor(selectedModel),
   );
+  const selectedModelOptionIds = new Set<string>();
+  if (installedCapabilities.supportsEffort && effortLevels.length > 0) selectedModelOptionIds.add('reasoning_effort');
+  if (installedCapabilities.supportsEffort && installedCapabilities.supportsUltracode && effortLevels.includes('xhigh')) {
+    selectedModelOptionIds.add('ultracode');
+  }
 
   try {
     await params.session.updateMetadata((prev) => {

@@ -265,6 +265,13 @@ contribution; historical persisted unions do not establish current membership. R
 contribution removes its withdrawn rows and optional controls.
 Effective-current-model observations supply the selected model's context facts through that same
 reconciler without granting historical catalog rows membership again.
+In development source, observed reasoning effort follows that same current-model contribution:
+statusline reports, verified terminal-control results, and explicit SDK/legacy launch effort after
+successful provider initialization update the active control value. Catalog refreshes preserve that
+observation without renewing catalog freshness or treating a pending metadata request as applied.
+When no effort has been observed, the existing catalog default remains a control fallback rather
+than a verified runtime observation. Override retirement uses the same alias-aware model support
+policy as launch, so a missing bare-alias catalog row cannot erase a supported request.
 Effort tiers are resolved once when the session mode is built and travel on the mode, so spawn-time
 resolution and launch-option hashing see the same value and hashing stays pure.
 

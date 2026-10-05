@@ -115,7 +115,7 @@ import { isClaudeExplicitDiffToolInput } from './utils/isClaudeExplicitDiffToolI
 import {
     buildClaudeSessionModelsMetadataFromSupportedModels,
 } from './remote/buildClaudeSessionModelsMetadataFromSupportedModels';
-import { applyClaudeEffectiveModelUpdate } from './sessionModels/effectiveModelUpdate';
+import { applyClaudeEffectiveModelUpdate, type ClaudeEffectiveModelObservation } from './sessionModels/effectiveModelUpdate';
 import {
     createStreamedTranscriptWriter,
     type StreamedTranscriptWriter,
@@ -1724,6 +1724,10 @@ export async function claudeRemoteLauncher(
                     onThinkingChange: session.onThinkingChange,
                     claudeArgs: session.claudeArgs,
                     onMessage,
+                    onEffectiveModel: (facts: ClaudeEffectiveModelObservation) => applyClaudeEffectiveModelUpdate({
+                        client: session.client, reconcileModels: session.reconcileSessionModels,
+                        ...facts, source: 'sdk', logPrefix: '[remote]',
+                    }),
                     isWorkflowProviderTaskId: (taskId: string) => (
                         workflowActivitySource?.isWorkflowOwnedProviderTaskId(taskId) === true
                     ),
@@ -1989,6 +1993,7 @@ export async function claudeRemoteLauncher(
                         };
                         const sharedTerminalCallbacks = createClaudeUnifiedTerminalSharedCallbacks({
                             sessionClient: session.client,
+                            reconcileModels: session.reconcileSessionModels,
                             observeInFlightSteerAvailabilitySnapshot,
                             sustainedPendingDeliveryBlockHandler,
                             dialogChoiceBroker,

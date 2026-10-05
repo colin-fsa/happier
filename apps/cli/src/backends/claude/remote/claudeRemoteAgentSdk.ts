@@ -114,6 +114,7 @@ import {
     createClaudeSubscriptionAccessTokenRefreshCallback,
 } from '../connectedServices/claudeSubscriptionAccessTokenRefresh';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import type { ClaudeEffectiveModelObservation } from '../sessionModels/effectiveModelUpdate';
 
 type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<SDKUserMessage>;
@@ -175,6 +176,8 @@ export async function claudeRemoteAgentSdk(opts: {
     onThinkingChange?: (thinking: boolean) => void;
     onProviderPromptStarted?: () => void | Promise<void>;
     onMessage: (message: SDKMessage) => void;
+    /** Explicit query launch controls acknowledged by the provider's successful init. */
+    onEffectiveModel?: (facts: ClaudeEffectiveModelObservation) => void;
     /** Correlation supplied by the workflow owner after onMessage has observed the same SDK fact. */
     isWorkflowProviderTaskId?: (taskId: string) => boolean;
     streamedTranscriptWriter?: StreamedTranscriptWriter | null;
@@ -2174,6 +2177,12 @@ export async function claudeRemoteAgentSdk(opts: {
                     }
 
                     if (subtype === 'init' || subtype === 'compact_boundary') {
+                        if (subtype === 'init' && typeof system.model === 'string' && system.model.trim()) {
+                            const launchEffort = resolvedUltracode ? 'xhigh' : queryOptions.effort;
+                            if (typeof launchEffort === 'string') {
+                                opts.onEffectiveModel?.({ modelId: system.model.trim(), reasoningEffort: launchEffort });
+                            }
+                        }
                         if (system.session_id) {
                             const transcriptPath = join(
                                 getProjectPath(opts.path, claudeConfigDir),

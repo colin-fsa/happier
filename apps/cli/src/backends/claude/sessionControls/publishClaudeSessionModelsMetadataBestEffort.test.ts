@@ -2,11 +2,34 @@ import { createClaudeSessionModelsReconciler, reconcileClaudeSessionModelsState 
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { buildClaudeSessionModelsMetadataFromSupportedModels } from '@/backends/claude/remote/buildClaudeSessionModelsMetadataFromSupportedModels';
 
 import { publishClaudeSessionModelsMetadataBestEffort } from './publishClaudeSessionModelsMetadataBestEffort';
 
 describe('publishClaudeSessionModelsMetadataBestEffort', () => {
+  it.each(['sonnet', 'opus', 'fable'])('preserves a supported effort request for the %s alias', async (currentModelId) => {
+    const state: { metadata: Metadata } = {
+      metadata: createTestMetadata({
+        sessionConfigOptionOverridesV1: {
+          v: 1, updatedAt: 1,
+          overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } },
+        },
+      }),
+    };
+    await publishClaudeSessionModelsMetadataBestEffort({
+      cwd: '/', timeoutMs: 250, currentModelId,
+      accountSettings: { claudeDynamicModelProbeEnabled: false },
+      probeInstalledRuntimeCapabilities: async () => ({ supportsEffort: true, supportsUltracode: false }),
+      session: {
+        ensureMetadataSnapshot: async () => state.metadata,
+        updateMetadata: async (updater) => { state.metadata = updater(state.metadata); },
+      },
+    });
+    expect(state.metadata.sessionConfigOptionOverridesV1?.overrides.reasoning_effort)
+      .toEqual({ updatedAt: 1, value: 'low' });
+  });
+
   it('retires effort overrides the runtime can no longer apply', async () => {
     const state: { metadata: Metadata } = {
       metadata: {

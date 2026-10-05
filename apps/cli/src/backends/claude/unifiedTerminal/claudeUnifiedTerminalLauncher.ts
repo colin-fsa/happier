@@ -925,6 +925,7 @@ export async function claudeUnifiedTerminalLauncher(
     });
     const sharedTerminalCallbacks = createClaudeUnifiedTerminalSharedCallbacks({
       sessionClient: session.client,
+      reconcileModels: session.reconcileSessionModels,
       observeInFlightSteerAvailabilitySnapshot,
       sustainedPendingDeliveryBlockHandler,
       dialogChoiceBroker,

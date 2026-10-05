@@ -4,7 +4,8 @@ import { updateMetadataBestEffort } from '@/api/session/sessionWritesBestEffort'
 
 import { buildClaudeSessionModelsMetadataWithCurrentModelId } from '../remote/buildClaudeSessionModelsMetadataFromSupportedModels';
 
-export type ClaudeEffectiveModelUpdateSource = 'statusline' | 'transcript' | 'sdk';
+export type ClaudeEffectiveModelUpdateSource = 'statusline' | 'transcript' | 'sdk' | 'control';
+export type ClaudeEffectiveModelObservation = Readonly<{ modelId: string; reasoningEffort: string }>;
 
 type ClaudeEffectiveModelUpdateClient = Readonly<{
   sendSessionEvent(event: { type: 'message'; message: string }, id?: string): void;
@@ -69,12 +70,15 @@ function hasRequestedModelDetails(params: Readonly<{
   modelId: string;
   displayName: string | null;
   contextWindowTokens: number | null;
+  reasoningEffort: string | null;
 }>): boolean {
-  if (params.displayName === null && params.contextWindowTokens === null) return true;
+  if (params.displayName === null && params.contextWindowTokens === null && params.reasoningEffort === null) return true;
   const entry = findSessionModelEntry(params.metadata, params.modelId);
   if (!entry) return false;
   if (params.displayName !== null && entry.name !== params.displayName) return false;
   if (params.contextWindowTokens !== null && entry.contextWindowTokens !== params.contextWindowTokens) return false;
+  const effortOption = entry.modelOptions?.find(option => option.id === 'reasoning_effort');
+  if (params.reasoningEffort !== null && effortOption && effortOption.currentValue !== params.reasoningEffort) return false;
   return true;
 }
 
@@ -90,8 +94,9 @@ function buildMetadataRequestKey(params: Readonly<{
   modelId: string;
   displayName: string | null;
   contextWindowTokens: number | null;
+  reasoningEffort: string | null;
 }>): string {
-  return `${params.modelId}|${params.displayName ?? ''}|${params.contextWindowTokens ?? ''}`;
+  return `${params.modelId}|${params.displayName ?? ''}|${params.contextWindowTokens ?? ''}|${params.reasoningEffort ?? ''}`;
 }
 
 function buildModelChangedEventId(params: Readonly<{
@@ -115,6 +120,7 @@ export function applyClaudeEffectiveModelUpdate(params: Readonly<{
   modelId: string;
   displayName?: string | null;
   contextWindowTokens?: number | null;
+  reasoningEffort?: string | null;
   source: ClaudeEffectiveModelUpdateSource;
   logPrefix: string;
 }>): void {
@@ -123,15 +129,16 @@ export function applyClaudeEffectiveModelUpdate(params: Readonly<{
 
   const displayName = readString(params.displayName);
   const contextWindowTokens = readPositiveTokens(params.contextWindowTokens);
+  const reasoningEffort = readString(params.reasoningEffort);
   const metadataSnapshot = readMetadataSnapshot(params.client);
   const state = stateFor(params.client);
   const previousModelId = readActiveClaudeModelId(metadataSnapshot) ?? state.lastSeenModelId;
-  const metadataRequestKey = buildMetadataRequestKey({ modelId, displayName, contextWindowTokens });
+  const metadataRequestKey = buildMetadataRequestKey({ modelId, displayName, contextWindowTokens, reasoningEffort });
 
   const alreadyAppliedInMemory = state.lastSeenModelId === modelId;
   const shouldUpdateMetadata =
     (!alreadyAppliedInMemory && previousModelId !== modelId)
-    || !hasRequestedModelDetails({ metadata: metadataSnapshot, modelId, displayName, contextWindowTokens });
+    || !hasRequestedModelDetails({ metadata: metadataSnapshot, modelId, displayName, contextWindowTokens, reasoningEffort });
   // Even when metadata already matches, record the live observation in the session's source
   // contributions so a later catalog/SDK publication cannot replace it with a catalog estimate.
   if (!shouldUpdateMetadata && params.reconcileModels) {
@@ -142,6 +149,7 @@ export function applyClaudeEffectiveModelUpdate(params: Readonly<{
       currentModel: {
         ...(displayName ? { name: displayName } : {}),
         ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
       },
     });
   }
@@ -158,6 +166,7 @@ export function applyClaudeEffectiveModelUpdate(params: Readonly<{
           currentModel: {
             ...(displayName ? { name: displayName } : {}),
             ...(contextWindowTokens !== null ? { contextWindowTokens } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
           },
         }) ?? {}),
       }),

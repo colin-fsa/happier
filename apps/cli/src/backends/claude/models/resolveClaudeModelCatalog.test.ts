@@ -405,7 +405,7 @@ describe('resolveClaudeEffortLevelsFromModelDescriptor', () => {
 
   it('returns no tiers for a model without an effort control', () => {
     expect(resolveClaudeEffortLevelsFromModelDescriptor(null)).toEqual([]);
-    expect(resolveClaudeEffortLevelsFromModelDescriptor({ id: 'x', name: 'X' })).toEqual([]);
+    expect(resolveClaudeEffortLevelsFromModelDescriptor({})).toEqual([]);
   });
 });
 

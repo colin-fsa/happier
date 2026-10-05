@@ -37,10 +37,22 @@ function mergeAvailableModels(contributions: ClaudeSessionModelContributions): S
   ];
   const current = contributions.current_model?.availableModels[0];
   if (!current) return models;
-  if (!models.some(model => model.id === current.id)) return [...models, current];
-  return models.map(model => model.id === current.id && current.contextWindowTokens !== undefined
-    ? { ...model, contextWindowTokens: current.contextWindowTokens }
+  const observedOptions = new Map((current.modelOptions ?? []).map(option => [option.id, option]));
+  const projected = models.map(model => model.id === current.id || model.extendedContextModelId === current.id
+    ? {
+      ...model,
+      ...(model.id === current.id && current.contextWindowTokens !== undefined ? { contextWindowTokens: current.contextWindowTokens } : {}),
+      ...(model.modelOptions ? { modelOptions: model.modelOptions.map(option => {
+        const observed = observedOptions.get(option.id);
+        return observed ? { ...option, currentValue: observed.currentValue } : option;
+      }) } : {}),
+    }
     : model);
+  if (models.some(model => model.id === current.id)) return projected;
+  // Current facts may add a live model, but cannot create controls the catalog does not admit.
+  const { modelOptions: _observedOptions, ...currentFacts } = current;
+  const variant = projected.find(model => model.extendedContextModelId === current.id);
+  return [...projected, { ...currentFacts, ...(variant?.modelOptions ? { modelOptions: variant.modelOptions } : {}) }];
 
 }
 

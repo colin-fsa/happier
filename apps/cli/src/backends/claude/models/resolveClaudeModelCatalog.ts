@@ -226,7 +226,10 @@ export async function resolveClaudeModelCatalog(
  * not in the static effort table.
  */
 export function resolveClaudeEffortLevelsFromModelDescriptor(
-  model: AgentModelDescriptor | null | undefined,
+  model: Readonly<{ modelOptions?: ReadonlyArray<Readonly<{
+    id: string;
+    options?: ReadonlyArray<Readonly<{ value: unknown }>>;
+  }>> }> | null | undefined,
 ): readonly string[] {
   const control = model?.modelOptions?.find((option) => option.id === 'reasoning_effort');
   if (!control || !Array.isArray(control.options)) return [];

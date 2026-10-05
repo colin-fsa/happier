@@ -424,12 +424,14 @@ describe('claudeRemote', () => {
   });
 
   it('injects --effort when the mode specifies a non-default reasoningEffort', async () => {
-    mockQuery.mockReturnValue(messageStream(resultMessage()));
+    const onEffectiveModel = vi.fn();
+    mockQuery.mockReturnValue(messageStream({ ...systemInitMessage('effort-init'), model: 'claude-opus-4-6' }, resultMessage()));
 
     const { claudeRemote } = await import('./claudeRemote');
 
     await claudeRemote(
       createBaseOptions({
+        onEffectiveModel,
         nextMessage: async () => ({
           message: 'hello',
           mode: defaultMode({ model: 'claude-opus-4-6', reasoningEffort: 'medium' }),
@@ -440,6 +442,7 @@ describe('claudeRemote', () => {
     expect(mockQuery).toHaveBeenCalledTimes(1);
     const call = mockQuery.mock.calls[0]?.[0] as QueryCall | undefined;
     expect(call?.options?.extraArgs).toEqual(['--effort', 'medium']);
+    expect(onEffectiveModel).toHaveBeenCalledWith({ modelId: 'claude-opus-4-6', reasoningEffort: 'medium' });
   });
 
   it('injects --effort high for Opus 4.7 because xhigh is the model default', async () => {

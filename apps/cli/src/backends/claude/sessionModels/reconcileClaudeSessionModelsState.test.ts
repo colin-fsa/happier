@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import type { Metadata } from '@/api/types';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createClaudeSessionModelsReconciler, reconcileClaudeSessionModelsState } from './reconcileClaudeSessionModelsState';
 
 type State = NonNullable<Metadata['sessionModelsV1']>;
@@ -69,4 +70,49 @@ it('does not advance catalog observation time for current-model telemetry, inclu
   expect(afterCatalog.updatedAt).toBe(10);
   expect(afterCatalog.currentModelId).toBe('active');
   expect(afterCatalog.availableModels[0]?.contextWindowTokens).toBe(1_000_000);
+});
+
+it('publishes observed effort through later catalog refreshes while preserving a different pending request', async () => {
+  const { buildClaudeSessionModelsMetadataWithCurrentModelId } = await import('../remote/buildClaudeSessionModelsMetadataFromSupportedModels');
+  const reconcileModels = createClaudeSessionModelsReconciler();
+  const catalog = state([{ id: 'claude-sonnet-4-6', name: 'Sonnet', modelOptions: [
+    { id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high', options: [
+      { value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' },
+    ] },
+  ] }]);
+  let metadata = createTestMetadata({ sessionModelsV1: reconcileModels({ metadata: null, incomingState: catalog, source: 'catalog' }),
+    sessionConfigOptionOverridesV1: { v: 1, updatedAt: 20, overrides: { reasoning_effort: { value: 'medium', updatedAt: 20 } } },
+  });
+  metadata = { ...metadata, ...buildClaudeSessionModelsMetadataWithCurrentModelId({
+    metadata, reconcileModels, currentModelId: 'claude-sonnet-4-6', currentModel: { reasoningEffort: 'low' },
+  }) };
+  for (const source of ['catalog', 'agent_sdk'] as const) {
+    const actual = reconcileModels({ metadata, incomingState: catalog, source });
+    expect(actual.availableModels[0]?.modelOptions?.[0]?.currentValue).toBe('low');
+    expect(actual.updatedAt).toBe(10);
+    metadata = { ...metadata, sessionModelsV1: actual };
+  }
+  expect(metadata.sessionConfigOptionOverridesV1?.overrides.reasoning_effort?.value).toBe('medium');
+  const retired = reconcileModels({ metadata, incomingState: state([{ id: 'claude-sonnet-4-6', name: 'Sonnet' }]), source: 'catalog' });
+  expect(retired.availableModels[0]?.modelOptions).toBeUndefined();
+});
+
+it('projects observed effort for the advertised extended-context variant without changing the base context facts', async () => {
+  const { buildClaudeSessionModelsMetadataWithCurrentModelId } = await import('../remote/buildClaudeSessionModelsMetadataFromSupportedModels');
+  const reconcileModels = createClaudeSessionModelsReconciler();
+  const initial = reconcileModels({ metadata: null, source: 'catalog', incomingState: state([{
+    id: 'claude-sonnet-4-6', name: 'Sonnet', contextWindowTokens: 200_000,
+    extendedContextModelId: 'claude-sonnet-4-6[1m]',
+    modelOptions: [{ id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high' }],
+  }]) });
+  const actual = buildClaudeSessionModelsMetadataWithCurrentModelId({
+    metadata: { sessionModelsV1: initial } as Metadata,
+    reconcileModels, currentModelId: 'claude-sonnet-4-6[1m]',
+    currentModel: { contextWindowTokens: 1_000_000, reasoningEffort: 'low' },
+  })?.sessionModelsV1;
+  expect(actual?.availableModels.find(model => model.id === 'claude-sonnet-4-6')?.contextWindowTokens).toBe(200_000);
+  expect(actual?.availableModels.find(model => model.id === 'claude-sonnet-4-6[1m]')).toMatchObject({
+    contextWindowTokens: 1_000_000,
+    modelOptions: [expect.objectContaining({ id: 'reasoning_effort', currentValue: 'low' })],
+  });
 });

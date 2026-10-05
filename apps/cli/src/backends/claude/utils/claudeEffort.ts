@@ -46,7 +46,7 @@ function normalizeReportedClaudeEffortLevels(raw: unknown): readonly ClaudeEffor
  * session-scoped and is not cleared when the model changes, so an unrecognised id is not by
  * itself a reason to forward a carried level.
  */
-function resolveEvidencedClaudeEffortLevels(
+export function resolveClaudeEffortLevelsForModel(
     modelIdRaw: unknown,
     reportedRaw: unknown,
 ): readonly ClaudeEffortLevel[] {
@@ -178,7 +178,7 @@ export function resolveClaudeEffectiveEffortForModel(params: Readonly<{
     const normalizedModelId = normalizeClaudeModelIdForKnownCheck(params.modelId);
     if (!normalizedModelId || normalizedModelId === 'default') return null;
 
-    const supportedLevels = resolveEvidencedClaudeEffortLevels(params.modelId, params.supportedLevels);
+    const supportedLevels = resolveClaudeEffortLevelsForModel(params.modelId, params.supportedLevels);
     if (supportedLevels.length === 0) return null;
 
     const normalized = resolveBestSupportedClaudeEffort(effort, supportedLevels);
@@ -237,7 +237,7 @@ export function resolveClaudeUltracodeForModel(params: Readonly<{
 
     // Ultracode forces xhigh, so it needs the same evidence as an xhigh effort selection. A
     // discovered model qualifies only when the caller passes the tiers the API reported.
-    return resolveEvidencedClaudeEffortLevels(params.modelId, params.supportedLevels).includes('xhigh');
+    return resolveClaudeEffortLevelsForModel(params.modelId, params.supportedLevels).includes('xhigh');
 }
 
 /** The `--settings` JSON overlay value that turns ultracode on for a spawned Claude CLI. */

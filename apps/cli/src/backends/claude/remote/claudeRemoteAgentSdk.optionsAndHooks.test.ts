@@ -268,13 +268,19 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
         });
     });
 
-    it('passes effort when the mode specifies a reasoningEffort', async () => {
+    it.each([
+        { requestedModel: 'sonnet', runtimeModel: 'claude-sonnet-4-6', effort: 'low' },
+        { requestedModel: 'claude-opus-4-6', runtimeModel: 'claude-opus-4-6', effort: 'max' },
+    ])('passes effort when the mode specifies a reasoningEffort ($requestedModel/$effort)', async ({ requestedModel, runtimeModel, effort }) => {
         let capturedOptions: any = null;
+        const onEffectiveModel = vi.fn();
 
         const createQuery = vi.fn((_params: any) => {
             capturedOptions = _params.options;
             return {
                 async *[Symbol.asyncIterator]() {
+                    expect(onEffectiveModel).not.toHaveBeenCalled();
+                    yield { type: 'system', subtype: 'init', model: runtimeModel, session_id: 'effort-init' } as any;
                     yield { type: 'result' } as any;
                 },
                 close: vi.fn(),
@@ -292,7 +298,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             didSendFirst = true;
             return {
                 message: 'hello',
-                mode: makeMode({ permissionMode: 'default', model: 'claude-opus-4-6', reasoningEffort: 'max' } as any),
+                mode: makeMode({ permissionMode: 'default', model: requestedModel, reasoningEffort: effort }),
             };
         });
 
@@ -308,12 +314,14 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             onReady: () => {},
             onSessionFound: () => {},
             onMessage: () => {},
+            onEffectiveModel,
             createQuery,
         } as any);
 
         expect(capturedOptions).toBeTruthy();
-        expect(capturedOptions.model).toBe('claude-opus-4-6');
-        expect(capturedOptions.effort).toBe('max');
+        expect(capturedOptions.model).toBe(requestedModel);
+        expect(capturedOptions.effort).toBe(effort);
+        expect(onEffectiveModel).toHaveBeenCalledWith({ modelId: runtimeModel, reasoningEffort: effort });
     });
 
     it('passes ultracode through the --settings extraArg for xhigh-capable models', async () => {
