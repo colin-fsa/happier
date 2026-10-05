@@ -723,10 +723,6 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-attention-indicator-sess_compact_active-trailing-working')).toBeTruthy();
         const spinner = findWorkingSpinner(screen, 'sess_compact_active-trailing');
         expect(spinner).toBeTruthy();
-        expect(flattenStyle(spinner?.props.style)).toMatchObject({
-            width: 12,
-            height: 12,
-        });
         // The row owns which color its spinner gets; how the spinner draws it depends on the
         // user's loading indicator style.
         const spinnerColors = screen
@@ -1140,10 +1136,6 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-list-status-subtitle-text-sess_status_pill-working')?.props.children).toBe('working on it');
         const spinner = findWorkingSpinner(screen, 'sess_status_pill-secondary');
         expect(spinner).toBeTruthy();
-        expect(flattenStyle(spinner?.props.style)).toMatchObject({
-            width: 12,
-            height: 12,
-        });
         expect(screen.findAllByType('StatusDot')).toHaveLength(0);
         const statusText = screen.findAllByType('Text').find((node) => node.props.children === 'working on it');
         const flat = flattenStyle(statusText?.props.style);

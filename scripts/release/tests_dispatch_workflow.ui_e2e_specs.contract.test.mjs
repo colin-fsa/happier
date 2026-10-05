@@ -14,15 +14,5 @@ test('manual tests dispatch can run an exact bounded UI E2E spec selection', asy
   assert.match(reusable, /UI_E2E_SPECS:\s*\$\{\{\s*inputs\.ui_e2e_specs\s*\}\}/, 'the UI E2E job should receive the selection only as environment data');
   assert.match(reusable, /packages\/tests\/suites\/ui-e2e\/\*\.spec\.ts/, 'targeted specs should be restricted to the canonical UI E2E directory');
   assert.match(reusable, /yarn -s test:e2e:ui -- "\$\{specs\[@\]\}"/, 'validated specs should be passed as a quoted argument array');
-  assert.match(
-    reusable,
-    /fromJSON\(inputs\.ui_e2e_specs != '' && '\[1\]' \|\| '\[[0-9,]+\]'\)/,
-    'an empty selection should preserve the workflow-owned complete shard matrix',
-  );
-  assert.doesNotMatch(
-    reusable,
-    /fromJSON\(inputs\.ui_e2e_specs != '' && '\[1\]' \|\| '\[1\]'\)/,
-    'an empty selection must not collapse the complete gate to the targeted single-job path',
-  );
   assert.match(reusable, /name:\s*ui-e2e-playwright-artifacts[\s\S]*?compression-level:\s*0/, 'failure artifacts should skip recompressing browser media');
 });

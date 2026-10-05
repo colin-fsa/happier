@@ -4,30 +4,29 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-const { runLocalHappierJsonCommandMock, resolveVersionedLocalHappierCliMock } = vi.hoisted(() => ({
-  runLocalHappierJsonCommandMock: vi.fn(),
-  resolveVersionedLocalHappierCliMock: vi.fn(),
+const { cliJsonResponseMock, cliVersionResponseMock } = vi.hoisted(() => ({
+  cliJsonResponseMock: vi.fn(),
+  cliVersionResponseMock: vi.fn<() => string>(),
 }));
 
-// The Happier CLI is a subprocess boundary; the handler's projection of its JSON is the logic under test.
-vi.mock('../happierCli.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../happierCli.js')>();
+// Replace only execution at the OS boundary; resolution, JSON parsing and service policy stay real.
+vi.mock('../taskRuntime.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../taskRuntime.js')>();
   return {
     ...actual,
-    runLocalHappierJsonCommand: runLocalHappierJsonCommandMock,
-    resolveVersionedLocalHappierCli: resolveVersionedLocalHappierCliMock,
+    runCommandCapture: async (params: Parameters<typeof actual.runCommandCapture>[0]) => ({
+      status: 0,
+      stdout: params.args[0] === '--version'
+        ? cliVersionResponseMock()
+        : JSON.stringify(await cliJsonResponseMock(params)) ?? '',
+      stderr: '',
+    }),
   };
 });
 
-const RESOLVED_CLI = {
-  command: '/home/user/.happier/cli/current/happier',
-  provenance: 'managed' as const,
-  version: '0.2.13',
-};
-
 import { writeHappierCliChoice } from '@happier-dev/cli-common/firstPartyRuntime';
-import { SystemTaskExecutionError as SystemTaskExecutionErrorForTest } from '@happier-dev/cli-common/systemTasks';
 
+import { installManagedCliFixture } from '../localHappierCliFixture.js';
 import { createDaemonServiceStartHandler, createDaemonServiceStatusHandler } from './daemonService.js';
 
 const AMBIENT_STATUS_JSON = {
@@ -81,24 +80,36 @@ async function collectResult(
 }
 
 describe('daemonService system task handlers', () => {
-  beforeEach(() => {
-    resolveVersionedLocalHappierCliMock.mockResolvedValue(RESOLVED_CLI);
+  beforeEach(async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hsetup-daemon-service-'));
+    vi.stubEnv('HAPPIER_HOME_DIR', home);
+    vi.stubEnv('HAPPIER_BOOTSTRAP_CLI_PATH', '');
+    vi.stubEnv('HAPPIER_BOOTSTRAP_HAPPIER_PATH', '');
+    vi.stubEnv('HAPPIER_STACK_REPO_DIR', join(home, 'elsewhere'));
+    vi.stubEnv('PATH', '');
+    cliVersionResponseMock.mockReturnValue('0.2.13');
+    await installManagedCliFixture({ processEnv: process.env });
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    });
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('reports acquisition explicitly and carries every ambient daemon fact the CLI emitted', async () => {
-    // An empty Happier home: no default channel's CLI to adopt, so the app's channel answers.
+    // No stable CLI to adopt: only the app's preview channel is installed.
     const emptyHome = mkdtempSync(join(tmpdir(), 'hsetup-status-channel-'));
     vi.stubEnv('HAPPIER_HOME_DIR', emptyHome);
     vi.stubEnv('PATH', '');
+    const cli = await installManagedCliFixture({ processEnv: process.env, releaseRing: 'preview' });
     onTestFinished(() => {
       vi.unstubAllEnvs();
       rmSync(emptyHome, { recursive: true, force: true });
     });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
     const handler = createDaemonServiceStatusHandler();
 
     const { result } = await collectResult(handler, {
@@ -108,10 +119,10 @@ describe('daemonService system task handlers', () => {
       channel: 'preview',
     });
 
-    expect(runLocalHappierJsonCommandMock.mock.calls[0]?.[0]).toMatchObject({
+    expect(cliJsonResponseMock.mock.calls[0]?.[0]).toMatchObject({
       args: ['daemon', 'status', '--json'],
-      releaseRing: 'preview',
-      cli: RESOLVED_CLI,
+      command: cli.command,
+      env: { HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview' },
     });
     expect(result).toEqual({
       serviceInstalled: true,
@@ -120,7 +131,7 @@ describe('daemonService system task handlers', () => {
       machineId: 'machine-b',
       // Which CLI answered, where it came from, the version it reports for itself, and the channel
       // whose CLI it is (D2: the default channel's when that one is installed, else the app's).
-      acquisition: { command: '/home/user/.happier/cli/current/happier', provenance: 'managed', version: '0.2.13', channel: 'preview' },
+      acquisition: { ...cli, channel: 'preview' },
       server: {
         activeServerId: 'custom',
         serverUrl: 'https://relay.example.test',
@@ -176,6 +187,7 @@ describe('daemonService system task handlers', () => {
     symlinkSync(join(packageRoot, 'bin', 'happier.mjs'), join(npmBin, 'happier'));
     vi.stubEnv('HAPPIER_HOME_DIR', join(home, 'happier'));
     vi.stubEnv('PATH', npmBin);
+    await installManagedCliFixture({ processEnv: process.env });
     onTestFinished(() => {
       vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });
@@ -188,19 +200,19 @@ describe('daemonService system task handlers', () => {
     };
 
     await writeHappierCliChoice({ choice: { mode: 'managed' }, processEnv: process.env });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
     const { result: managed } = await collectResult(createDaemonServiceStatusHandler(), { target: { kind: 'local' } });
     expect(managed).toMatchObject({ cli: { choice: { mode: 'managed', otherCli } } });
 
     await writeHappierCliChoice({ choice: { mode: 'own', command: join(npmBin, 'happier') }, processEnv: process.env });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
     const { result: own } = await collectResult(createDaemonServiceStatusHandler(), { target: { kind: 'local' } });
     expect(own).toMatchObject({ cli: { choice: { mode: 'own', otherCli } } });
   });
 
   /** K1: the account label and the CLI's cached update state, with `managed` from the resolver. */
   it('reports the validated account label and the CLI update state of the CLI that answered', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...AMBIENT_STATUS_JSON,
       auth: { ...AMBIENT_STATUS_JSON.auth, accountLabel: 'bea' },
       cliUpdate: { currentVersion: '0.2.13', latestVersion: '0.2.14', updateAvailable: true },
@@ -214,8 +226,8 @@ describe('daemonService system task handlers', () => {
       cli: { update: { currentVersion: '0.2.13', latestVersion: '0.2.14', updateAvailable: true, managed: true } },
     });
 
-    resolveVersionedLocalHappierCliMock.mockResolvedValueOnce({ ...RESOLVED_CLI, provenance: 'override' });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    vi.stubEnv('HAPPIER_BOOTSTRAP_CLI_PATH', join(process.env.HAPPIER_HOME_DIR!, 'override-happier'));
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...AMBIENT_STATUS_JSON,
       cliUpdate: { currentVersion: '0.2.13', latestVersion: null, updateAvailable: false },
     });
@@ -244,8 +256,7 @@ describe('daemonService system task handlers', () => {
       vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });
     });
-    const { SystemTaskExecutionError } = await import('@happier-dev/cli-common/systemTasks');
-    resolveVersionedLocalHappierCliMock.mockRejectedValueOnce(new SystemTaskExecutionError('cli_version_unavailable', 'no output'));
+    cliVersionResponseMock.mockReturnValueOnce('');
 
     await expect(collectResult(createDaemonServiceStatusHandler(), { target: { kind: 'local' } }))
       .rejects.toMatchObject({ code: 'cli_choice_required' });
@@ -253,7 +264,7 @@ describe('daemonService system task handlers', () => {
 
   it('reports runtimeConvergence as unknown when an older CLI does not emit it', async () => {
     const { runtimeConvergence: _omitted, ...legacyStatus } = AMBIENT_STATUS_JSON;
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...legacyStatus,
       auth: { ...legacyStatus.auth, credentialState: undefined, validatedAccountId: undefined },
     });
@@ -280,7 +291,7 @@ describe('daemonService system task handlers', () => {
       // would read as "this computer has no machine" and start a pairing.
       { path: 'auth.machineId', value: { ...AMBIENT_STATUS_JSON, auth: { ...AMBIENT_STATUS_JSON.auth, machineId: '' } } },
     ]) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce(malformed.value);
+      cliJsonResponseMock.mockResolvedValueOnce(malformed.value);
       const handler = createDaemonServiceStatusHandler();
 
       // Coercing these to `false`/absent would report "no service, no daemon, not authenticated" —
@@ -303,7 +314,7 @@ describe('daemonService system task handlers', () => {
    */
   it('projects the service target mode and refuses to guess one', async () => {
     for (const declared of ['default-following', 'pinned'] as const) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, targetMode: declared },
       });
@@ -316,7 +327,7 @@ describe('daemonService system task handlers', () => {
     }
 
     for (const unknownValue of [undefined, null]) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, targetMode: unknownValue },
       });
@@ -329,7 +340,7 @@ describe('daemonService system task handlers', () => {
     }
 
     for (const malformed of ['default', 'DEFAULT-FOLLOWING', true, 3]) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, targetMode: malformed },
       });
@@ -351,7 +362,7 @@ describe('daemonService system task handlers', () => {
    */
   it('projects the service autostart mode and refuses to guess one', async () => {
     for (const declared of ['at-login', 'on-demand'] as const) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, autostart: declared },
       });
@@ -364,7 +375,7 @@ describe('daemonService system task handlers', () => {
     }
 
     for (const unknownValue of [undefined, null]) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, autostart: unknownValue },
       });
@@ -377,7 +388,7 @@ describe('daemonService system task handlers', () => {
     }
 
     for (const malformed of [true, false, 'AT-LOGIN', 'login', 1]) {
-      runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+      cliJsonResponseMock.mockResolvedValueOnce({
         ...AMBIENT_STATUS_JSON,
         service: { ...AMBIENT_STATUS_JSON.service, autostart: malformed },
       });
@@ -400,13 +411,14 @@ describe('daemonService system task handlers', () => {
   it('reports each pinned service of this Happier home and ring with its own daemon status', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hsetup-status-pinned-'));
     vi.stubEnv('HAPPIER_HOME_DIR', home);
+    await installManagedCliFixture({ processEnv: process.env });
     vi.stubEnv('PATH', '');
     // A stack launch pins a service target of its own; it must never leak into these reads.
     vi.stubEnv('HAPPIER_DAEMON_SERVICE_TARGET_MODE', 'pinned');
     vi.stubEnv('HAPPIER_DAEMON_SERVICE_INSTANCE_ID', 'stack-instance');
     onTestFinished(() => {
       vi.unstubAllEnvs();
-      runLocalHappierJsonCommandMock.mockReset();
+      cliJsonResponseMock.mockReset();
       rmSync(home, { recursive: true, force: true });
     });
     const pinnedEntry = {
@@ -417,7 +429,7 @@ describe('daemonService system task handlers', () => {
       releaseChannel: 'stable',
       happierHomeDir: home,
     };
-    runLocalHappierJsonCommandMock.mockImplementation(async (params: { args: readonly string[]; processEnv?: NodeJS.ProcessEnv }) => {
+    cliJsonResponseMock.mockImplementation(async (params: { args: readonly string[]; env?: NodeJS.ProcessEnv }) => {
       if (params.args.join(' ') === 'daemon service list --json') {
         return {
           capabilities: { pinnedServiceCoexistence: true },
@@ -430,14 +442,14 @@ describe('daemonService system task handlers', () => {
           ],
         };
       }
-      if (params.processEnv?.HAPPIER_DAEMON_SERVICE_TARGET_MODE === 'pinned') {
+      if (params.env?.HAPPIER_DAEMON_SERVICE_TARGET_MODE === 'pinned') {
         return {
           ...AMBIENT_STATUS_JSON,
           server: {
             ...AMBIENT_STATUS_JSON.server,
-            activeServerId: params.processEnv.HAPPIER_ACTIVE_SERVER_ID,
-            serverUrl: params.processEnv.HAPPIER_SERVER_URL,
-            publicServerUrl: params.processEnv.HAPPIER_SERVER_URL,
+            activeServerId: params.env.HAPPIER_ACTIVE_SERVER_ID,
+            serverUrl: params.env.HAPPIER_SERVER_URL,
+            publicServerUrl: params.env.HAPPIER_SERVER_URL,
             comparableKey: 'relay-b.example.test',
           },
           service: { installed: true, running: true, targetMode: 'pinned' },
@@ -449,11 +461,11 @@ describe('daemonService system task handlers', () => {
 
     const { result } = await collectResult(createDaemonServiceStatusHandler(), { target: { kind: 'local' } });
 
-    const pinnedStatusCalls = runLocalHappierJsonCommandMock.mock.calls
-      .map(([params]) => params as { args: readonly string[]; processEnv?: NodeJS.ProcessEnv })
-      .filter((params) => params.args.join(' ') === 'daemon status --json' && params.processEnv?.HAPPIER_DAEMON_SERVICE_TARGET_MODE === 'pinned');
+    const pinnedStatusCalls = cliJsonResponseMock.mock.calls
+      .map(([params]) => params as { args: readonly string[]; env?: NodeJS.ProcessEnv })
+      .filter((params) => params.args.join(' ') === 'daemon status --json' && params.env?.HAPPIER_DAEMON_SERVICE_TARGET_MODE === 'pinned');
     expect(pinnedStatusCalls).toHaveLength(1);
-    expect(pinnedStatusCalls[0]?.processEnv).toMatchObject({
+    expect(pinnedStatusCalls[0]?.env).toMatchObject({
       HAPPIER_ACTIVE_SERVER_ID: 'relay-b',
       HAPPIER_SERVER_URL: 'https://relay-b.example.test',
       HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'relay-b',
@@ -482,9 +494,9 @@ describe('daemonService system task handlers', () => {
    */
   it('separates a complete inventory from the absent coexistence capability', async () => {
     onTestFinished(() => {
-      runLocalHappierJsonCommandMock.mockReset();
+      cliJsonResponseMock.mockReset();
     });
-    runLocalHappierJsonCommandMock.mockImplementation(async (params: { args: readonly string[] }) => (
+    cliJsonResponseMock.mockImplementation(async (params: { args: readonly string[] }) => (
       params.args.join(' ') === 'daemon service list --json' ? { entries: [] } : AMBIENT_STATUS_JSON
     ));
 
@@ -496,18 +508,19 @@ describe('daemonService system task handlers', () => {
   it('keeps every readable pinned service and names the unreadable one instead of erasing the list (M6)', async () => {
     const home = mkdtempSync(join(tmpdir(), 'hsetup-status-pinned-partial-'));
     vi.stubEnv('HAPPIER_HOME_DIR', home);
+    await installManagedCliFixture({ processEnv: process.env });
     onTestFinished(() => {
       vi.unstubAllEnvs();
-      runLocalHappierJsonCommandMock.mockReset();
+      cliJsonResponseMock.mockReset();
       rmSync(home, { recursive: true, force: true });
     });
     const entry = (id: string) => ({ serverId: id, activeServerId: id, relayUrl: `https://${id}.example.test`, targetMode: 'pinned', releaseChannel: 'stable', happierHomeDir: home });
-    runLocalHappierJsonCommandMock.mockImplementation(async (params: { args: readonly string[]; processEnv?: NodeJS.ProcessEnv }) => {
+    cliJsonResponseMock.mockImplementation(async (params: { args: readonly string[]; env?: NodeJS.ProcessEnv }) => {
       if (params.args.join(' ') === 'daemon service list --json') {
         return { capabilities: { pinnedServiceCoexistence: true }, entries: [entry('relay-b'), entry('relay-c')] };
       }
-      const instance = params.processEnv?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID;
-      if (instance === 'relay-c') throw new SystemTaskExecutionErrorForTest('invalid_cli_response', 'unreadable');
+      const instance = params.env?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID;
+      if (instance === 'relay-c') return { ...AMBIENT_STATUS_JSON, daemon: { running: 'unreadable' } };
       if (instance === 'relay-b') return { ...AMBIENT_STATUS_JSON, server: { ...AMBIENT_STATUS_JSON.server, serverUrl: 'https://relay-b.example.test' } };
       return AMBIENT_STATUS_JSON;
     });
@@ -525,9 +538,9 @@ describe('daemonService system task handlers', () => {
 
   it('reports pinned services as unknown when the CLI cannot list its services', async () => {
     onTestFinished(() => {
-      runLocalHappierJsonCommandMock.mockReset();
+      cliJsonResponseMock.mockReset();
     });
-    runLocalHappierJsonCommandMock.mockImplementation(async (params: { args: readonly string[] }) => {
+    cliJsonResponseMock.mockImplementation(async (params: { args: readonly string[] }) => {
       if (params.args.join(' ') === 'daemon service list --json') {
         throw new Error('unknown command');
       }
@@ -563,16 +576,16 @@ describe('daemonService system task handlers', () => {
       code: 'invalid_params',
       message: expect.stringContaining('stable, preview, dev, publicdev'),
     });
-    expect(runLocalHappierJsonCommandMock).not.toHaveBeenCalled();
+    expect(cliJsonResponseMock).not.toHaveBeenCalled();
 
     // An absent channel still means the default ring.
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(AMBIENT_STATUS_JSON);
     const { result } = await collectResult(createDaemonServiceStatusHandler(), {
       target: { kind: 'local' },
       surface: 'desktop.ui',
     });
     expect(result).toMatchObject({ serviceInstalled: true });
-    expect(runLocalHappierJsonCommandMock.mock.calls[0]?.[0]).toMatchObject({ releaseRing: 'stable' });
+    expect(cliJsonResponseMock.mock.calls[0]?.[0]).toMatchObject({ env: { HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable' } });
   });
 
   it('rejects daemon service start params that target a non-local machine', async () => {

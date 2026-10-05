@@ -133,9 +133,9 @@ const DesktopMachineSetupFlowScreen = React.memo(function DesktopMachineSetupFlo
     const onLocalSetupSucceeded = props.onLocalSetupSucceeded;
     const verifyLocalReadiness = React.useCallback(async (source: 'setup' | 'adopt') => {
         setLocalReadiness({ status: 'verifying', source });
-        // `fresh` because the runtime either just changed under the executor, or the user is
-        // asking what is on this computer right now.
-        const outcome = await desktopSetupCoordinator.verifyCurrentTarget({ fresh: true });
+        // Successful setup already refreshes the shared facts through the operation owner.
+        // Adoption separately asks what is on this computer right now.
+        const outcome = await desktopSetupCoordinator.verifyCurrentTarget({ fresh: source === 'adopt' });
         if (outcome.status === 'verified') {
             setLocalReadiness({ status: 'verified', machineId: outcome.machineId });
             onLocalSetupSucceeded?.(outcome.machineId);

@@ -60,7 +60,7 @@ test.describe('ui e2e: keyboard navigation settings', () => {
   });
 
   test('renders keyboard shortcut settings and toggles v1 controls', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize(KEYBOARD_NAVIGATION_DESKTOP_VIEWPORT);

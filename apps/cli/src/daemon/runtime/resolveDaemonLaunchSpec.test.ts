@@ -48,6 +48,7 @@ function writeAdmittedDaemonStartupClosure(root: string): Readonly<{
   mkdirSync(scriptsDir, { recursive: true });
   for (const scriptName of [
     'terminal_launch_spec_runner.cjs',
+    'process_tree.cjs',
     'claude_local_launcher.cjs',
     'claude_remote_launcher.cjs',
     'claude_launcher_runtime.cjs',

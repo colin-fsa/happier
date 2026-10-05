@@ -196,7 +196,7 @@ test.describe('ui e2e: session folders drag and drop', () => {
   });
 
   test('session folders drag supports root, nested, blocked, and scrolled drops', async ({ page }) => {
-    test.setTimeout(900_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const serverBaseUrl = server.baseUrl;

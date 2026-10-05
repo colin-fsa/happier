@@ -1,13 +1,52 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
+import { buildStackHarnessEnv, writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 
 import {
   parseTrailingJsonObjectForTests,
   resolveSigningEnvForTests,
+  prepareInstallersSmokeLocalBuildAssets,
 } from '../pipeline/release-validation/executors/installers-smoke-local-build.mjs';
+
+test('installer smoke signs downloaded producer bytes without building or altering the shared input', async (t) => {
+  const fixture = await createTempFixture(t);
+  const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
+  const version = JSON.parse(await readFile(join(repoRoot, 'apps/cli/package.json'), 'utf8')).version;
+  const assetsDir = fixture.path('producer');
+  await mkdir(assetsDir);
+  const archiveName = `happier-v${version}-${process.platform}-${process.arch}.tar.gz`;
+  const checksumsName = `checksums-happier-v${version}.txt`;
+  await writeFile(join(assetsDir, archiveName), 'producer bytes');
+  await writeFile(join(assetsDir, checksumsName), 'producer checksums');
+  // Minisign is an external process boundary. Native CI exercises real signing
+  // and installer verification; this fixture proves custody without a rebuild.
+  const { binDir } = writeFakeBin({ root: fixture.root, name: 'minisign', content: `#!/usr/bin/env node
+const fs = require('node:fs'); const args = process.argv.slice(2);
+if (args[0] === '-G') { fs.writeFileSync(args[args.indexOf('-p')+1], 'public'); fs.writeFileSync(args[args.indexOf('-s')+1], 'private'); }
+if (args[0] === '-S') fs.writeFileSync(args[args.indexOf('-x')+1], 'signature');
+` });
+  const prepared = await prepareInstallersSmokeLocalBuildAssets({
+    repoRoot, platform: process.platform, releaseChannel: 'publicdev',
+    baseEnv: buildStackHarnessEnv({ binDirs: [binDir], extraEnv: { HAPPIER_RELEASE_ASSETS_DIR: assetsDir } }),
+    runCommand(command, args, options) {
+      if (args.some((arg) => String(arg).endsWith('build-cli-binaries.mjs'))) throw new Error('unexpected CLI rebuild');
+      // Canonical shared outputs are already present in this isolated worktree.
+      if (args.some((arg) => String(arg).endsWith('buildSharedDeps.mjs'))) return '';
+      return execFileSync(command, args, options);
+    },
+  });
+  t.after(() => prepared.cleanup());
+  assert.equal(prepared.installVersion, version);
+  assert.equal(await readFile(join(prepared.assetsDir, archiveName), 'utf8'), 'producer bytes');
+  assert.equal(await readFile(join(prepared.assetsDir, `${checksumsName}.minisig`), 'utf8'), 'signature');
+  await assert.rejects(readFile(join(assetsDir, `${checksumsName}.minisig`)), { code: 'ENOENT' });
+});
 
 test('installers-smoke local-build parses the trailing build-cli JSON payload after tool chatter', () => {
   const parsed = parseTrailingJsonObjectForTests(`

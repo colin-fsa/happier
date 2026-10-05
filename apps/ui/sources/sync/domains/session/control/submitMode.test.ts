@@ -257,6 +257,7 @@ describe('chooseSubmitMode', () => {
         expect(chooseSubmitMode({
             configuredMode: 'agent_queue',
             session: {
+                active: true,
                 presence: 'online',
                 agentStateVersion: 1,
                 agentState: {
@@ -278,6 +279,7 @@ describe('chooseSubmitMode', () => {
         expect(chooseSubmitMode({
             configuredMode: 'agent_queue',
             session: {
+                active: true,
                 presence: 'online',
                 agentStateVersion: 1,
                 agentState: {

@@ -134,7 +134,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
   });
 
   test('signs up with keyed GitHub OAuth and requires restore on another browser', async ({ page, browser }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!oauth) throw new Error('missing oauth');
@@ -191,7 +191,7 @@ test.describe('ui e2e: keyed GitHub OAuth restore + lost access', () => {
   });
 
   test('supports provider reset (lost access) via GitHub OAuth', async ({ browser }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
 

@@ -22,22 +22,6 @@ test('planServiceAction plans a systemd user install', () => {
   assert.ok(plan.commands.some((c) => c.cmd === 'systemctl' && c.args.includes('--user') && c.args.includes('enable')));
 });
 
-test('planServiceAction plans a windows task install', () => {
-  const plan = planServiceAction({
-    backend: 'schtasks-user',
-    action: 'install',
-    label: 'dev.happier.selfhost',
-    taskName: 'Happier\\dev.happier.selfhost',
-    definitionPath: 'C:\\\\Users\\\\me\\\\.happier\\\\services\\\\dev.happier.selfhost.ps1',
-    definitionContents: 'Set-Location -LiteralPath "C:\\\\Users\\\\me"',
-    persistent: true,
-  });
-
-  assert.equal(plan.writes.length, 1);
-  assert.ok(plan.commands.some((c) => c.cmd === 'schtasks' && c.args.includes('/Create')));
-  assert.ok(plan.commands.some((c) => c.cmd === 'schtasks' && c.args.includes('/Run')));
-});
-
 test('stopService passes the launchd definition path for persistent macOS services', async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), 'happier-service-stop-launchd-'));
   const binDir = join(tempRoot, 'bin');

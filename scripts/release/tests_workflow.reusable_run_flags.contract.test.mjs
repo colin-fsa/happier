@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,41 @@ import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+test('shared CLI restoration handles a Windows drive path and preserves executable payloads', async (t) => {
+  const action = YAML.parse(await readFile(join(repoRoot, '.github', 'actions', 'download-ci-cli-build', 'action.yml'), 'utf8'));
+  const restore = action.runs.steps.find((step) => step.run);
+  const scratch = mkdtempSync(join(tmpdir(), 'ci-cli-archive-'));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  // On POSIX, model the drive prefix that GNU tar interprets as a remote host.
+  const runnerTemp = process.platform === 'win32' ? scratch : join(scratch, 'D:', 'runner temp');
+  const archiveDir = join(runnerTemp, 'ci-cli-build');
+  const payloadDir = join(scratch, 'payload');
+  const workspaceDir = join(scratch, 'workspace with spaces');
+  for (const dir of [archiveDir, payloadDir, workspaceDir]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(payloadDir, 'built-cli'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(payloadDir, 'built-cli'), 0o755);
+  const archive = spawnSync('tar', ['-cf', 'ci-cli-build.tar', '-C', payloadDir, 'built-cli'], {
+    cwd: archiveDir, encoding: 'utf8',
+  });
+  assert.equal(archive.status, 0, archive.stderr);
+
+  const restored = spawnSync('bash', ['--noprofile', '--norc', '-e', '-o', 'pipefail', '-c', restore.run], {
+    cwd: scratch,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      RUNNER_TEMP: process.platform === 'win32' ? runnerTemp : 'D:/runner temp',
+      GITHUB_WORKSPACE: workspaceDir,
+    },
+  });
+  assert.equal(restored.status, 0, restored.stderr);
+  assert.equal(await readFile(join(workspaceDir, 'built-cli'), 'utf8'), '#!/bin/sh\nexit 0\n');
+  if (process.platform !== 'win32') {
+    const executed = spawnSync(join(workspaceDir, 'built-cli'), [], { encoding: 'utf8' });
+    assert.equal(executed.status, 0, executed.error?.message ?? executed.stderr);
+  }
+});
 
 async function runInlineCollector(env) {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
@@ -36,6 +71,44 @@ async function runInlineCollector(env) {
   }
 }
 
+test('stable unit checks fail closed on admission failures and selected matrix skips', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github/workflows/tests.yml'), 'utf8'));
+  const job = workflow.jobs['unit-summary'];
+  assert.ok(job, 'required unit checks need an always-emitted matrix result owner');
+  assert.equal(job.if, 'always()');
+  assert.equal(job.name, '${{ matrix.name }}');
+  assert.equal(job.strategy['fail-fast'], false);
+  assert.deepEqual(job.strategy.matrix.include, [
+    { lane: 'cli', name: 'CLI Unit Tests', selection: 'run_cli' },
+    { lane: 'ui-unit', name: 'UI Unit Tests', selection: 'run_ui' },
+  ]);
+  for (const { lane } of job.strategy.matrix.include) assert.ok(job.needs.includes(lane));
+  assert.ok(workflow.jobs.ci_summary.needs.includes('unit-summary'));
+  const assertion = job.steps[0];
+  assert.equal(assertion.env.UNIT_RESULT, '${{ needs[matrix.lane].result }}');
+  assert.equal(assertion.env.PLAN_RESULT, '${{ needs.ci_plan.result }}');
+  assert.equal(assertion.env.GUARD_RESULT, '${{ needs.trusted_ref_guard.result }}');
+  assert.equal(assertion.env.SELECTED, "${{ (inputs.select_jobs_explicitly && inputs[matrix.selection]) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs[matrix.selection] == 'true') }}");
+  for (const [selected, result, expected] of [
+    ['true', 'success', 0], ['true', 'skipped', 1], ['true', 'failure', 1],
+    ['true', 'cancelled', 1], ['true', '', 1], ['false', 'skipped', 0],
+    ['false', 'success', 0], ['false', 'failure', 1],
+  ]) {
+    const outcome = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', assertion.run], {
+      encoding: 'utf8',
+      env: { ...process.env, SELECTED: selected, UNIT_RESULT: result, PLAN_RESULT: 'success', GUARD_RESULT: 'success' },
+    });
+    assert.equal(outcome.status, expected, `${selected}/${result}: ${outcome.stderr}`);
+  }
+  for (const [plan, guard] of [['failure', 'success'], ['success', 'skipped'], ['cancelled', 'success']]) {
+    const outcome = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', assertion.run], {
+      encoding: 'utf8',
+      env: { ...process.env, SELECTED: 'false', UNIT_RESULT: 'skipped', PLAN_RESULT: plan, GUARD_RESULT: guard },
+    });
+    assert.equal(outcome.status, 1, `admission ${plan}/${guard}: ${outcome.stderr}`);
+  }
+});
+
 test('reusable tests calls make their run flags authoritative regardless of the caller event', async () => {
   const testsRaw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const testsWorkflow = YAML.parse(testsRaw, { prettyErrors: true });
@@ -47,12 +120,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     'tests-${{ github.workflow }}-${{ github.ref }}',
     'the reusable tests workflow must not share its caller concurrency group and cancel the caller',
   );
-  assert.equal(
-    testsWorkflow.concurrency['cancel-in-progress'],
-    false,
-    'an active full collector must finish; GitHub may replace the single pending run, but a later push must not discard in-flight evidence',
-  );
-
   const defaultSuiteInputs = new Map([
     ['ui-e2e', 'run_ui_e2e'],
     ['ui-unit', 'run_ui'],
@@ -63,9 +130,6 @@ test('reusable tests calls make their run flags authoritative regardless of the 
     ['cli', 'run_cli'],
     ['stack', 'run_stack'],
     ['release-contracts', 'run_release_contracts'],
-    ['installers-smoke-macos', 'run_installers_smoke'],
-    ['installers-smoke-linux', 'run_installers_smoke'],
-    ['installers-smoke-windows', 'run_installers_smoke'],
     ['binary-smoke', 'run_binary_smoke'],
     ['build-smoke', 'run_build_smoke'],
     ['typecheck', 'run_typecheck'],

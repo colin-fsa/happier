@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { expectTerminalNativeInvocation, terminalLauncherBoundary } from '@/testkit/process/terminalLauncher';
 
 import {
   resolveOpenCodeAttachChildEnv,
@@ -22,6 +23,7 @@ describe('OpenCode attach target authentication', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.doUnmock('node:fs/promises');
     vi.resetModules();
   });
 
@@ -46,6 +48,20 @@ describe('OpenCode attach target authentication', () => {
         vi.stubEnv('HAPPIER_OPENCODE_SERVER_URL', '');
         vi.stubEnv('HAPPIER_OPENCODE_SERVER_XDG_ROOT_DIR', '');
         vi.resetModules();
+        const pool = join(root, 'opencode', 'managed-servers');
+        const inventoryObserver: { complete: ((entries: unknown) => void) | null } = { complete: null };
+        const startupPoolInventory = new Promise<unknown>((resolve) => { inventoryObserver.complete = resolve; });
+        // Observe the real filesystem boundary without replacing inventory or affinity logic.
+        // The selecting client's background scan must see its original current-account pool
+        // before this fixture adds another account, otherwise its late lock can race teardown.
+        vi.doMock('node:fs/promises', async (importOriginal) => {
+          const actual = await importOriginal<typeof import('node:fs/promises')>();
+          return { ...actual, readdir: async (...args: Parameters<typeof actual.readdir>) => {
+            const entries = await actual.readdir(...args);
+            if (String(args[0]) === pool) inventoryObserver.complete?.(entries);
+            return entries;
+          } };
+        });
         const { resolveOpenCodeManagedServerLaunchFingerprint } = await import('../server/openCodeManagedServerEnv');
         const { runOpenCodeProviderAttach } = await import('../attach/runOpenCodeProviderAttach');
         const { maybeUpdateOpenCodeSessionIdMetadata } = await import('../utils/opencodeSessionIdMetadata');
@@ -55,7 +71,6 @@ describe('OpenCode attach target authentication', () => {
           baseEnv: process.env,
           xdgRootDir: null, isolateConfig: false,
         });
-        const pool = join(root, 'opencode', 'managed-servers');
         await mkdir(pool, { recursive: true });
         if (targetState !== 'missing') await writeFile(join(pool, `${fingerprint}.json`), JSON.stringify({
           baseUrl: 'http://127.0.0.1:4200', pid: 4200, startedAtMs: 1,
@@ -102,6 +117,11 @@ describe('OpenCode attach target authentication', () => {
             expect(identity?.launchEnvFingerprint).toBe(fingerprint);
             selectedFingerprint = identity!.launchEnvFingerprint!;
           } finally { await client.dispose(); }
+          // Match the real scan's state-file selection; an in-flight lock/tmp file is harmless.
+          const initialInventory = await startupPoolInventory;
+          expect(Array.isArray(initialInventory)
+            ? initialInventory.filter((entry: unknown) => typeof entry === 'string' && entry.endsWith('.json'))
+            : initialInventory).toEqual([`${fingerprint}.json`]);
           selectingManagedClient = false;
           observedAuthorization.length = 0;
           observedUrls.length = 0;
@@ -121,6 +141,7 @@ describe('OpenCode attach target authentication', () => {
         }
         const child = new ChildProcess();
         const spawnProcess = vi.fn(() => {
+          terminalLauncherBoundary(child);
           setImmediate(() => child.emit('exit', 0, null));
           return child;
         });
@@ -149,14 +170,14 @@ describe('OpenCode attach target authentication', () => {
             setImmediate(() => ownedChild.emit('exit', 0, null));
             return true;
           });
-          const ownedSpawn = vi.fn(() => ownedChild);
+          const ownedSpawn = vi.fn(() => terminalLauncherBoundary(ownedChild));
           const supervisor = createOpenCodeTuiSupervisor({ command: 'opencode-fixture', commandArgs: [], env: {},
             spawnProcess: ownedSpawn as unknown as typeof spawn });
           const target = { baseUrl: 'http://127.0.0.1:4200', directory: root, sessionId: 'native-target-session',
             managedServerLaunchFingerprint: selectedFingerprint };
           await expect(supervisor.attach(target)).resolves.toBe(true);
           expect(observedAuthorization).toEqual([targetAuthorization]);
-          expect(ownedSpawn).toHaveBeenCalledWith('opencode-fixture',
+          await expectTerminalNativeInvocation(ownedSpawn.mock.calls, 'opencode-fixture',
             ['--server', target.baseUrl, '--session', target.sessionId, root],
             expect.objectContaining({ env: { OPENCODE_PASSWORD: 'target-fixture-password' } }));
           await supervisor.dispose();
@@ -229,7 +250,7 @@ describe('OpenCode attach target authentication', () => {
           prepareProviderCliAttach: async ({ providerSessionId }) => ({ ok: true, providerSessionId }),
         })).resolves.toBe(0);
         expect(observedAuthorization).toEqual([targetAuthorization]);
-        expect(spawnProcess).toHaveBeenCalledWith('opencode-fixture',
+        await expectTerminalNativeInvocation(spawnProcess.mock.calls, 'opencode-fixture',
           ['--server', managed ? 'http://127.0.0.1:4200' : 'http://127.0.0.1:4200/', '--session', 'native-target-session', root],
           expect.objectContaining({ env: { OPENCODE_PASSWORD: 'target-fixture-password' } }));
       });

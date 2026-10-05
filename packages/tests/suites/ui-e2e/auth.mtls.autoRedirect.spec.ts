@@ -91,7 +91,7 @@ test.describe('ui e2e: mTLS auto-redirect', () => {
   });
 
   test('auto-redirects and logs in via forwarded mTLS', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!server) throw new Error('missing server');
     if (!proxyBaseUrl) throw new Error('missing proxy base url');

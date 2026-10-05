@@ -128,7 +128,7 @@ async function resolveLocalCliBuild(testDir: string): Promise<CliTestLaunchSpec>
  * the `current.version` record and shims, as for a verified download) the CLI runs from inside its
  * install root — `argv[1]` carries the channel path hint the CLI derives its release ring from.
  */
-function writeLocalCliPayload(params: Readonly<{ payloadRoot: string; launch: CliTestLaunchSpec }>): void {
+function writeLocalCliPayload(params: Readonly<{ payloadRoot: string; launch: CliTestLaunchSpec; userHomeDir: string }>): void {
     const entry = params.launch.args.at(-1);
     if (!entry || !/\.(m?js|ts)$/.test(entry)) {
         throw new Error(`Unexpected CLI launch spec (no entry script): ${JSON.stringify(params.launch)}`);
@@ -136,7 +136,12 @@ function writeLocalCliPayload(params: Readonly<{ payloadRoot: string; launch: Cl
     const nodeArgs = params.launch.args.slice(0, -1);
     mkdirSync(join(params.payloadRoot, 'package-dist'), { recursive: true });
     writeFileSync(join(params.payloadRoot, 'package-dist', 'index.mjs'), `import ${JSON.stringify(pathToFileURL(entry).href)};\n`, 'utf8');
-    const envLines = Object.entries(params.launch.env ?? {})
+    // hsetup clears inherited service selectors before invoking the CLI. Bind this
+    // computer's OS-user-home fixture at the executable boundary, after that clearing.
+    const envLines = Object.entries({
+        ...params.launch.env,
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: params.userHomeDir,
+    })
         .filter(([, value]) => typeof value === 'string')
         .map(([key, value]) => `export ${key}=${shellQuote(String(value))}`);
     const command = [params.launch.command, ...nodeArgs].map(shellQuote).join(' ');
@@ -164,7 +169,7 @@ const FOREIGN_CLI_PACKAGE = '@happier-dev/cli';
  * record, never from a release payload's layout. (The small `bin/happier` shell launcher only adds
  * the node flags a source-entry build needs; npm links straight to the `.mjs`.)
  */
-function writeForeignCli(params: Readonly<{ npmPrefixDir: string; launch: CliTestLaunchSpec }>): void {
+function writeForeignCli(params: Readonly<{ npmPrefixDir: string; launch: CliTestLaunchSpec; userHomeDir: string }>): void {
     const entry = params.launch.args.at(-1);
     if (!entry || !/\.(m?js|ts)$/.test(entry)) {
         throw new Error(`Unexpected CLI launch spec (no entry script): ${JSON.stringify(params.launch)}`);
@@ -173,7 +178,10 @@ function writeForeignCli(params: Readonly<{ npmPrefixDir: string; launch: CliTes
     const binEntry = join(packageDir, 'bin', 'happier.mjs');
     mkdirSync(dirname(binEntry), { recursive: true });
     writeFileSync(binEntry, `import ${JSON.stringify(pathToFileURL(entry).href)};\n`, 'utf8');
-    const envLines = Object.entries(params.launch.env ?? {})
+    const envLines = Object.entries({
+        ...params.launch.env,
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: params.userHomeDir,
+    })
         .filter(([, value]) => typeof value === 'string')
         .map(([key, value]) => `export ${key}=${shellQuote(String(value))}`);
     const node = [params.launch.command, ...params.launch.args.slice(0, -1)].map(shellQuote).join(' ');
@@ -263,7 +271,7 @@ export async function createHermeticDesktopComputer(params: Readonly<{
     const payloadRoot = join(homeDir, 'tmp', 'cli-payload');
     const managedCommand = join(happierHomeDir, ring === 'stable' ? 'cli' : ring === 'preview' ? 'cli-preview' : 'cli-dev', 'current', 'happier');
     try {
-        writeLocalCliPayload({ payloadRoot, launch: cliBuild });
+        writeLocalCliPayload({ payloadRoot, launch: cliBuild, userHomeDir: homeDir });
         await installVersionedPayload({
             componentId: 'happier-cli',
             releaseRing: ring,
@@ -274,7 +282,7 @@ export async function createHermeticDesktopComputer(params: Readonly<{
         if (!existsSync(managedCommand)) {
             throw new Error(`Managed CLI install did not produce ${managedCommand}`);
         }
-        if (params.foreignCli) writeForeignCli({ npmPrefixDir, launch: cliBuild });
+        if (params.foreignCli) writeForeignCli({ npmPrefixDir, launch: cliBuild, userHomeDir: homeDir });
     } catch (error) {
         await rm(homeDir, { recursive: true, force: true });
         throw error;

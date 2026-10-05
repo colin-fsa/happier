@@ -182,7 +182,7 @@ test.describe('ui e2e: session folders sidebar', () => {
   });
 
   test('moves a synced session into a seeded folder', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token || !seededServerId || !seededSessionId) {
       throw new Error('missing server/ui fixtures');
     }

@@ -31,6 +31,7 @@ function writeValidPinnedDaemonServiceForCurrentRuntime(homeDir: string, serverI
         label: paths.label,
         programArgs: ['/usr/local/bin/happier', 'daemon', 'start-sync'],
         env: {
+          HAPPIER_HOME_DIR: homeDir,
           HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
           HAPPIER_ACTIVE_SERVER_ID: serverId,
           HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
@@ -51,6 +52,7 @@ function writeValidPinnedDaemonServiceForCurrentRuntime(homeDir: string, serverI
         description: 'Happier Daemon',
         execStart: ['/usr/local/bin/happier', 'daemon', 'start-sync'],
         env: {
+          HAPPIER_HOME_DIR: homeDir,
           HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
           HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
           HAPPIER_ACTIVE_SERVER_ID: serverId,

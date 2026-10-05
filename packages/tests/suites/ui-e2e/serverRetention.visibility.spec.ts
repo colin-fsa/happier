@@ -97,7 +97,7 @@ test.describe('ui e2e: server retention visibility', () => {
   });
 
   test('shows retention in server settings for the active server', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -108,7 +108,7 @@ test.describe('ui e2e: server retention visibility', () => {
   });
 
   test('shows session info retention for an active-server session', async ({ page }) => {
-    test.setTimeout(540_000);
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -154,7 +154,7 @@ test.describe('ui e2e: server retention visibility', () => {
   });
 
   test('shows retention metadata for a newly added relay in saved relays', async ({ page }) => {
-    test.setTimeout(300_000);
+    test.setTimeout(180_000);
     if (!secondaryServer || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await page.setViewportSize({ width: 1440, height: 900 });

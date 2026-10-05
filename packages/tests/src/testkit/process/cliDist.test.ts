@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,12 @@ import { ensureCliDistBuilt, ensureCliDistSnapshotEntrypoint, ensureCliSharedDep
 import { sleep } from '../timing';
 
 const createdDirs: string[] = [];
+const originalSkipBuild = process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+beforeEach(() => { delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD; });
+afterEach(() => {
+  if (originalSkipBuild === undefined) delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
+  else process.env.HAPPIER_CLI_TEST_SKIP_BUILD = originalSkipBuild;
+});
 
 async function createRepoRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-test-'));
@@ -67,6 +73,35 @@ describe('ensureCliDistBuilt', () => {
     for (const dir of createdDirs.splice(0)) {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('consumes downloaded CI dist without rebuilding for checkout timestamps', async () => {
+    const repoRoot = await createRepoRoot();
+    utimesSync(join(repoRoot, 'apps/cli/src/index.ts'), new Date('2031-01-01'), new Date('2031-01-01'));
+    const entrypoint = await ensureCliDistBuilt(
+      { testDir: join(repoRoot, '.project'), env: { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: '1' } },
+      {
+        repoRoot,
+        waitForAvailabilityMs: 0,
+        // OS command boundary: any compilation would replace the downloaded bytes.
+        runCommand: async () => { throw new Error('unexpected CLI rebuild'); },
+      },
+    );
+    expect(entrypoint).toBe(join(repoRoot, 'apps/cli/dist/index.mjs'));
+    expect(await readFile(entrypoint, 'utf8')).toBe('export const ok = true;\n');
+  });
+
+  it('fails closed when a CI consumer has no downloaded dist', async () => {
+    const repoRoot = await createRepoRoot();
+    rmSync(join(repoRoot, 'apps/cli/dist/index.mjs'));
+    await expect(ensureCliDistBuilt(
+      { testDir: join(repoRoot, '.project'), env: { ...process.env, HAPPIER_CLI_TEST_SKIP_BUILD: '1' } },
+      {
+        repoRoot,
+        waitForAvailabilityMs: 0,
+        runCommand: async () => { throw new Error('unexpected CLI rebuild'); },
+      },
+    )).rejects.toThrow('Missing CLI dist entrypoint');
   });
 
   it('does not rebuild when only src test files are newer than dist', async () => {

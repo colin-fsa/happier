@@ -1,0 +1,20 @@
+name: Download CI CLI build
+description: Restore the same-run CLI outputs and binary archives without rebuilding
+inputs:
+  name:
+    description: Artifact name produced by the canonical build-cli job
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Download producer outputs
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ runner.temp }}/ci-cli-build
+    - name: Restore outputs and executable permissions
+      shell: bash
+      run: |
+        workspace_dir="$(cd "$GITHUB_WORKSPACE" && pwd)"
+        cd "$RUNNER_TEMP/ci-cli-build"
+        tar -xf ci-cli-build.tar -C "$workspace_dir"

@@ -165,6 +165,8 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             ['apps', 'cli', 'scripts', 'session_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'permission_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'ripgrep_launcher.cjs'],
+            // On-disk launchers still need this packaged sidecar even when CLI consumers embed it.
+            ['apps', 'cli', 'scripts', 'process_tree.cjs'],
             ...staticRuntimeScriptAssets.map((segments) => ['apps', 'cli', 'scripts', ...segments]),
             ['apps', 'cli', 'scripts', 'runtime', 'placeholder.txt'],
             ['apps', 'cli', 'scripts', 'shims', 'placeholder.txt'],

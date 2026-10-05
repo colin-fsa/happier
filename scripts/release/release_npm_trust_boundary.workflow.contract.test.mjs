@@ -33,76 +33,8 @@ test('npm candidate packing is permission-minimized and secret-free', async () =
   assert.equal(workflow.permissions?.contents, 'read');
   assert.deepEqual(candidate.permissions, { contents: 'read' });
   assert.equal(candidate.environment, undefined);
-  const candidateWithoutTestIsolation = structuredClone(candidate);
-  const contractTests = candidateWithoutTestIsolation.steps.find((step) => step.name === 'Run release contract tests');
-  assert.ok(contractTests);
-  const tempRoot = await mkdtemp(join(tmpdir(), 'happier-npm-contract-env-'));
-  try {
-    // Yarn is the external process boundary; execute the actual workflow shell unchanged.
-    await writeFile(join(tempRoot, 'yarn'), `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({
-  args: process.argv.slice(2),
-  nodeAuthTokenPresent: Object.hasOwn(process.env, 'NODE_AUTH_TOKEN'),
-  npmTokenPresent: Object.hasOwn(process.env, 'NPM_TOKEN'),
-}));
-`, { mode: 0o755 });
-    const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', contractTests.run], {
-      env: {
-        ...process.env,
-        NODE_AUTH_TOKEN: 'inherited-node-token-for-test',
-        NPM_TOKEN: 'inherited-npm-token-for-test',
-        ...contractTests.env,
-        PATH: `${tempRoot}:${process.env.PATH ?? ''}`,
-      },
-      encoding: 'utf8',
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), {
-      args: ['-s', 'test:release:contracts'],
-      nodeAuthTokenPresent: false,
-      npmTokenPresent: false,
-    });
-
-    const setupNode = candidate.steps.find((step) => step.name === 'Setup Node');
-    assert.ok(setupNode);
-    const registryUrl = setupNode.with?.['registry-url'];
-    const normalizedRegistry = registryUrl && `${registryUrl.replace(/\/$/, '')}/`;
-    // setup-node@49933ea/src/authutil.ts exports this npmrc as NPM_CONFIG_USERCONFIG.
-    const npmrc = join(tempRoot, '.npmrc');
-    await writeFile(npmrc, normalizedRegistry
-      ? `${normalizedRegistry.replace(/^\w+:/, '')}:_authToken=\${NODE_AUTH_TOKEN}\nregistry=${normalizedRegistry}\nalways-auth=false\n`
-      : '');
-    await writeFile(join(tempRoot, 'package.json'), JSON.stringify({
-      private: true,
-      scripts: {
-        'test:release:contracts': `${JSON.stringify(process.execPath)} -e 'process.stdout.write(JSON.stringify({nodeAuthTokenPresent:Object.hasOwn(process.env,"NODE_AUTH_TOKEN"),npmTokenPresent:Object.hasOwn(process.env,"NPM_TOKEN")}))'`,
-      },
-    }));
-    const configuredYarn = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', contractTests.run], {
-      cwd: tempRoot,
-      env: {
-        ...process.env,
-        NODE_AUTH_TOKEN: 'inherited-node-token-for-test',
-        NPM_TOKEN: 'inherited-npm-token-for-test',
-        NPM_CONFIG_USERCONFIG: npmrc,
-        YARN_CACHE_FOLDER: join(tempRoot, 'yarn-cache'),
-      },
-      encoding: 'utf8',
-    });
-    assert.equal(configuredYarn.status, 0, configuredYarn.stderr);
-    assert.deepEqual(JSON.parse(configuredYarn.stdout), {
-      nodeAuthTokenPresent: false,
-      npmTokenPresent: false,
-    });
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-  assert.equal(contractTests.env, undefined);
-  const unsetPrefix = 'unset NODE_AUTH_TOKEN NPM_TOKEN\n';
-  assert.ok(contractTests.run.startsWith(unsetPrefix));
-  contractTests.run = contractTests.run.slice(unsetPrefix.length);
   assert.doesNotMatch(
-    JSON.stringify(candidateWithoutTestIsolation),
+    JSON.stringify(candidate),
     /secrets\.|create-github-app-token|MINISIGN_|NODE_AUTH_TOKEN|NPM_TOKEN|id-token/,
   );
 

@@ -246,12 +246,12 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'https://new.example', directory: '/repo/target' },
         });
 
         expect(updated.opencodeSessionId).toBe('sess_new');
         expect(updated.opencodeBackendMode).toBe('server');
-        expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
+        expect(updated.opencodeServerBaseUrl).toBe('https://new.example');
         expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
         expect(updated.agentRuntimeDescriptorV1).toMatchObject({
             v: 1,
@@ -259,7 +259,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             provider: {
                 backendMode: 'server',
                 vendorSessionId: 'sess_new',
-                serverBaseUrl: 'http://new.example',
+                serverBaseUrl: 'https://new.example',
                 serverBaseUrlExplicit: true,
                 providerExtra: {
                     owner: 'opencode',
@@ -268,7 +268,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     runtimeHandle: {
                         backendMode: 'server',
                         vendorSessionId: 'sess_new',
-                        serverBaseUrl: 'http://new.example',
+                        serverBaseUrl: 'https://new.example/',
                         serverBaseUrlExplicit: true,
                     },
                 },
@@ -295,7 +295,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'server_routed_stream',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'https://new.example', directory: '/repo/target' },
             targetRuntimeDescriptor: {
                 v: 1,
                 providerId: 'opencode',
@@ -346,7 +346,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 10,
             targetRemoteSessionId: 'sess_direct',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'https://new.example', directory: '/repo/target' },
         });
 
         expect(updated).not.toHaveProperty('externalHistoryImportV1');
@@ -454,18 +454,18 @@ describe('buildSessionHandoffMetadataPatch', () => {
             transportStrategy: 'direct_peer',
             completedAtMs: 456,
             targetRemoteSessionId: 'sess_new',
-            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'http://new.example', directory: '/repo/target' },
+            targetDirectSource: { kind: 'opencodeServer', baseUrl: 'https://new.example', directory: '/repo/target' },
         });
 
         expect(updated.opencodeBackendMode).toBe('server');
-        expect(updated.opencodeServerBaseUrl).toBe('http://new.example');
+        expect(updated.opencodeServerBaseUrl).toBe('https://new.example');
         expect(updated.agentRuntimeDescriptorV1).toMatchObject({
             v: 1,
             providerId: 'opencode',
             provider: {
                 backendMode: 'server',
                 vendorSessionId: 'sess_new',
-                serverBaseUrl: 'http://new.example',
+                serverBaseUrl: 'https://new.example',
                 serverBaseUrlExplicit: true,
                 providerExtra: {
                     owner: 'opencode',
@@ -474,7 +474,7 @@ describe('buildSessionHandoffMetadataPatch', () => {
                     runtimeHandle: {
                         backendMode: 'server',
                         vendorSessionId: 'sess_new',
-                        serverBaseUrl: 'http://new.example',
+                        serverBaseUrl: 'https://new.example/',
                         serverBaseUrlExplicit: true,
                     },
                 },

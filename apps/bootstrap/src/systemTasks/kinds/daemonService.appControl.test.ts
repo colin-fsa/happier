@@ -4,30 +4,27 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
-const { runLocalHappierJsonCommandMock, resolveVersionedLocalHappierCliMock, resolveInstalledLocalHappierCliMock } = vi.hoisted(() => ({
-  runLocalHappierJsonCommandMock: vi.fn(),
-  resolveVersionedLocalHappierCliMock: vi.fn(),
-  resolveInstalledLocalHappierCliMock: vi.fn(),
+const { cliJsonResponseMock, cliVersionResponseMock } = vi.hoisted(() => ({
+  cliJsonResponseMock: vi.fn(),
+  cliVersionResponseMock: vi.fn<() => string>(),
 }));
 
-// The Happier CLI is a subprocess boundary; what the handlers ask it to do, and how they project
-// its JSON, is the logic under test.
-vi.mock('../happierCli.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../happierCli.js')>();
+// Replace only execution at the OS boundary; resolution, JSON parsing and service policy stay real.
+vi.mock('../taskRuntime.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../taskRuntime.js')>();
   return {
     ...actual,
-    runLocalHappierJsonCommand: runLocalHappierJsonCommandMock,
-    resolveVersionedLocalHappierCli: resolveVersionedLocalHappierCliMock,
-    resolveInstalledLocalHappierCli: resolveInstalledLocalHappierCliMock,
+    runCommandCapture: async (params: Parameters<typeof actual.runCommandCapture>[0]) => ({
+      status: 0,
+      stdout: params.args[0] === '--version'
+        ? cliVersionResponseMock()
+        : JSON.stringify(await cliJsonResponseMock(params)) ?? '',
+      stderr: '',
+    }),
   };
 });
 
-const RESOLVED_CLI = {
-  command: '/home/user/.happier/cli/current/happier',
-  provenance: 'managed' as const,
-  version: '0.2.13',
-};
-
+import { installManagedCliFixture } from '../localHappierCliFixture.js';
 import {
   createDaemonServiceAutostartSetHandler,
   createDaemonServiceRelayDisconnectHandler,
@@ -79,13 +76,23 @@ async function collectResult(
 }
 
 function commandArgs(callIndex: number): readonly string[] {
-  return runLocalHappierJsonCommandMock.mock.calls[callIndex]?.[0]?.args ?? [];
+  return cliJsonResponseMock.mock.calls[callIndex]?.[0]?.args ?? [];
 }
 
 describe('desktop control of the background service', () => {
-  beforeEach(() => {
-    resolveVersionedLocalHappierCliMock.mockResolvedValue(RESOLVED_CLI);
-    resolveInstalledLocalHappierCliMock.mockResolvedValue(RESOLVED_CLI);
+  beforeEach(async () => {
+    const home = mkdtempSync(join(tmpdir(), 'hsetup-app-control-'));
+    vi.stubEnv('HAPPIER_HOME_DIR', home);
+    vi.stubEnv('HAPPIER_BOOTSTRAP_CLI_PATH', '');
+    vi.stubEnv('HAPPIER_BOOTSTRAP_HAPPIER_PATH', '');
+    vi.stubEnv('HAPPIER_STACK_REPO_DIR', join(home, 'elsewhere'));
+    vi.stubEnv('PATH', '');
+    cliVersionResponseMock.mockReturnValue('0.2.13');
+    await installManagedCliFixture({ processEnv: process.env });
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    });
   });
 
   afterEach(() => {
@@ -93,10 +100,10 @@ describe('desktop control of the background service', () => {
   });
 
   it('stops the background service through the existing service command and returns the re-read state', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ entries: [] });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ ok: true });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce({ entries: [] });
+    cliJsonResponseMock.mockResolvedValueOnce({ ok: true });
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
 
     const { result } = await collectResult(createDaemonServiceStopHandler(), PARAMS);
 
@@ -112,10 +119,10 @@ describe('desktop control of the background service', () => {
       daemon: { ...STOPPED_STATUS_JSON.daemon, running: true },
       service: { ...STOPPED_STATUS_JSON.service, running: true },
     };
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(running);
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ entries: [] });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ ok: true });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(running);
+    cliJsonResponseMock.mockResolvedValueOnce(running);
+    cliJsonResponseMock.mockResolvedValueOnce({ entries: [] });
+    cliJsonResponseMock.mockResolvedValueOnce({ ok: true });
+    cliJsonResponseMock.mockResolvedValueOnce(running);
 
     await expect(collectResult(createDaemonServiceStopHandler(), PARAMS)).rejects.toMatchObject({
       code: 'daemon_service_still_running',
@@ -128,10 +135,10 @@ describe('desktop control of the background service', () => {
    * silently ignored and the toggle would report a change that never happened.
    */
   it('sets the autostart mode through the install command and proves it by re-reading', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ entries: [] });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ ok: true });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce({ entries: [] });
+    cliJsonResponseMock.mockResolvedValueOnce({ ok: true });
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
 
     const { result } = await collectResult(createDaemonServiceAutostartSetHandler(), { ...PARAMS, autostart: 'on-demand' });
 
@@ -140,10 +147,10 @@ describe('desktop control of the background service', () => {
   });
 
   it('restores login start with the same command and the opposite mode', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ entries: [] });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ ok: true });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce({ entries: [] });
+    cliJsonResponseMock.mockResolvedValueOnce({ ok: true });
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...STOPPED_STATUS_JSON,
       service: { ...STOPPED_STATUS_JSON.service, autostart: 'at-login' },
     });
@@ -155,10 +162,10 @@ describe('desktop control of the background service', () => {
   });
 
   it('fails by name when the CLI that answered does not report the autostart mode it was asked to set', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ entries: [] });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({ ok: true });
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    cliJsonResponseMock.mockResolvedValueOnce(STOPPED_STATUS_JSON);
+    cliJsonResponseMock.mockResolvedValueOnce({ entries: [] });
+    cliJsonResponseMock.mockResolvedValueOnce({ ok: true });
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...STOPPED_STATUS_JSON,
       service: { installed: true, running: false, targetMode: 'default-following' },
     });
@@ -181,7 +188,7 @@ describe('desktop control of the background service', () => {
   });
 
   it('reports an unknown autostart mode as unknown rather than as on-demand', async () => {
-    runLocalHappierJsonCommandMock.mockResolvedValueOnce({
+    cliJsonResponseMock.mockResolvedValueOnce({
       ...STOPPED_STATUS_JSON,
       service: { installed: true, running: false, targetMode: 'default-following' },
     });
@@ -196,7 +203,7 @@ describe('desktop control of the background service', () => {
    * quitting on-demand stops all, and opening the app starts all.
    */
   describe('pinned services follow the one login-start setting', () => {
-    type CliCall = Readonly<{ args: readonly string[]; processEnv?: NodeJS.ProcessEnv }>;
+    type CliCall = Readonly<{ args: readonly string[]; env?: NodeJS.ProcessEnv }>;
     const RUNNING_JSON = {
       ...STOPPED_STATUS_JSON,
       daemon: { running: true, pid: 4321, httpPort: 7777, serviceManaged: true, serviceLabel: 'label', startedWithCliVersion: '0.2.13' },
@@ -230,9 +237,9 @@ describe('desktop control of the background service', () => {
         'relay-b': { running: initial.pinnedRunning, autostart: initial.autostart },
         'relay-c': { running: initial.pinnedRunning, autostart: initial.autostart },
       };
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
         const command = call.args.join(' ');
-        const instance = call.processEnv?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID ?? 'default';
+        const instance = call.env?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID ?? 'default';
         const service = services[instance]!;
         if (command === 'daemon service list --json') {
           return {
@@ -249,14 +256,14 @@ describe('desktop control of the background service', () => {
           };
         }
         if (command.startsWith('daemon service ') && initial.mutationFailures?.includes(instance)) {
-          throw Object.assign(new Error(`mutation failed for ${instance}`), { code: 'service_command_failed' });
+          return { ok: false, message: `mutation failed for ${instance}` };
         }
         if (command.startsWith('daemon service start')) service.running = true;
         if (command.startsWith('daemon service stop')) service.running = false;
         const autostart = /--autostart=(at-login|on-demand)/.exec(command)?.[1];
         if (autostart === 'at-login' || autostart === 'on-demand') service.autostart = autostart;
         if (command.startsWith('daemon service ') && initial.mutationErrorsAfterApply?.includes(instance)) {
-          throw Object.assign(new Error(`command failed after applying ${instance}`), { code: 'service_command_failed' });
+          return { ok: false, message: `command failed after applying ${instance}` };
         }
         if (command !== 'daemon status --json') return { ok: true };
         if (instance !== 'default' && initial.pinnedStatusFails) throw new Error('unreadable service definition');
@@ -273,20 +280,11 @@ describe('desktop control of the background service', () => {
     }
 
     function commandsFor(instance: string): string[] {
-      return runLocalHappierJsonCommandMock.mock.calls
+      return cliJsonResponseMock.mock.calls
         .map(([call]) => call as CliCall)
-        .filter((call) => (call.processEnv?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID ?? 'default') === instance)
+        .filter((call) => (call.env?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID ?? 'default') === instance)
         .map((call) => call.args.join(' '));
     }
-
-    beforeEach(() => {
-      const home = mkdtempSync(join(tmpdir(), 'hsetup-app-control-pinned-'));
-      vi.stubEnv('HAPPIER_HOME_DIR', home);
-      onTestFinished(() => {
-        vi.unstubAllEnvs();
-        rmSync(home, { recursive: true, force: true });
-      });
-    });
 
     it('applies the login-start mode to each pinned service and proves it', async () => {
       const services = answerCli({ defaultRunning: true, pinnedRunning: true, autostart: 'at-login' });
@@ -301,7 +299,7 @@ describe('desktop control of the background service', () => {
       const services = answerCli({ defaultRunning: true, pinnedRunning: true, autostart: 'at-login', extraPinned: true, mutationFailures: ['default', 'relay-b'] });
       const handler = action === 'stop' ? createDaemonServiceStopHandler() : createDaemonServiceAutostartSetHandler();
       await expect(collectResult(handler, { ...PARAMS, ...(action === 'autostart' ? { autostart: 'on-demand' } : {}) }))
-        .rejects.toMatchObject({ code: 'service_command_failed', message: expect.stringMatching(/default-following:[\s\S]*https:\/\/relay-b\.example\.test:/) });
+        .rejects.toMatchObject({ code: 'cli_command_failed', message: expect.stringMatching(/default-following:[\s\S]*https:\/\/relay-b\.example\.test:/) });
       expect(commandsFor('relay-b').filter((command) => command === 'daemon status --json')).toHaveLength(2);
       expect(commandsFor('default')).toContain('daemon status --json');
       expect(action === 'stop' ? services['relay-c']?.running : services['relay-c']?.autostart).toBe(action === 'stop' ? false : 'on-demand');
@@ -309,9 +307,9 @@ describe('desktop control of the background service', () => {
 
     it('sets login start on pinned services even when the default service is absent', async () => {
       const services = answerCli({ defaultRunning: false, pinnedRunning: true, autostart: 'at-login', defaultMissing: true });
-      const answer = runLocalHappierJsonCommandMock.getMockImplementation()!;
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
-        if (!call.processEnv?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID && call.args[2] === 'install') throw new Error('default service absent');
+      const answer = cliJsonResponseMock.getMockImplementation()!;
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
+        if (!call.env?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID && call.args[2] === 'install') throw new Error('default service absent');
         return answer(call);
       });
       await collectResult(createDaemonServiceAutostartSetHandler(), { ...PARAMS, autostart: 'on-demand' });
@@ -328,9 +326,9 @@ describe('desktop control of the background service', () => {
 
     it('handles readable managed services when the default status read fails', async () => {
       const services = answerCli({ defaultRunning: true, pinnedRunning: true, autostart: 'on-demand' });
-      const answer = runLocalHappierJsonCommandMock.getMockImplementation()!;
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
-        if (!call.processEnv?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID && call.args[1] === 'status') throw new Error('default status unavailable');
+      const answer = cliJsonResponseMock.getMockImplementation()!;
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
+        if (!call.env?.HAPPIER_DAEMON_SERVICE_INSTANCE_ID && call.args[1] === 'status') throw new Error('default status unavailable');
         return answer(call);
       });
       await expect(collectResult(createDaemonServiceStopHandler(), PARAMS)).rejects.toMatchObject({ message: expect.stringContaining('default-following: default status unavailable') });
@@ -339,9 +337,9 @@ describe('desktop control of the background service', () => {
 
     it('honors cancellation rather than continuing bulk changes after an aborted command', async () => {
       const services = answerCli({ defaultRunning: true, pinnedRunning: true, autostart: 'on-demand' });
-      const answer = runLocalHappierJsonCommandMock.getMockImplementation()!;
+      const answer = cliJsonResponseMock.getMockImplementation()!;
       const controller = new AbortController();
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
         if (call.args[2] === 'stop') {
           controller.abort(new Error('cancelled by user'));
           throw controller.signal.reason;
@@ -402,8 +400,8 @@ describe('desktop control of the background service', () => {
     it('disconnects this computer from a relay by uninstalling the app\'s own service for it, proven by a re-read (H3)', async () => {
       answerCli({ defaultRunning: true, pinnedRunning: true, autostart: 'at-login' });
       let uninstalled = false;
-      const answer = runLocalHappierJsonCommandMock.getMockImplementation()!;
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
+      const answer = cliJsonResponseMock.getMockImplementation()!;
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
         const command = call.args.join(' ');
         if (command.startsWith('daemon service uninstall')) {
           uninstalled = true;
@@ -420,20 +418,22 @@ describe('desktop control of the background service', () => {
     });
 
     it('never acquires a CLI to disconnect: with none installed there is nothing the app set up to remove (R10-1)', async () => {
-      resolveInstalledLocalHappierCliMock.mockResolvedValueOnce(null);
+      const emptyHome = mkdtempSync(join(tmpdir(), 'hsetup-disconnect-no-cli-'));
+      vi.stubEnv('HAPPIER_HOME_DIR', emptyHome);
+      onTestFinished(() => rmSync(emptyHome, { recursive: true, force: true }));
 
       const { result } = await collectResult(createDaemonServiceRelayDisconnectHandler(), { ...PARAMS, relayUrl: 'https://relay-b.example.test' });
 
       expect(result).toEqual({ removed: false });
-      expect(resolveVersionedLocalHappierCliMock).not.toHaveBeenCalled();
-      expect(runLocalHappierJsonCommandMock).not.toHaveBeenCalled();
+      expect(cliVersionResponseMock).not.toHaveBeenCalled();
+      expect(cliJsonResponseMock).not.toHaveBeenCalled();
     });
 
     it('has nothing to remove on a CLI too old to list services, and names a real list failure (R10-1)', async () => {
-      runLocalHappierJsonCommandMock.mockImplementation(async () => {
+      cliJsonResponseMock.mockImplementation(async () => {
         throw new Error('unknown command: list');
       });
-      resolveInstalledLocalHappierCliMock.mockResolvedValueOnce({ ...RESOLVED_CLI, version: '0.2.10' });
+      cliVersionResponseMock.mockReturnValueOnce('0.2.10');
       await expect(collectResult(createDaemonServiceRelayDisconnectHandler(), { ...PARAMS, relayUrl: 'https://relay-b.example.test' }))
         .resolves.toMatchObject({ result: { removed: false } });
 
@@ -524,8 +524,8 @@ describe('desktop control of the background service', () => {
 
     it.each([false, true])('retains default service visibility without offering actions when inventory listing fails (running=%s)', async (defaultRunning) => {
       answerCli({ defaultRunning, pinnedRunning: true, autostart: 'at-login' });
-      const answer = runLocalHappierJsonCommandMock.getMockImplementation()!;
-      runLocalHappierJsonCommandMock.mockImplementation(async (call: CliCall) => {
+      const answer = cliJsonResponseMock.getMockImplementation()!;
+      cliJsonResponseMock.mockImplementation(async (call: CliCall) => {
         if (call.args.join(' ') === 'daemon service list --json') throw new Error('cannot list service inventory');
         return answer(call);
       });

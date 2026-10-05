@@ -124,7 +124,7 @@ test.describe('ui e2e: mTLS login + terminal connect', () => {
   });
 
   test('logs in via mTLS, approves terminal connect, and daemon becomes online', async ({ page }) => {
-    test.setTimeout(600_000);
+    test.setTimeout(180_000);
     if (!server) throw new Error('missing server fixture');
     if (!uiBaseUrl) throw new Error('missing ui base url');
     if (!proxyBaseUrl) throw new Error('missing proxy base url');

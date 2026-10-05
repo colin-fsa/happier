@@ -263,11 +263,12 @@ function convergedAmbientResult(taskId: string, overrides: Record<string, unknow
 }
 
 /** Points the app-wide runner (the coordinator's) at a bridge answering with `result`. */
-async function installAmbientResult(result: (taskId: string) => unknown): Promise<void> {
+async function installAmbientResult(result: (taskId: string) => unknown, onStart?: (kind: string) => void): Promise<void> {
     const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
     ambientRunnerRef.current = createSystemTaskRunner({
         bridge: {
-            async start() {
+            async start(spec) {
+                onStart?.(spec.kind);
                 return 'ambient:daemon.service.status.v1';
             },
             async subscribe(taskId, listenerSet) {
@@ -284,6 +285,9 @@ async function installAmbientResult(result: (taskId: string) => unknown): Promis
 
 describe('MachineSetupFlowScreen', () => {
     beforeEach(async () => {
+        // Each case models a new app open. The coordinator intentionally retains unfinished
+        // setup across route mounts, so a previous case's run must not belong to this app.
+        vi.resetModules();
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         ambientRunnerRef.current = createSystemTaskRunner({
             bridge: {
@@ -788,13 +792,15 @@ describe('MachineSetupFlowScreen', () => {
             },
         });
 
-        await installAmbientResult(convergedAmbientResult);
+        const inspectionKinds: string[] = [];
+        await installAmbientResult(convergedAmbientResult, (kind) => inspectionKinds.push(kind));
         const { MachineSetupFlowScreen } = await import('./MachineSetupFlowScreen');
         const screen = await renderScreen(React.createElement(MachineSetupFlowScreen, { runner }));
 
         await screen.pressByTestIdAsync('settings.machineSetup.startLocalTask');
         const setupTaskId = taskIdByKind.get('setup.thisComputer.v1');
         expect(setupTaskId).toBeTruthy();
+        const inspectionsBeforeSuccess = inspectionKinds.length;
 
         await renderer.act(async () => {
             listeners.get(setupTaskId!)?.onResult({
@@ -810,6 +816,10 @@ describe('MachineSetupFlowScreen', () => {
         const providerFlows = screen.findAllByType('ProviderSetupFlow' as any);
         expect(providerFlows).toHaveLength(1);
         expect(providerFlows[0]?.props.machineId).toBe('machine-local-1');
+        // Setup owns one fresh read shared by every reader; readiness consumes it, without
+        // starting a second managed-CLI acquisition for the same successful operation.
+        expect(inspectionKinds.slice(inspectionsBeforeSuccess)).toEqual(['daemon.service.status.v1']);
+        expect(machineRpcSpy).toHaveBeenCalledTimes(1);
     });
 
     it('starts no local setup task on mount — auto-start belongs to the desktop setup gate alone (R9/INV1)', async () => {

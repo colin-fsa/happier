@@ -51,7 +51,7 @@ test.describe('ui e2e: System Status + Diagnosis screens', () => {
   });
 
   test('navigates to System Status and runs Diagnosis without a daemon', async ({ page }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(180_000);
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await page.setViewportSize({ width: 1440, height: 900 });

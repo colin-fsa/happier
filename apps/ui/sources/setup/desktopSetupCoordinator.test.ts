@@ -101,6 +101,101 @@ async function importCoordinator() {
 }
 
 describe('desktopSetupCoordinator', () => {
+    it('keeps post-setup facts and task identity when an older tray inspection starts and settles late', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { buildLocalMachineSetupSystemTaskSpec } = await import('@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec');
+        const { createDesktopSetupCoordinator } = await importCoordinator();
+        const callbacks = new Map<string, import('@/components/systemTasks/types').SystemTaskBridgeListenerSet>();
+        const olderStart: { finish: ((taskId: string) => void) | null } = { finish: null };
+        let inspections = 0;
+        const runner = createSystemTaskRunner({ bridge: {
+            start: async (spec) => {
+                if (spec.kind === 'setup.thisComputer.v1') return 'setup_overlap';
+                inspections += 1;
+                if (inspections === 2) return await new Promise<string>((resolve) => { olderStart.finish = resolve; });
+                return `status_${inspections}`;
+            },
+            subscribe: async (id, listeners) => { callbacks.set(id, listeners); return () => callbacks.delete(id); },
+            cancel: async () => {}, respond: async () => {},
+        } });
+        const coordinator = createDesktopSetupCoordinator({ runner: () => runner });
+        const staleResult = (taskId: string) => ({ ...AMBIENT_RESULT, taskId, data: {
+            ...AMBIENT_RESULT.data, server: { ...AMBIENT_RESULT.data.server, serverUrl: 'https://old-relay.example.test' },
+        } });
+        const opening = coordinator.inspect();
+        await vi.waitFor(() => expect(callbacks.has('status_1')).toBe(true));
+        callbacks.get('status_1')!.onResult(staleResult('status_1'));
+        await opening;
+        await coordinator.launchSetupTask({ runner, onEvent: () => {}, spec: buildLocalMachineSetupSystemTaskSpec({
+            activeRelayUrl: 'https://relay.example.test', activeWebappUrl: 'https://app.example.test',
+            activeLocalRelayUrl: null, channel: 'stable', expectedAccountId: 'acct_app',
+        }) });
+        await vi.waitFor(() => expect(callbacks.has('setup_overlap')).toBe(true));
+        coordinator.refreshOnTrayPointer();
+        await vi.waitFor(() => expect(olderStart.finish).not.toBeNull());
+        const olderInspection = coordinator.inspect();
+        callbacks.get('setup_overlap')!.onResult({ protocolVersion: 1, taskId: 'setup_overlap', ok: true, data: {} });
+        await vi.waitFor(() => expect(callbacks.has('status_3')).toBe(true));
+        callbacks.get('status_3')!.onResult({ ...AMBIENT_RESULT, taskId: 'status_3' });
+        await coordinator.inspect();
+        expect(coordinator.readInspectionTaskId()).toBe('status_3');
+        expect(coordinator.readInspectionSnapshot()).toMatchObject({ facts: { server: { serverUrl: 'https://relay.example.test' } } });
+
+        if (!olderStart.finish) throw new Error('The older inspection did not reach the bridge');
+        olderStart.finish('status_2');
+        await vi.waitFor(() => expect(callbacks.has('status_2')).toBe(true));
+        expect.soft(coordinator.readInspectionTaskId()).toBe('status_3');
+        callbacks.get('status_2')!.onResult(staleResult('status_2'));
+        // The old caller receives its own requested result, without republishing it to readers.
+        await expect(olderInspection).resolves.toMatchObject({ facts: { server: { serverUrl: 'https://old-relay.example.test' } } });
+        expect.soft(coordinator.readInspectionSnapshot()).toMatchObject({ facts: { server: { serverUrl: 'https://relay.example.test' } } });
+        expect(coordinator.readInspectionTaskId()).toBe('status_3');
+    });
+
+    it('refreshes shared local facts when retained setup succeeds after its reader leaves', async () => {
+        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
+        const { buildLocalMachineSetupSystemTaskSpec } = await import('@/components/systemTasks/buildLocalMachineSetupSystemTaskSpec');
+        const { createDesktopSetupCoordinator } = await importCoordinator();
+        const setupResult: { finish: import('@/components/systemTasks/types').SystemTaskBridgeListenerSet['onResult'] | null } = { finish: null };
+        let repaired = false;
+        const runner = createSystemTaskRunner({ bridge: {
+            start: async (spec) => spec.kind === 'setup.thisComputer.v1' ? 'retained_setup' : `status_${repaired}`,
+            subscribe: async (taskId, listeners) => {
+                if (taskId === 'retained_setup') {
+                    setupResult.finish = listeners.onResult;
+                } else {
+                    queueMicrotask(() => listeners.onResult({
+                        ...AMBIENT_RESULT,
+                        taskId,
+                        data: { ...AMBIENT_RESULT.data, server: {
+                            ...AMBIENT_RESULT.data.server,
+                            serverUrl: repaired ? 'https://relay.example.test' : 'https://old-relay.example.test',
+                        } },
+                    }));
+                }
+                return () => {};
+            },
+            cancel: async () => {}, respond: async () => {},
+        } });
+        const coordinator = createDesktopSetupCoordinator({ runner: () => runner });
+        await coordinator.inspect();
+        expect(coordinator.readInspectionSnapshot()).toMatchObject({
+            facts: { server: { serverUrl: 'https://old-relay.example.test' } },
+        });
+        const unsubscribeReader = coordinator.subscribe(() => {});
+        await coordinator.launchSetupTask({ runner, onEvent: () => {}, spec: buildLocalMachineSetupSystemTaskSpec({
+            activeRelayUrl: 'https://relay.example.test', activeWebappUrl: 'https://app.example.test',
+            activeLocalRelayUrl: null, channel: 'stable', expectedAccountId: 'acct_app',
+        }) });
+        unsubscribeReader();
+        repaired = true;
+        if (!setupResult.finish) throw new Error('The setup bridge did not subscribe');
+        setupResult.finish({ protocolVersion: 1, taskId: 'retained_setup', ok: true, data: {} });
+        await vi.waitFor(() => expect(coordinator.readInspectionSnapshot()).toMatchObject({
+            facts: { server: { serverUrl: 'https://relay.example.test' } },
+        }));
+    });
+
     it('answers every native tray demand with a read, joining one that is already running (A12-03/N-8)', async () => {
         // The native side owns the one pointer bound and only emits demands that pass it (N-8).
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');

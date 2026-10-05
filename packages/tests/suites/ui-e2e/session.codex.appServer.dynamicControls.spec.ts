@@ -710,88 +710,18 @@ async function enableSelectedModelFastSpeed(page: Page, uiBaseUrl: string): Prom
     await ensureOnNewSessionComposer(page, uiBaseUrl);
 }
 
-async function readVisibleSessionModeOptionTestIds(page: Page): Promise<string[]> {
-    // Phase 11 SelectionList migration: `agent-input-simple-option:*` is gone; the shared
-    // SelectionList popover emits options under `selection-list:session-mode-root:option:<id>`.
-    const selectorPrefixes = ['agent-input-session-mode-option:', 'selection-list:session-mode-root:option:'];
-    const ids = await Promise.all(
-        selectorPrefixes.map(async (prefix) => {
-            return page.locator(`[data-testid^="${prefix}"]`).evaluateAll((nodes) => {
-                return nodes
-                    .map((node) => node.getAttribute('data-testid'))
-                    .filter((value): value is string => typeof value === 'string' && value.length > 0);
-            });
-        }),
-    );
-    return ids.flat();
-}
-
-async function clickSessionModeOption(page: Page, optionId: string): Promise<void> {
-    const overlayOption = page.getByTestId(`agent-input-session-mode-option:${optionId}`);
-    try {
-        await expect(overlayOption).toHaveCount(1, { timeout: 120_000 });
-        await overlayOption.click();
-        return;
-    } catch {
-        // fall through to the simple surface
-    }
-
-    // Phase 11 SelectionList migration: `agent-input-simple-option:*` was deleted with
-    // `AgentInputSelectionSimpleList.tsx`. The shared SelectionList popover emits each option
-    // under `selection-list:<step-id>:option:<id>`. For session mode the step is
-    // `session-mode-root` (see AgentInputOverlayLayer.tsx).
-    const simpleOption = page.getByTestId(`selection-list:session-mode-root:option:${optionId}`);
-    try {
-        await expect(simpleOption).toHaveCount(1, { timeout: 120_000 });
-        await simpleOption.click();
-    } catch (error) {
-        const visibleOptionIds = await readVisibleSessionModeOptionTestIds(page).catch(() => []);
-        throw new Error(
-            `Expected session mode option ${optionId}, but visible options were: ${
-                visibleOptionIds.length > 0 ? visibleOptionIds.join(', ') : '(none)'
-            }`,
-            { cause: error as Error },
-        );
-    }
-}
-
 async function ensureSessionMode(page: Page, optionId: 'plan' | 'default'): Promise<void> {
     const modeChip = page.getByTestId('agent-input-session-mode-chip');
     await expect(modeChip).toHaveCount(1, { timeout: 60_000 });
 
     const selectedMode = page.getByTestId(`agent-input-session-mode-chip-label:${optionId}`);
-    const readChipText = async () => (await modeChip.textContent().catch(() => '')) ?? '';
-
     if (await selectedMode.count()) return;
-
-    // If the chip opens a picker, the option elements will appear; otherwise the chip cycles modes.
+    // This fixture advertises exactly Default and Plan, so the canonical chip
+    // interaction cycles between them. Await the asynchronous metadata projection
+    // after one click; another click can undo the selection while the old label
+    // is still rendered.
     await modeChip.click();
-    if (await selectedMode.count()) return;
-
-    // Phase 11 SelectionList migration: `agent-input-simple-option:*` is gone; the shared
-    // SelectionList popover emits options under `selection-list:session-mode-root:option:<id>`.
-    const anyModeOption = page.locator('[data-testid^="agent-input-session-mode-option:"], [data-testid^="selection-list:session-mode-root:option:"]').first();
-    let hasPicker = false;
-    try {
-        await expect(anyModeOption).toHaveCount(1, { timeout: 1_500 });
-        hasPicker = true;
-    } catch {
-        // This control cycles directly when it has no picker.
-    }
-    if (hasPicker) {
-        await clickSessionModeOption(page, optionId);
-        await expect(selectedMode).toHaveCount(1, { timeout: 60_000 });
-        await page.keyboard.press('Escape').catch(() => {});
-        return;
-    }
-
-    for (let i = 0; i < 4; i += 1) {
-        await modeChip.click();
-        if (await selectedMode.count()) return;
-        await page.waitForTimeout(100);
-    }
-
-    throw new Error(`Failed to set session mode to ${optionId}; chip text was: ${(await readChipText()) || '(empty)'}`);
+    await expect(selectedMode).toHaveCount(1, { timeout: 60_000 });
 }
 
 test.describe('ui e2e: Codex app-server dynamic controls', () => {

@@ -106,8 +106,8 @@ test.describe('ui e2e: /new resume id browse fills from direct sessions', () => 
     await server?.stop().catch(() => {});
   });
 
-  test('picks a provider session to fill the resume id in /new', async ({ page }) => {
-    test.setTimeout(540_000);
+  test('picks a provider session to fill the resume id in /new', { tag: "@smoke" }, async ({ page }) => {
+    test.setTimeout(180_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     const testDir = resolve(join(suiteDir, 't1-new-session-resume-id-browse-fill'));

@@ -71,7 +71,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('desktop first launch shows the split shell and welcome decision', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 1100, height: 720 });
 
         await gotoApp(page);
@@ -86,7 +86,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('desktop login enters restore while preserving the split shell', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 1100, height: 720 });
 
         await gotoApp(page);
@@ -100,7 +100,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('desktop self-hosting entry opens relay setup while preserving the split shell', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 1100, height: 720 });
 
         await gotoApp(page);
@@ -116,7 +116,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('mobile first launch shows the brand hero and persists dismissal across reload', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 393, height: 852 });
 
         await gotoApp(page);
@@ -136,7 +136,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('mobile direct restore deep link renders restore content without the brand hero', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 393, height: 852 });
 
         await gotoApp(page, '/restore');
@@ -149,7 +149,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('mobile recovery and relay entries reached from welcome do not show the brand hero', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 393, height: 852 });
 
         await gotoApp(page);
@@ -175,7 +175,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('desktop unavailable server state preserves retry and relay actions inside the split shell', async ({ page }) => {
-        test.setTimeout(240_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 1100, height: 720 });
 
         await gotoApp(page, `/?server=${encodeURIComponent('http://127.0.0.1:1')}`);
@@ -198,7 +198,7 @@ test.describe('ui e2e: remote-dev unauth split shell', () => {
     });
 
     test('desktop primary start creates an account and reaches authenticated UI', async ({ page }) => {
-        test.setTimeout(300_000);
+        test.setTimeout(180_000);
         await page.setViewportSize({ width: 1100, height: 720 });
 
         await gotoApp(page);
