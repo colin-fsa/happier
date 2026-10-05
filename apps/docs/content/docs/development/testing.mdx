@@ -382,6 +382,8 @@ Default gate includes:
 
 The daemon integration E2E job is intentionally separate from app unit/integration lanes because it verifies cross-package boot/auth/daemon behavior against a real light server process.
 
+CLI unit tests and the import-cycle guard run even when the shared CLI build fails. The unit harness uses workspace sources and does not require CLI `dist`; integration, slow, and dist-admission checks require the downloaded build. The CI summary reports the build failure as the cause when binary consumers are skipped.
+
 ### On-demand provider contracts
 
 Workflow: `CI — Provider Contracts` (`.github/workflows/providers-contracts.yml`)
@@ -395,11 +397,11 @@ Workflow: `CI — Provider Contracts` (`.github/workflows/providers-contracts.ym
 
 Workflow: `CI — Stress Tests` (`.github/workflows/stress-tests.yml`)
 
-### Nightly extended DB matrix
+### Nightly full E2E and extended DB
 
-Workflow: `CI — Extended DB Matrix` (`.github/workflows/extended-db-tests.yml`)
+Workflow: `Nightly — full E2E + extended DB` (`.github/workflows/extended-db-tests.yml`)
 
-Its current `dev` schedule also runs the full UI E2E suite.
+Its current `dev` schedule also runs the full UI E2E suite across 12 shards.
 
 ## Contributor guidance
 

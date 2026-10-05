@@ -1,4 +1,4 @@
-name: CI — Extended DB Matrix
+name: Nightly — full E2E + extended DB
 
 on:
   workflow_dispatch:

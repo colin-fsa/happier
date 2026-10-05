@@ -988,7 +988,7 @@ jobs:
         run: yarn --cwd apps/server test:server:db-contract
 
   cli:
-    if: ${{ (inputs.select_jobs_explicitly && inputs.run_cli) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli == 'true') }}
+    if: ${{ always() && !cancelled() && needs.ci_plan.result == 'success' && needs.trusted_ref_guard.result == 'success' && ((inputs.select_jobs_explicitly && inputs.run_cli) || (!inputs.select_jobs_explicitly && needs.ci_plan.outputs.run_cli == 'true')) }}
     needs: [ci_plan, trusted_ref_guard, build-cli]
     name: CLI Tests (unit + integration) / part ${{ matrix.part }}/2
     permissions:
@@ -1083,11 +1083,6 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
-      - name: Download shared CLI build
-        uses: ./.github/actions/download-ci-cli-build
-        with:
-          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
-
       - name: Disable remote logging for CI (avoid hanging test process)
         run: |
           set -euo pipefail
@@ -1096,25 +1091,35 @@ jobs:
             sed -i 's/^DEBUG=.*/DEBUG=/' apps/cli/.env.integration-test
           fi
 
-      - name: Run unit tests and import-cycle guard
+      # The unit harness resolves workspace sources and needs no CLI dist.
+      - name: Run unit tests
         id: unit-tests
         continue-on-error: true
-        run: |
-          if [ "${{ matrix.part }}" = "1" ]; then
-            yarn workspace @happier-dev/cli test:unit
-          else
-            yarn workspace @happier-dev/cli test:unit:vitest
-          fi
+        run: yarn workspace @happier-dev/cli test:unit:vitest
+
+      - name: Run import-cycle guard
+        id: import-cycles
+        if: ${{ matrix.part == 1 && !cancelled() }}
+        continue-on-error: true
+        run: yarn workspace @happier-dev/cli test:import-cycles
+
+      - name: Download shared CLI build
+        id: cli-build
+        if: ${{ !cancelled() && needs.build-cli.result == 'success' }}
+        continue-on-error: true
+        uses: ./.github/actions/download-ci-cli-build
+        with:
+          name: ci-cli-build-${{ inputs.checkout_sha != '' && inputs.checkout_sha || github.sha }}
 
       - name: Test root CLI common dist admission owner
         id: cli-common-dist
-        if: ${{ matrix.part == 1 && !cancelled() }}
+        if: ${{ matrix.part == 1 && !cancelled() && steps.cli-build.outcome == 'success' }}
         continue-on-error: true
         run: node --test scripts/ensureCliCommonDistModule.test.mjs
 
       - name: Run integration tests
         id: integration-tests
-        if: ${{ matrix.part == 1 && !cancelled() }}
+        if: ${{ matrix.part == 1 && !cancelled() && steps.cli-build.outcome == 'success' }}
         continue-on-error: true
         env:
           # Integration runs once, unlike the two-part unit matrix.
@@ -1126,7 +1131,7 @@ jobs:
 
       - name: Run slow tests
         id: slow-tests
-        if: ${{ matrix.part == 1 && !cancelled() }}
+        if: ${{ matrix.part == 1 && !cancelled() && steps.cli-build.outcome == 'success' }}
         continue-on-error: true
         run: yarn workspace @happier-dev/cli test:slow
 
@@ -1134,14 +1139,20 @@ jobs:
         if: always()
         env:
           CLI_PART: ${{ matrix.part }}
+          CLI_BUILD_RESULT: ${{ needs.build-cli.result }}
+          CLI_BUILD_OUTCOME: ${{ steps.cli-build.outcome }}
           UNIT_TESTS_OUTCOME: ${{ steps.unit-tests.outcome }}
+          IMPORT_CYCLES_OUTCOME: ${{ steps.import-cycles.outcome }}
           CLI_COMMON_DIST_OUTCOME: ${{ steps.cli-common-dist.outcome }}
           INTEGRATION_TESTS_OUTCOME: ${{ steps.integration-tests.outcome }}
           SLOW_TESTS_OUTCOME: ${{ steps.slow-tests.outcome }}
         run: |
-          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || { [ "$CLI_PART" = "1" ] && { [ "$CLI_COMMON_DIST_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ] || [ "$SLOW_TESTS_OUTCOME" != "success" ]; }; }; then
-            echo "One or more cli test lanes failed: unit=$UNIT_TESTS_OUTCOME common_dist=$CLI_COMMON_DIST_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME slow=$SLOW_TESTS_OUTCOME" >&2
+          if [ "$UNIT_TESTS_OUTCOME" != "success" ] || { [ "$CLI_PART" = "1" ] && [ "$IMPORT_CYCLES_OUTCOME" != "success" ]; } || { [ "$CLI_BUILD_RESULT" = "success" ] && [ "$CLI_BUILD_OUTCOME" != "success" ]; } || { [ "$CLI_PART" = "1" ] && [ "$CLI_BUILD_OUTCOME" = "success" ] && { [ "$CLI_COMMON_DIST_OUTCOME" != "success" ] || [ "$INTEGRATION_TESTS_OUTCOME" != "success" ] || [ "$SLOW_TESTS_OUTCOME" != "success" ]; }; }; then
+            echo "One or more cli test lanes failed: unit=$UNIT_TESTS_OUTCOME import_cycles=$IMPORT_CYCLES_OUTCOME build=$CLI_BUILD_RESULT download=$CLI_BUILD_OUTCOME common_dist=$CLI_COMMON_DIST_OUTCOME integration=$INTEGRATION_TESTS_OUTCOME slow=$SLOW_TESTS_OUTCOME" >&2
             exit 1
+          fi
+          if [ "$CLI_BUILD_RESULT" != "success" ]; then
+            echo "Artifact-dependent CLI checks skipped: build-cli=$CLI_BUILD_RESULT"
           fi
 
   stack:
@@ -2950,11 +2961,18 @@ jobs:
             ...selectedLaneIds,
           ];
           const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
+          const cliBuildConsumers = new Set([
+            'binary-smoke', 'installers-smoke-linux', 'installers-smoke-macos',
+            'installers-smoke-windows', 'e2e-core', 'e2e-core-slow', 'cli-daemon-e2e',
+          ]);
+          const cliBuildResult = needs['build-cli']?.result;
           const requestedSkips = requestedLaneIds
             .filter((id) => !laneById.has(id) || laneById.get(id)?.result === 'skipped')
             .map((id) => ({
               ...(laneById.get(id) ?? { id, result: null, conclusion: null, outputs: {} }),
-              reason: 'requested lane was skipped',
+              reason: cliBuildConsumers.has(id) && cliBuildResult && cliBuildResult !== 'success' && cliBuildResult !== 'skipped'
+                ? `blocked by build-cli (${cliBuildResult})`
+                : 'requested lane was skipped',
             }));
           // Only success and intentionally skipped lanes are acceptable. Treat every other or
           // unknown result (timed_out, startup_failure, stale, action_required, null, ...) as a
