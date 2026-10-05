@@ -1,4 +1,3 @@
-import axios from 'axios';
 import type { ReadinessProbeResult } from '@happier-dev/connection-supervisor';
 
 import { isAuthenticationStatus } from '@/api/client/httpStatusError';
@@ -13,29 +12,9 @@ export function createLoopbackReadinessProbe(params: Readonly<{
 
   return async () => {
     try {
-      const healthResponse = await axios.get(`${serverUrl}/health`, {
-        timeout: 5_000,
-        validateStatus: () => true,
-      });
-
-      if (healthResponse.status >= 500) {
-        return {
-          status: 'retry_later',
-          errorMessage: `Health check returned ${healthResponse.status}`,
-        };
-      }
-    } catch (error) {
-      return {
-        status: 'server_unreachable',
-        errorMessage: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    try {
       const snapshot = await observeServerFeaturesSnapshot({
         serverUrl,
         token: params.token,
-        timeoutMs: 5_000,
       });
 
       if (
