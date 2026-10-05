@@ -277,7 +277,8 @@
     "jsdom": "^24.1.0",
     "react-test-renderer": "19.1.0",
     "tsx": "^4.20.4",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "yoga-layout": "~3.2.1"
   },
   "private": true,
   "packageManager": "yarn@1.22.22"

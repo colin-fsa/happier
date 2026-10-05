@@ -1,14 +1,16 @@
 import * as React from 'react';
-import { View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
+import { View, useWindowDimensions, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { resolveViewportClass, type ViewportClass } from '@/utils/platform/viewportClass';
 
 type ItemGroupColumnsContextValue = Readonly<{
     activeColumns: number;
+    columnWidth: number | null;
+    columnGap: number;
 }>;
 
-const ItemGroupColumnsContext = React.createContext<ItemGroupColumnsContextValue>({ activeColumns: 1 });
+const ItemGroupColumnsContext = React.createContext<ItemGroupColumnsContextValue>({ activeColumns: 1, columnWidth: null, columnGap: 0 });
 
 const VIEWPORT_CLASS_ORDER: Record<ViewportClass, number> = Object.freeze({
     compact: 0,
@@ -56,10 +58,6 @@ const stylesheet = StyleSheet.create(() => ({
         width: '100%',
         flexBasis: '100%',
     },
-    flexibleColumn: {
-        flexBasis: 0,
-        flexShrink: 1,
-    },
 }));
 
 export function resolveItemGroupActiveColumns(params: Readonly<{
@@ -75,6 +73,12 @@ export function resolveItemGroupActiveColumns(params: Readonly<{
 export const ItemGroupColumns = React.memo<ItemGroupColumnsProps>((props) => {
     const { width, height } = useWindowDimensions();
     const styles = stylesheet;
+    const [containerWidth, setContainerWidth] = React.useState<number | null>(null);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setContainerWidth(event.nativeEvent.layout.width);
+    }, []);
+    const paddingHorizontal = props.paddingHorizontal ?? 16;
+    const columnGap = props.columnGap ?? 12;
     const viewportClass = resolveViewportClass({ width, height });
     const activeColumns = props.activeColumns != null
         ? Math.max(1, Math.floor(props.activeColumns))
@@ -83,19 +87,24 @@ export const ItemGroupColumns = React.memo<ItemGroupColumnsProps>((props) => {
             columns: props.columns ?? 2,
             collapseBelow: props.collapseBelow ?? 'medium',
         });
+    // Size from the card itself, not the viewport. A zero flex basis lets every
+    // cell shrink onto one line, so flexWrap never enforces the column count.
+    const columnWidth = containerWidth === null ? null
+        : Math.max(0, (containerWidth - 2 * paddingHorizontal - (activeColumns - 1) * columnGap) / activeColumns);
     const contextValue = React.useMemo<ItemGroupColumnsContextValue>(() => ({
-        activeColumns,
-    }), [activeColumns]);
+        activeColumns, columnWidth, columnGap,
+    }), [activeColumns, columnWidth, columnGap]);
 
     return (
         <ItemGroupColumnsContext.Provider value={contextValue}>
             <View
+                onLayout={onLayout}
                 style={[
                     styles.container,
                     {
-                        paddingHorizontal: props.paddingHorizontal ?? 16,
+                        paddingHorizontal,
                         paddingVertical: props.paddingVertical ?? 16,
-                        columnGap: props.columnGap ?? 12,
+                        columnGap,
                         rowGap: props.rowGap ?? 16,
                     },
                     props.style,
@@ -109,9 +118,9 @@ export const ItemGroupColumns = React.memo<ItemGroupColumnsProps>((props) => {
 
 export const ItemGroupColumn = React.memo<ItemGroupColumnProps>((props) => {
     const styles = stylesheet;
-    const { activeColumns } = React.useContext(ItemGroupColumnsContext);
+    const { activeColumns, columnWidth, columnGap } = React.useContext(ItemGroupColumnsContext);
     const resolvedSpan = Math.max(1, Math.min(props.span ?? 1, activeColumns));
-    const isFullWidth = activeColumns === 1 || resolvedSpan >= activeColumns;
+    const isFullWidth = activeColumns === 1 || resolvedSpan >= activeColumns || columnWidth === null;
 
     return (
         <View
@@ -119,12 +128,7 @@ export const ItemGroupColumn = React.memo<ItemGroupColumnProps>((props) => {
                 styles.column,
                 isFullWidth
                     ? styles.fullWidthColumn
-                    : [
-                        styles.flexibleColumn,
-                        {
-                            flexGrow: resolvedSpan,
-                        },
-                    ],
+                    : { width: columnWidth * resolvedSpan + columnGap * (resolvedSpan - 1) },
                 props.style,
             ]}
         >
