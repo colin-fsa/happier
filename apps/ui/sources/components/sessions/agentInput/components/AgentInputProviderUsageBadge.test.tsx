@@ -18,6 +18,7 @@ vi.mock('react-native-svg', () => ({
 const fixtureFormatter: ConnectedServiceQuotaGaugeLabelFormatter = {
     remaining: ({ percent }) => `${percent} left`,
     remainingWithReset: ({ percent, reset }) => `${percent} left · resets in ${reset}`,
+    unavailable: () => 'Unavailable',
     used: ({ used, limit }) => `${used}/${limit} used`,
     durationNow: () => 'now',
     durationOutdated: () => 'outdated',

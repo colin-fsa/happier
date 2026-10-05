@@ -582,6 +582,7 @@ function resolveConnectedServiceProviderDisplayName(serviceId: string): string |
 }
 
 const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormatter = {
+    unavailable: () => t('common.unavailable'),
     remaining: ({ percent }) => t('agentInput.providerUsage.remaining', { percent }),
     remainingWithReset: ({ percent, reset }) => t('agentInput.providerUsage.remainingWithReset', { percent, reset }),
     used: ({ used, limit }) => t('agentInput.providerUsage.usedCount', { used, limit }),

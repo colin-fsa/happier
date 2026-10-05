@@ -43,6 +43,7 @@ function snapshot(meters: readonly ConnectedServiceQuotaMeterV1[]): ConnectedSer
 }
 
 const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
+    unavailable: () => 'Unavailable',
     remaining: ({ percent }) => `${percent} left`,
     remainingWithReset: ({ percent, reset }) => `${percent} left · resets in ${reset}`,
     used: ({ used, limit }) => `${used}/${limit} used`,
@@ -68,7 +69,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
             meter({ meterId: 'expired', label: 'Expired', status: 'unavailable', resetsAt: 1_000 }),
             meter({ meterId: 'pinned', label: 'Pinned', status: 'unavailable' }),
         ];
-        const displayFormatter = { ...formatter, unavailable: () => 'Unavailable' };
+        const displayFormatter = formatter;
         const rows = buildConnectedServiceQuotaGaugeMeterRows(meters, 2_000, displayFormatter, ['pinned']);
         expect(rows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset', 'pinned']);
         expect(rows.map((row) => row.remainingPct)).toEqual([100, 0, null, null]);
@@ -83,6 +84,9 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(vm?.remainingPct).toBe(0);
         expect(vm?.usageRings.map((ring) => ring.meterId)).toEqual(['empty']);
         expect(buildConnectedServiceQuotaGaugeMeterRows([meters[2]!], 2_000, displayFormatter)).toEqual([]);
+        expect(buildConnectedServiceQuotaGaugeMeterRows([
+            meter({ meterId: 'counts', label: 'Counts', used: 0, limit: 0 }),
+        ], 2_000, displayFormatter)).toMatchObject([{ meterId: 'counts', usedLimitLabel: '0/0 used' }]);
     });
     it('keeps unmeasured reported windows in details even when no composer ring can be ranked', () => {
         const unknown = meter({ meterId: 'reached', label: 'Reached', status: 'unavailable', resetsAt: 62_000, details: { limitCategory: 'usage_limit' } });

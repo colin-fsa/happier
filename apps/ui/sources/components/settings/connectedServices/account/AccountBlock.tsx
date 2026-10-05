@@ -88,6 +88,7 @@ export interface AccountBlockProps {
  * `ConnectedServiceQuotaMeterRow` (single duration vocabulary).
  */
 const GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
+    unavailable: () => t('common.unavailable'),
     remaining: ({ percent }) => t('connectedServices.quota.remaining', { percent }),
     remainingWithReset: ({ percent, reset }) =>
         t('connectedServices.quota.remainingWithReset', { percent, reset }),
@@ -138,7 +139,7 @@ function buildQuotaView(
     const capacity = resolveAccountCapacityView(displaySnapshot?.meters ?? [], nowMs, GAUGE_LABEL_FORMATTER);
 
     const usageRows = resolveAccountUsageRows(displaySnapshot
-        ? buildConnectedServiceQuotaGaugeMeterRows(displaySnapshot.meters, nowMs, GAUGE_LABEL_FORMATTER)
+        ? buildConnectedServiceQuotaGaugeMeterRows(displaySnapshot.meters, nowMs, GAUGE_LABEL_FORMATTER, hook.pinnedMeterIds)
         : []);
     const resetRows = hook.canConsumeRecoveryCredit
         ? buildQuotaResetRows(snapshot?.recoveryCredits, nowMs, RESET_COUNTDOWN_DAYS_FORMATTER)

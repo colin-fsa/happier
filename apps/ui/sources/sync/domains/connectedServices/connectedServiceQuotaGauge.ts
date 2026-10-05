@@ -56,6 +56,7 @@ export type ConnectedServiceQuotaGaugeMeterRow = Readonly<{
 }>;
 
 export type ConnectedServiceQuotaGaugeLabelFormatter = Readonly<{
+    unavailable: () => string;
     remaining: (params: Readonly<{ percent: string }>) => string;
     remainingWithReset: (params: Readonly<{ percent: string; reset: string }>) => string;
     used: (params: Readonly<{ used: string; limit: string }>) => string;
@@ -320,7 +321,9 @@ function buildMeterRow(
         remainingPct,
         usedPct,
         detailRightSemantics: 'remaining',
-        detailRightLabel: resetLabel
+        detailRightLabel: remainingPct === null && resetLabel === null
+            ? formatter.unavailable()
+            : resetLabel
             ? formatter.remainingWithReset({ percent: remainingLabel, reset: resetLabel })
             : formatter.remaining({ percent: remainingLabel }),
         usedLimitSemantics: typeof meter.used === 'number' && typeof meter.limit === 'number'
@@ -338,13 +341,18 @@ export function buildConnectedServiceQuotaGaugeMeterRows(
     meters: readonly ConnectedServiceQuotaMeterV1[],
     nowMs: number,
     formatter: ConnectedServiceQuotaGaugeLabelFormatter,
+    pinnedMeterIds: readonly string[] = [],
 ): ConnectedServiceQuotaGaugeMeterRow[] {
     const rows: ConnectedServiceQuotaGaugeMeterRow[] = [];
     for (const meter of meters) {
         const category = readPublicLimitCategory(meter);
         if ((category && !['usage_limit', 'rate_limit'].includes(category))
             || rows.some((row) => row.meterId === meter.meterId)) continue;
-        rows.push(buildMeterRow(meter, nowMs, formatter));
+        const row = buildMeterRow(meter, nowMs, formatter);
+        // Provider adapters may emit empty placeholders for known windows. Keep
+        // useful facts and user-pinned windows, without changing the snapshot.
+        if (row.remainingPct !== null || row.usedLimitLabel !== null || row.resetLabel !== null
+            || pinnedMeterIds.includes(row.meterId)) rows.push(row);
     }
     return rows;
 }
@@ -364,7 +372,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
 
     const rankableMeters = selectComparableConnectedServiceQuotaMeters(params.snapshot.meters);
     const allMeterRows = buildConnectedServiceQuotaGaugeMeterRows(
-        [...rankableMeters, ...params.snapshot.meters], params.nowMs, params.formatter,
+        [...rankableMeters, ...params.snapshot.meters], params.nowMs, params.formatter, params.additionalMeterIds,
     );
     if (allMeterRows.length === 0) return null;
 

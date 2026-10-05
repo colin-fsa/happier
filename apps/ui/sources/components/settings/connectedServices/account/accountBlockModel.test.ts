@@ -30,6 +30,7 @@ function meterRow(overrides: Partial<ConnectedServiceQuotaGaugeMeterRow>): Conne
 describe('accountBlockModel', () => {
     it('keeps the account headline and rings in the canonical comparable family', () => {
         const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
+            unavailable: () => '',
             remaining: () => '', remainingWithReset: () => '', used: () => '',
             durationNow: () => '', durationOutdated: () => '', durationDaysHours: () => '',
             durationHoursMinutes: () => '', durationHours: () => '', durationMinutes: () => '',

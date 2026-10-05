@@ -49,6 +49,7 @@ const POOL_AVATAR_SIZE = 42;
  * strings are never surfaced here and a no-op formatter is correct.
  */
 const NOOP_GAUGE_LABEL_FORMATTER: ConnectedServiceQuotaGaugeLabelFormatter = {
+    unavailable: () => '',
     remaining: () => '',
     remainingWithReset: () => '',
     used: () => '',
