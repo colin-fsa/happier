@@ -1,4 +1,5 @@
 import { AudioModule, RecordingPresets } from 'expo-audio';
+import { Platform } from 'react-native';
 
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -38,7 +39,28 @@ import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn'
 export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
 export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } from './localVoiceState';
 
-let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
+type LocalAudioRecorder = {
+  uri: string | null;
+  prepareToRecordAsync: () => Promise<void>;
+  record: () => void;
+  stop: () => Promise<void>;
+};
+
+type AudioRecorderConstructor = new (options: unknown) => LocalAudioRecorder;
+
+function createLocalAudioRecorder(): LocalAudioRecorder {
+  const audioModule = AudioModule as unknown as {
+    AudioRecorder?: AudioRecorderConstructor;
+    AudioRecorderWeb?: AudioRecorderConstructor;
+  };
+  const Recorder = Platform.OS === 'web' ? audioModule.AudioRecorderWeb : audioModule.AudioRecorder;
+  if (!Recorder) {
+    throw new Error('audio_recorder_unavailable');
+  }
+  return new Recorder(RecordingPresets.HIGH_QUALITY);
+}
+
+let recorder: LocalAudioRecorder | null = null;
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
@@ -102,7 +124,7 @@ async function startRecording(sessionId: string): Promise<void> {
     return;
   }
 
-  const nextRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const nextRecorder = createLocalAudioRecorder();
   try {
     await nextRecorder.prepareToRecordAsync();
     nextRecorder.record();
