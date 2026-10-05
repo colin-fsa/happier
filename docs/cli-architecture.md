@@ -1009,6 +1009,12 @@ provider configuration, transcript ingestion, permissions, and recovery. The hos
 owns the terminal process and screen. `terminal/attachment` persists their association
 and dispatches attach, stop, and host disposition.
 
+Terminal-host setup failures keep the released `SPAWN_FAILED` result and attach optional,
+protocol-owned `terminal_host_unavailable` detail. Missing supported Herdr/Zellij
+installations and an unsupported running Herdr server are setup failures, not provider
+errors or automatic retry instructions. The creation UI explains installation/update or
+host selection and retains the draft. Other startup failures keep their existing classification.
+
 The daemon resolves presentation through provider-owned launch hooks before choosing
 a terminal host. Runtimes with a real terminal surface can open in tmux, zellij, or
 Herdr; headless ACP runtimes do not acquire a synthetic TUI. Codex App Server and
@@ -1018,6 +1024,26 @@ daemon registration and webhook completion. The common owner binds the reported
 session before waking its existing pending queue and clears stale Stop state when
 an explicit resume is accepted. Automatic recovery is a new launch attempt, so it
 does not reuse the original caller's already accepted request nonce.
+For these shared provider-attach runtimes, the hosted native TUI is optional:
+`spawnHooks.resolveDaemonTerminalPresentation` keeps the controller headless,
+and `createSharedProviderLocalControl.onTerminalExit` releases the local-control
+projection. Closing the presenter leaves that controller remotely usable and
+does not automatically recreate a pane. Terminal supervision retires the exact
+optional attachment without treating its loss as controller death. An explicit
+switch or attach can request a local client again; this is not a claim that every
+cold host-restoration path has completed live validation.
+Terminal creation submission is distinct from confirmed readiness. A tmux creation
+reply that cannot identify the accepted window does not authorize an ordinary-runner
+fallback: only proven non-creation with complete cleanup permits that fallback.
+Unconfirmed terminal creation retains its private launch inputs for the potentially
+live runner. Positive non-creation or confirmed stop permits exact artifact cleanup;
+missing files are idempotent, while other cleanup failures are recorded in the
+default file log and remain distinguishable from successful cleanup.
+The standalone launch asset emits a fixed stderr diagnostic if its file-log
+destination is unavailable. Its reader may leave the exact native-startup receipt
+for the controller; that verified companion is not a directory-cleanup failure.
+Artifact cleanup failure does not change a completed native exit or replace the
+original startup failure.
 The webhook waiter is armed before asynchronous accepted-marker persistence;
 host binding completes only after that persistence succeeds. An accepted runner
 can already have a known session ID without being ready: nonce readiness remains
@@ -1066,6 +1092,19 @@ attachment and detach custody: an independent `happier attach` client neither
 claims `canDetach` nor clears a runner-owned terminal when it exits. Shared native
 clients and Happier remain simultaneously writable; this projection is not an
 inventory of every external native client.
+
+Cold Herdr restoration is a development-source exception to independent attachment.
+When the shared controller survives a server restart, attach from the restored
+recorded pane can submit its current terminal and native launcher identity to the
+same strict preparation owner. The controller validates its own prior placement,
+positive old-host absence, current pane, exact native conversation and endpoint,
+and OS process custody before binding a borrowed attachment and publishing managed
+status. A retired local descriptor is not required to survive: the absent path
+uses the controller's authenticated retired placement snapshot. Detach retires the
+exact native launcher tree and attachment, leaving the restored shell, pane, and
+shared controller alive. Unsupported or refused admission cleans up the transient
+native client without changing managed association. This does not make a recorded
+public pane ID an identity authority or promote the restored shell to owned custody.
 
 For a shared native session with a recorded terminal host, the public attach
 command asks the existing session switch owner to restore its managed TUI before
@@ -1116,6 +1155,19 @@ requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+The Herdr client stages large text in sequential Unicode-safe requests within
+Herdr's 1 MiB serialized JSON-line limit, including escape expansion and envelope
+bytes. Submission still belongs to the existing verifier: it sends Enter only
+after staging completes, and a partial failed write retains the existing
+ambiguous-write result rather than replaying the prompt.
+
+The development permission-mode controller verifies the current composer footer
+before cycling modes. A clipped footer is unknown, rather than evidence of default
+mode; historical mode text above the composer is not authoritative. Legacy mode
+labels and compact HUD labels share that parser. If the footer is hidden by a short
+terminal, control waits without cycling blindly; enlarging the terminal restores
+verification through the existing retry path. Pending prompts still wait for their
+required runtime configuration to be verified.
 
 The development parser distinguishes Claude's automatic usage-limit wait footer
 from the interactive usage-limit chooser. An empty composer still accepts a new
@@ -1132,6 +1184,19 @@ must stop the runner without closing the user's pane. Daemon-created panes remai
 owned. The attachment's stable terminal identity is resolved to the current pane
 when needed, so pane movement needs no separate persistent index.
 
+After a Herdr restart, the recorded public pane ID is only a restoration hint:
+the new terminal runtime ID is discovered in that exact local server namespace.
+Explicit attach can start an unreachable recorded server and open that candidate
+to activate its saved resume command, but opening it does not authenticate or
+rebind the Happier Session. Generic resume keeps live or unproven runner admission;
+positive local runner absence permits cold restoration even when relay activity
+is stale. A restored foreground launch retains borrowed-shell disposition unless
+the existing attachment owner independently proves owned custody.
+The saved release-channel executable must be available in the restored shell.
+Its automatic invocation is distinct from manually invoking the current-source
+attach command inside that pane; the latter's managed cold-restoration admission
+and Detach were exercised with a surviving OpenCode controller on Herdr `0.9.3`.
+
 In the development source, daemon startup reattachment uses the same terminal
 serviceability publication owner as live session reports. This retains the exact
 attachment identity and borrowed lifecycle before runner exit, even if the runner
@@ -1140,7 +1205,28 @@ attachment's serviceability.
 Owned runner exit also invokes the existing disconnected-host supervisor: a
 positively dead pane retires its exact attachment, while an alive independent
 provider host remains recoverable rather than being closed on controller loss.
+For optional native clients, normal runner exit consults current attachment custody
+before retaining its recovery marker. A retired presentation's historical webhook
+does not retain the marker; unreadable custody retains evidence and emits a diagnostic.
+Borrowed shells keep their existing release policy, and intentional restart custody
+keeps its existing marker policy.
+Explicit Claude continuation looks up its exact owned attachment's retained
+endpoint descriptor only after Session runner-lock admission. The existing
+endpoint validator and hook/MCP binding owners establish controller readiness
+before terminal adoption; a public pane ID alone cannot lift the recovery fence.
+Permission startup uses one shared seed-admission owner for the prompt loop and
+runtime override synchronization. A saved mode is applied before eager native
+startup even when its timestamp was already captured while building the queue.
+Subsequent metadata changes still require a strictly newer timestamp; explicit
+launch permission intent keeps its existing precedence.
 Explicit Stop and normal exit share the same exact attachment-disposition owner.
+CLI Stop delegates acknowledgement expiry to the relay's existing finite
+forwarding deadline instead of imposing a shorter generic machine-RPC timer.
+Local Stop requests follow the daemon operation by default; explicit caller
+deadlines and cancellation remain available. A guarded refusal to signal never
+authorizes an unsafe kill: Stop rechecks positive runner exit before deciding
+that termination is incomplete. Transport timeout or disconnect still does not
+prove physical termination.
 After proving runner exit, Stop supplies its captured attachment to that owner:
 if normal exit already removed the descriptor, the same owned-host disposal and
 metadata-retirement pipeline still completes. Borrowed attachments release control
@@ -1195,9 +1281,24 @@ credential files, and rejects URLs with embedded user information. Encoding is
 transport, not redaction.
 Generic `resume` delegates to the
 normal attach operation for a running attachable session; stopped sessions retain
-strict provider resume. There is no parallel Herdr session synchronization service.
+strict provider resume. Recorded cold restoration verifies Herdr's released
+standard socket and named-state layout against its native Session inventory,
+then starts that exact namespace through the existing startup deadline owner.
+It does not substitute an ambient same-name server. Native foreground attachment
+uses the exact socket override without an explicit `--session` argument that
+would supersede it. An unreachable custom socket whose saved-state root cannot
+be verified requires reopening the original server; live custom sockets remain
+attachable. There is no parallel Herdr session synchronization service.
 
 ## Daemon architecture
+
+With no tracked runners remaining, daemon shutdown cleans each idle OpenCode
+server in its existing managed pool, not just the ambient launch profile. The
+same locked termination owner verifies daemon, relay-directory and process
+custody. Active session claims and borrowed servers retain their state;
+unreadable custody and unsuccessful termination retain evidence and produce
+diagnostics. The tracked-runner guard
+also covers accepted runners whose durable session marker is not written yet.
 
 ```mermaid
 graph TB
@@ -1283,6 +1384,11 @@ turn resets the streak. A handed-off continuation has no second retry timer whil
 its outcome is pending; user cancellation remains authoritative. Authentication,
 quota, and non-capacity transport recovery retain their own classifications and
 policies.
+
+In current development source, reconnect readiness uses a fresh authenticated
+feature observation and inherits that request owner's attempt deadline. A separate
+health endpoint is not an admission prerequisite. Authentication rejection fails
+closed; server failures remain retryable under the existing connection supervisor.
 
 ### Control server (local IPC)
 

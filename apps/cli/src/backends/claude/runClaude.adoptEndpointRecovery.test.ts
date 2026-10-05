@@ -12,6 +12,26 @@ import {
 } from './endpointRecovery/claudeEndpointArtifacts';
 import { resolveClaudeAdoptEndpointRecovery } from './endpointRecovery/claudeEndpointRecovery';
 import { startHookServer } from './utils/startHookServer';
+import { writeClaudeEndpointDescriptor } from './endpointRecovery/claudeEndpointArtifacts';
+import { createTerminalAttachmentId, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { claimSessionRunnerOwnership, withSessionRunnerOwnership } from '@/daemon/sessionRunnerLock';
+import { reloadConfiguration } from '@/configuration';
+
+const binaryBoundary = vi.hoisted(() => ({ file: '' }));
+// Only the selected Herdr executable's installed-version probe is replaced.
+// Recovery uses real attachment files, endpoint ports and Herdr socket requests.
+vi.mock('node:child_process', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    const { promisify } = await import('node:util');
+    return { ...actual, execFile: Object.assign(actual.execFile.bind(null), {
+        [Symbol.for('nodejs.util.promisify.custom')]: async (file: string, args: readonly string[], options?: import('node:child_process').ExecFileOptions) =>
+            binaryBoundary.file === file && args[0] === '--version'
+                ? { stdout: 'herdr 0.9.3', stderr: '' }
+                : await promisify(actual.execFile)(file, [...args], options ?? {}),
+    }) };
+});
 
 const originalEndpointStateEnv = process.env[HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY];
 
@@ -129,6 +149,44 @@ describe('resolveClaudeAdoptEndpointRecovery', () => {
 
         await expect(resolveClaudeAdoptEndpointRecovery()).resolves.toBeNull();
     });
+
+    it.each(['owned', 'borrowed', 'different-attachment'] as const)(
+        'recovers only exact owned retained endpoint custody after explicit runner admission (%s)', async (custody) => {
+            const home = await mkdtemp(join(tmpdir(), 'happier-explicit-endpoint-'));
+            tempDirs.push(home);
+            const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HERDR_BIN_PATH', HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]);
+            binaryBoundary.file = join(home, 'isolated-herdr');
+            env.patch({ HAPPIER_HOME_DIR: home, HERDR_BIN_PATH: binaryBoundary.file, [HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]: undefined });
+            reloadConfiguration();
+            try {
+                await withHerdrApi(async (api) => {
+                    api.panes.add('managed');
+                    const sessionId = 'sid_retained_controller';
+                    const attachmentId = createTerminalAttachmentId();
+                    const state = await writeRecoveryArtifacts({ root: home, attachmentId,
+                        stateHookServerPort: await findAvailablePort(), mcpPort: await findAvailablePort() });
+                    await writeTerminalAttachmentInfo({ happyHomeDir: home, sessionId, attachmentId,
+                        lifecycle: custody === 'borrowed' ? 'borrowed' : 'owned',
+                        terminal: { mode: 'herdr', herdr: { sessionName: 'work', socketPath: api.socketPath, paneId: 'managed', terminalId: 'terminal_1' } },
+                        handle: { kind: 'herdr', sessionName: 'work', socketPath: api.socketPath, paneId: 'managed', terminalId: 'terminal_1', attachmentId,
+                            attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } },
+                    });
+                    await writeClaudeEndpointDescriptor({ happyHomeDir: home, sessionId,
+                        endpointState: custody === 'different-attachment' ? { ...state, attachmentId: createTerminalAttachmentId() } : state });
+                    await withSessionRunnerOwnership(async () => {
+                        await claimSessionRunnerOwnership(sessionId);
+                        const recovered = await resolveClaudeAdoptEndpointRecovery({ existingSession: { happyHomeDir: home, sessionId } });
+                        if (custody === 'owned') expect(recovered).toMatchObject({ state });
+                        else expect(recovered).toBeNull();
+                    });
+                    expect(api.requests.some(request => request.method === 'pane.close' || request.method === 'layout.apply')).toBe(false);
+                });
+            } finally {
+                binaryBoundary.file = '';
+                env.restore(); reloadConfiguration();
+            }
+        },
+    );
 
     it('returns null when retained endpoint artifacts are missing', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-adopt-missing-'));

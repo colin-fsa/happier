@@ -688,7 +688,7 @@ describe('createOnChildExited', () => {
       sessionAttachCleanupByPid: new Map(),
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
-      shouldPreserveSessionMarkerOnExit: () => true,
+      shouldPreserveSessionMarkerOnExit: async () => true,
     } as any);
 
     await onChildExited(pid, { reason: 'process-exited', code: null, signal: 'SIGTERM' });

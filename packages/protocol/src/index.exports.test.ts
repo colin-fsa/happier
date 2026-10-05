@@ -9,6 +9,10 @@ import type {
 import * as protocol from './index.js';
 
 describe('protocol package root exports', () => {
+    it('exports the consumed terminal-host setup detail schema through the public root', () => {
+        const detail = { kind: 'terminal_host_unavailable', host: 'herdr', reason: 'server_version_unsupported' };
+        expect(protocol.TerminalHostUnavailableSpawnErrorDetailSchema.parse(detail)).toEqual(detail);
+    });
     it('exports the unsuffixed session runtime activity contracts', () => {
         expectTypeOf<SessionRuntimeActivityProjection>().not.toBeNever();
         expectTypeOf<SessionRuntimeActivitySnapshot>().not.toBeNever();

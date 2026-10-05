@@ -4538,6 +4538,8 @@ export const en = {
     },
 
     newSession: {
+      terminalHostUnavailableTitle: "Terminal host unavailable",
+      terminalHostUnavailableBody: ({ host }: { host: string }) => `Install or update ${host} and restart its server on this machine, or choose another terminal host. Your draft is kept.`,
         ...newSessionMcpTranslationExtension,
         ...acpCatalogTranslationExtension.newSession,
         // Used by new-session screen and launch flows
@@ -9990,9 +9992,9 @@ settingsSession: {
         unknownPath: 'unknown path',
         previousSessionsTitle: 'Previous Sessions (up to 5 most recent)',
         tmux: {
-            overrideTitle: 'Override global tmux settings',
-            overrideEnabledSubtitle: 'Custom tmux settings apply to new sessions on this machine.',
-            overrideDisabledSubtitle: 'New sessions use the global tmux settings.',
+            overrideTitle: "Override account default",
+            overrideEnabledSubtitle: "This machine uses its own terminal host for new sessions.",
+            overrideDisabledSubtitle: "New sessions inherit your account’s terminal host.",
             notDetectedSubtitle: 'tmux is not detected on this machine.',
             notDetectedMessage: 'tmux is not detected on this machine. Install tmux and refresh detection.',
         },

@@ -61,7 +61,7 @@ export async function readProcessRunState(pid: number, deps?: Readonly<{
   } catch {
     // ps exits non-zero when the pid does not exist; fall through to the signal probe.
   }
-  // No ps row: trust the signal probe (a pid can be unobservable to ps but still signalable in
-  // rare sandboxed setups — stay fail-closed and treat alive as servable).
-  return alive ? 'servable' : 'dead';
+  // The runner may exit while ps is pending. Re-observe the signal boundary instead of
+  // retaining the pre-probe snapshot; unobservable live PIDs still fail closed as servable.
+  return isPidAlive(pid) ? 'servable' : 'dead';
 }

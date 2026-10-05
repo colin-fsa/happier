@@ -636,7 +636,9 @@ export async function claudeLocal(opts: {
             });
         });
     } finally {
-        await materializedMcpConfig?.cleanup();
+        // File retirement is nonfatal to the completed provider outcome. Its owner
+        // records incomplete cleanup by default; do not mask an existing turn error.
+        await materializedMcpConfig?.cleanup().catch(() => undefined);
         process.stdin.resume();
         clearStopThinkingTimeout();
         activeFetchIds.clear();

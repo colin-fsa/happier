@@ -118,14 +118,16 @@ describe('codexDaemonSpawnHooks.validateSpawn', () => {
 });
 
 describe('codexDaemonSpawnHooks', () => {
-  it('opens a shared App Server TUI in Herdr but leaves ACP headless', async () => {
-    const selection = { host: 'herdr' as const, accountSettings: null, processEnv: {} };
-    expect(codexDaemonSpawnHooks.resolveTerminalPresentation?.({
-      ...selection, runtimeSelection: { codexBackendMode: 'appServer' },
-    })).toMatchObject({ kind: 'runner', startingMode: 'local' });
-    expect(codexDaemonSpawnHooks.resolveTerminalPresentation?.({
-      ...selection, runtimeSelection: { codexBackendMode: 'acp' },
-    })).toEqual({ kind: 'none' });
+  it('presents only the shared native client while retaining headless App Server controller custody', async () => {
+    for (const host of ['tmux', 'zellij', 'herdr'] as const) {
+      const selection = { host, accountSettings: null, processEnv: {} };
+      expect(codexDaemonSpawnHooks.resolveTerminalPresentation?.({
+        ...selection, runtimeSelection: { codexBackendMode: 'appServer' },
+      })).toEqual({ kind: 'provider_attach', startingMode: 'local' });
+      expect(codexDaemonSpawnHooks.resolveTerminalPresentation?.({
+        ...selection, runtimeSelection: { codexBackendMode: 'acp' },
+      })).toEqual({ kind: 'none' });
+    }
   });
 
   it('does not expose legacy generic token auth plumbing', async () => {

@@ -4,7 +4,7 @@ import { resolveClaudeConfigDirOverride } from '@/backends/claude/utils/resolveC
 import { resolveClaudeConfigDirEnvOverlay } from '@/backends/claude/utils/resolveClaudeConfigDirEnvOverlay';
 import { resolveClaudeExternalSandboxEnv } from '@/backends/claude/spawn/resolveClaudeExternalSandboxEnv';
 import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
-import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
+import { readDaemonClaudeUnifiedTerminalPin, resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
 import { normalizeClaudeRemoteMode } from '@/backends/claude/remote/normalizeClaudeRemoteMode';
 import { HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY } from '@/backends/claude/endpointRecovery/claudeEndpointArtifacts';
 
@@ -17,7 +17,9 @@ export const claudeDaemonSpawnHooks: DaemonSpawnHooks = {
       processEnv[HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]?.trim(),
     );
     const unified = hasRecoverableDetachedProvider
-      || normalizeClaudeRemoteMode(resolveInitialClaudeRemoteMetaState({ metaDefaults: defaults })).kind === 'unifiedTerminal';
+      || normalizeClaudeRemoteMode(resolveInitialClaudeRemoteMetaState({ metaDefaults: defaults,
+        pinnedUnifiedTerminalEnabled: readDaemonClaudeUnifiedTerminalPin('daemon', processEnv),
+      })).kind === 'unifiedTerminal';
     return unified
       ? host === 'herdr' && !hasRecoverableDetachedProvider
         ? {

@@ -4714,6 +4714,8 @@ export const zhHans: TranslationStructure = {
   },
 
   newSession: {
+    terminalHostUnavailableTitle: "终端宿主不可用",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `请在此设备上安装或更新 ${host} 并重启其服务器，或选择其他终端宿主。草稿已保留。`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -10243,9 +10245,9 @@ settingsSession: {
     unknownPath: "未知路径",
     previousSessionsTitle: "之前的会话（最多最近 5 个）",
     tmux: {
-      overrideTitle: "覆盖全局 tmux 设置",
-      overrideEnabledSubtitle: "自定义 tmux 设置将应用于此设备上的新会话。",
-      overrideDisabledSubtitle: "新会话使用全局 tmux 设置。",
+      overrideTitle: "覆盖账户默认值",
+      overrideEnabledSubtitle: "此设备的新会话使用自己的终端宿主。",
+      overrideDisabledSubtitle: "新会话继承账户的终端宿主。",
       notDetectedSubtitle: "此设备未检测到 tmux。",
       notDetectedMessage: "此设备未检测到 tmux。请安装 tmux 并刷新检测。",
     },

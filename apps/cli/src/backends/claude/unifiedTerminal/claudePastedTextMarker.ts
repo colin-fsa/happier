@@ -1,6 +1,7 @@
 const CLAUDE_PASTED_TEXT_MARKER = /\[\s*Pasted text(?:\s*#\s*\d+)?\s*\+\s*([0-9][0-9,._\s]*)\s+lines?\s*\]/i;
 const CLAUDE_PASTED_TEXT_MARKER_ONLY = /^\s*\[\s*Pasted text(?:\s*#\s*\d+)?\s*\+\s*([0-9][0-9,._\s]*)\s+lines?\s*\]\s*$/i;
 const CLAUDE_PASTED_TEXT_MARKER_WITHOUT_COUNT_ONLY = /^\s*\[\s*Pasted text(?:\s*#\s*\d+)?\s*\]\s*$/i;
+const CLAUDE_PASTE_BLOCKS = /\[[^\]]+\]/g;
 
 export function countPromptNewlines(value: string): number {
   let count = 0;
@@ -29,17 +30,21 @@ export function parseExactClaudePastedTextMarkerLineCount(text: string): number 
 }
 
 /**
- * Whether the whole composer contains one of Claude's collapsed-paste markers. Claude omits the
+ * Whether the whole composer contains only Claude's collapsed-paste markers. Claude omits the
  * line count for sufficiently large single-line pastes (`[Pasted text #1]`), so submission
- * verification cannot rely exclusively on the count-bearing representation.
+ * verification cannot rely exclusively on the count-bearing representation. Chunked transport
+ * writes produce adjacent blocks; non-marker text must still fail verification.
  *
  * Count-free markers carry no prompt identity and must therefore remain scoped to an active
  * write/submit verification attempt. Durable draft ownership continues to use the line-count
  * parser above.
  */
 export function isExactClaudePastedTextMarker(text: string): boolean {
-  return parseExactClaudePastedTextMarkerLineCount(text) !== null
-    || CLAUDE_PASTED_TEXT_MARKER_WITHOUT_COUNT_ONLY.test(text);
+  const blocks = text.match(CLAUDE_PASTE_BLOCKS);
+  return blocks !== null
+    && text.replace(CLAUDE_PASTE_BLOCKS, '').trim().length === 0
+    && blocks.every(block => parseExactClaudePastedTextMarkerLineCount(block) !== null
+      || CLAUDE_PASTED_TEXT_MARKER_WITHOUT_COUNT_ONLY.test(block));
 }
 
 export function pastedTextLineCountMatchesPrompt(params: Readonly<{

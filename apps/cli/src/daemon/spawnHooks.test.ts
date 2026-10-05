@@ -10,9 +10,45 @@ import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from './process
 import { logger } from '@/ui/logger';
 import { HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY } from '@/backends/claude/endpointRecovery/claudeEndpointArtifacts';
 
-import { buildTrackedSpawnOptions, resolveDefaultDaemonTerminalPresentation } from './spawnHooks';
+import { buildTrackedSpawnOptions, resolveDaemonTerminalPresentation, resolveDefaultDaemonTerminalPresentation } from './spawnHooks';
 
 describe('tracked spawn topology', () => {
+  it('recovers an accepted optional-client runtime remotely until an explicit attachment request', async () => {
+    const hooks = await requireCatalogEntry('codex').getDaemonSpawnHooks!();
+    const input = { hooks, host: 'herdr' as const, agentId: 'codex' as const, configuredAcpBackend: false,
+      accountSettings: null, runtimeSelection: { codexBackendMode: 'appServer' as const }, processEnv: {} };
+    expect(resolveDaemonTerminalPresentation(input)).toMatchObject({ kind: 'provider_attach', startingMode: 'local' });
+    const recovery = { existingSessionId: 'accepted-session' };
+    expect(resolveDaemonTerminalPresentation({ ...input, ...recovery })).toMatchObject({ kind: 'provider_attach', startingMode: 'remote' });
+  });
+  it.skipIf(process.platform === 'win32')('stops a proven headless controller when its optional native presentation is absent', async () => {
+    const hooks = await requireCatalogEntry('codex').getDaemonSpawnHooks!();
+    const options: SpawnSessionOptions = { directory: process.cwd(), backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      codexBackendMode: 'appServer', terminal: { mode: 'herdr' } };
+    const terminalPresentation = hooks.resolveTerminalPresentation!({ host: 'herdr', accountSettings: null,
+      runtimeSelection: { codexBackendMode: 'appServer' }, processEnv: {} });
+    expect(terminalPresentation.kind).toBe('provider_attach');
+    const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
+    await once(child, 'spawn');
+    const exited = once(child, 'exit');
+    const sessionId = `optional-no-client-${child.pid}`;
+    const tracked: TrackedSession = { pid: child.pid!, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
+      spawnOptions: buildTrackedSpawnOptions({ options, terminalPresentation }) };
+    try {
+      const stop = createStopSession({ pidToTrackedSession: new Map([[child.pid!, tracked]]),
+        // A real selected host has not created any descriptor; the filesystem remains genuine.
+        waitForTrackedRunnersExit: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
+          runners: trackedPids.map(pid => ({ pid })), timeoutMs: 15_000, pollIntervalMs: 50,
+        }),
+        logWarning: message => logger.infoFile(message),
+      });
+      await expect(stop(sessionId)).resolves.toEqual({ status: 'stopped' });
+      await exited;
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited;
+    }
+  });
   it('preserves provider-hosted requests and persists accepted native or fallback topology', async () => {
     const hooks = await requireCatalogEntry('claude').getDaemonSpawnHooks!();
     const terminalPresentation = hooks.resolveTerminalPresentation!({
@@ -70,9 +106,13 @@ describe('tracked spawn topology', () => {
       await exited;
 
       const hostedInput = {
-        options,
-        terminalPresentation: hooks.resolveTerminalPresentation!({
-          ...presentationInput, runtimeSelection: { codexBackendMode: 'appServer' }, processEnv: {},
+        options: { ...options, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, environmentVariables: {
+          [HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]: 'test-endpoint-recovery',
+        } },
+        terminalPresentation: (await requireCatalogEntry('claude').getDaemonSpawnHooks!()).resolveTerminalPresentation!({
+          host: 'herdr', accountSettings: null, runtimeSelection: {}, processEnv: {
+            [HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]: 'test-endpoint-recovery',
+          },
         }),
       };
       const hosted = buildTrackedSpawnOptions(hostedInput);

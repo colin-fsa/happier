@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@happier-dev/protocol';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -36,6 +36,7 @@ async function createHarness() {
           | typeof SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED
           | typeof SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST;
         errorMessage: string;
+        errorDetail?: SpawnSessionErrorDetail;
         spawnAttemptCustody?: SpawnAttemptCustodyTestResult;
       }>
     | Readonly<{
@@ -377,6 +378,9 @@ async function createHarness() {
 type Harness = Awaited<ReturnType<typeof createHarness>>;
 let sharedHarness: Harness | null = null;
 
+// Resolve the existing boundary harness outside the interaction timeout.
+sharedHarness = await createHarness();
+
 async function setupHarness(): Promise<Harness> {
   sharedHarness ??= await createHarness();
   sharedHarness.reset();
@@ -399,14 +403,22 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows a daemon-unavailable alert with a Retry action', async () => {
+  it.each(['daemon', 'terminal_host'] as const)('preserves the draft with actionable %s startup recovery', async (failure) => {
     const {
       useCreateNewSession,
       modalAlertSpy,
       captureSessionDraftLaunchCurrentnessSpy,
       clearSessionDraftCurrentnessSpy,
       clearSessionDraftLaunchCurrentnessSpy,
+      machineSpawnNewSessionSpy,
     } = await setupHarness();
+
+    if (failure === 'terminal_host') {
+      machineSpawnNewSessionSpy.mockResolvedValue({
+        type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED, errorMessage: 'Host launch failed',
+        errorDetail: { kind: 'terminal_host_unavailable', host: 'herdr', reason: 'installation_unavailable' },
+      });
+    }
 
     const setIsCreating = vi.fn();
     const persistDraftForLaunch = vi.fn();
@@ -463,6 +475,15 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
 
     expect(modalAlertSpy).toHaveBeenCalled();
     const args = modalAlertSpy.mock.calls[0] ?? [];
+    if (failure === 'terminal_host') {
+      expect(args[0]).toBe('newSession.terminalHostUnavailableTitle');
+      expect(args[1]).toBe('newSession.terminalHostUnavailableBody');
+      expect(persistDraftForLaunch).toHaveBeenCalledTimes(1);
+      expect(clearSessionDraftCurrentnessSpy).not.toHaveBeenCalled();
+      expect(clearSessionDraftLaunchCurrentnessSpy).not.toHaveBeenCalled();
+      expect(setIsCreating).toHaveBeenLastCalledWith(false);
+      return;
+    }
     expect(args[0]).toBe('newSession.daemonRpcUnavailableTitle');
     expect(String(args[1] ?? '')).toContain('newSession.daemonRpcUnavailableBody');
     expect(String(args[1] ?? '')).toContain('status.lastSeen:time.minutesAgo:5');

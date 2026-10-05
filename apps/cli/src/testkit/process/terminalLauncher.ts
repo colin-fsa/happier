@@ -6,14 +6,14 @@ import type { TerminalLaunchSpec } from '@/terminal/runtime/terminalLaunchSpec';
 
 /** OS child/IPC boundary fixture; the owning runtime and launch-spec producer remain real. */
 export function terminalLauncherBoundary<T extends object>(child: T): T {
+  // Real ChildProcess.once delegates to .on; preserve its EventEmitter so exit/error
+  // listeners and the IPC receipt share the same boundary rather than separate buses.
   const messages = child instanceof EventEmitter ? child : new EventEmitter();
   Object.assign(child, {
-    ...(child instanceof EventEmitter ? {} : {
-      on: (event: string, handler: (message: unknown) => void) => {
-        messages.on(event, handler);
-        return child;
-      },
-    }),
+    ...(!(child instanceof EventEmitter) ? { on: (event: string, handler: (message: unknown) => void) => {
+      messages.on(event, handler);
+      return child;
+    } } : {}),
     send: (message: { signal?: NodeJS.Signals }, callback: (error: Error | null) => void) => {
       if ('kill' in child && typeof child.kill === 'function') child.kill(message.signal);
       callback(null);

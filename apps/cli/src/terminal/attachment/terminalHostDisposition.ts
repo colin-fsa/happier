@@ -1,6 +1,7 @@
 import type { TerminalAttachmentId, TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import { evaluateTerminalHostLivenessForRecovery } from '@/integrations/terminalHost/livenessPolicy';
 import { logger } from '@/ui/logger';
+import { retireTerminalClientProcess } from '@/terminal/runtime/terminalClientCustody';
 import {
   readTerminalAttachmentInfo,
   readTerminalAttachmentState,
@@ -127,6 +128,14 @@ export async function executeTerminalHostDisposition(input: Readonly<{
     if (input.intent.kind === 'retire_confirmed_dead_attachment' || input.intent.kind === 'release_borrowed_host') {
       if (input.intent.kind === 'release_borrowed_host' && current.version !== 3) {
         return { status: 'parked', reason: 'attachment_mismatch' };
+      }
+      if (current.version === 3 && current.nativeClientProcess) {
+        try {
+          await retireTerminalClientProcess(current.nativeClientProcess);
+        } catch {
+          logger.infoFile('[TERMINAL HOST] Borrowed native client cleanup incomplete; retaining exact custody');
+          return { status: 'parked', reason: 'destroy_failed' };
+        }
       }
       try {
         await input.beforeDescriptorRetirement?.({

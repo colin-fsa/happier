@@ -9,6 +9,7 @@ type CreateCodexLocalControlSupportResolverParams = Readonly<{
   experimentalCodexAcpEnabled: boolean | (() => boolean);
   localControlBackend?: CodexLocalControlBackend | null | (() => CodexLocalControlBackend | null);
   hasTtyForLocal?: boolean;
+  hasHostedTerminal?: boolean;
 }>;
 
 export function createCodexLocalControlSupportResolver(
@@ -30,6 +31,7 @@ export function createCodexLocalControlSupportResolver(
       experimentalCodexAcpEnabled: resolveBoolean(params.experimentalCodexAcpEnabled),
       localControlBackend: resolveBackend(params.localControlBackend),
       hasTtyForLocal: params.hasTtyForLocal,
+      hasHostedTerminal: params.hasHostedTerminal,
     });
     return decision;
   };

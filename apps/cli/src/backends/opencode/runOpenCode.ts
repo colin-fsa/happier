@@ -24,6 +24,7 @@ import { createOpenCodeServerRuntime } from './server/runtime';
 import { createOpenCodeSharedLocalControl } from './localControl/createOpenCodeSharedLocalControl';
 import { resolveOpenCodeLocalControlSupport } from './localControl/resolveOpenCodeLocalControlSupport';
 import { resolveOpenCodeBackendModeFromEnv } from './backendMode';
+import { hasHostedAttachedTerminalPresentation } from '@/agent/localControl/createAttachedTerminalSupervisor';
 
 export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
@@ -48,8 +49,10 @@ export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
     support: resolveOpenCodeLocalControlSupport({
       backendMode,
       hasTTY: process.stdout.isTTY && process.stdin.isTTY,
+      hasHostedTerminal: hasHostedAttachedTerminalPresentation(opts.terminalRuntime),
     }),
     startingMode: opts.startingMode ?? (opts.startedBy === 'terminal' && backendMode === 'server' ? 'local' : 'remote'),
+    terminalRuntime: opts.terminalRuntime,
     getSession: () => currentSession,
     getSessionId: () => currentRuntime?.getSessionId() ?? null,
     prepareAttachment: async () => prepareLocalAttachment ? await prepareLocalAttachment() : false,

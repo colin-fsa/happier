@@ -2,10 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import tweetnacl from 'tweetnacl';
 import { createServer, type Server } from 'node:http';
+import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
-import { access, mkdtemp, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   accountSettingsParse,
@@ -23,6 +24,48 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { CommandHandler } from '@/cli/commandRegistry';
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
 import { waitForCondition } from '@/testkit/async/waitFor';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { acquireSessionRunnerLock, sessionRunnerLockPathForSessionId } from '@/daemon/sessionRunnerLock';
+import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+
+const nativeBoundary = vi.hoisted(() => ({ supportedHerdr: false, foregroundSpawn: vi.fn(), interceptForeground: false }));
+// Only the installed executable's --version response is pinned. Files, sockets,
+// runner/process custody, and every other OS command remain real.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const { promisify } = await import('node:util');
+  return {
+    ...actual,
+    spawn: ((...args: Parameters<typeof actual.spawn>) => nativeBoundary.interceptForeground
+      ? nativeBoundary.foregroundSpawn(...args)
+      : actual.spawn(...args)) as typeof actual.spawn,
+    execFile: Object.assign(actual.execFile.bind(null), {
+      [Symbol.for('nodejs.util.promisify.custom')]: async (
+        file: string, args: readonly string[], options?: import('node:child_process').ExecFileOptions,
+      ) => nativeBoundary.supportedHerdr && args[0] === '--version'
+        ? { stdout: 'herdr 0.9.3', stderr: '' }
+        : await promisify(actual.execFile)(file, [...args], options ?? {}),
+    }),
+  };
+});
+// A stopped controller has no session RPC endpoint. Keep real RPC orchestration
+// underneath a promptly rejected relay transport rather than a test timeout.
+vi.mock('socket.io-client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('socket.io-client')>();
+  return { ...actual, io: (...args: Parameters<typeof actual.io>) => nativeBoundary.interceptForeground
+    ? createApiSessionSocketStub({
+      onConnect: socket => queueMicrotask(() => socket.trigger('connect')),
+      emit: (event, values) => {
+        if (event !== SOCKET_RPC_EVENTS.CALL) return;
+        const acknowledge = values[1];
+        if (typeof acknowledge === 'function') acknowledge({ ok: false, error: 'stopped controller has no RPC endpoint' });
+      },
+    })
+    : actual.io(...args) };
+});
 
 import { handleResumeCommand } from './resume';
 
@@ -85,6 +128,155 @@ describe('happier resume', () => {
       logSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+
+  it.each(['absent', 'live', 'foreign-pane', 'inactive-live', 'inactive-unknown'] as const)(
+    'uses real local runner custody for a restored Herdr resume with stale active metadata (%s)',
+    async (runner) => {
+      await withTempDir('happier-herdr-resume-', async (home) => {
+        const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SESSION_ATTACH_FILE', 'HERDR_BIN_PATH']);
+        env.patch({
+          HAPPIER_HOME_DIR: home, HAPPIER_SESSION_ATTACH_FILE: undefined,
+          HERDR_BIN_PATH: join(home, 'isolated-unavailable-herdr'),
+        });
+        reloadConfiguration();
+        nativeBoundary.supportedHerdr = true;
+        const sessionId = 'sid_restored_herdr';
+        const socketPath = join(home, 'unavailable-herdr.sock');
+        const credentials: Credentials = {
+          token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) },
+        };
+        const rawSession = createSessionRecordFixture({
+          id: sessionId, active: !runner.startsWith('inactive-'), encryptionMode: 'plain',
+          metadata: JSON.stringify(projectSessionMetadataForWire({
+            flavor: 'claude', claudeSessionId: 'same-native-claude-session',
+            machineId: 'machine-local', path: home,
+            terminal: { mode: 'herdr', herdr: {
+              sessionName: 'work', socketPath, paneId: 'managed', terminalId: 'old-terminal',
+            } },
+          })),
+        });
+        const lock = runner === 'live' || runner === 'inactive-live'
+          ? await acquireSessionRunnerLock({ sessionId, happyHomeDir: home })
+          : null;
+        if (lock) expect(lock.ok).toBe(true);
+        if (runner === 'inactive-unknown') {
+          const lockPath = sessionRunnerLockPathForSessionId({ sessionId, happyHomeDir: home });
+          if (!lockPath) throw new Error('Expected canonical runner lock path');
+          await mkdir(dirname(lockPath), { recursive: true });
+          await writeFile(lockPath, '{malformed', 'utf8');
+        }
+        // chdir is an OS boundary. Stop there, before any provider execution or model call.
+        const osFailure = Object.assign(new Error('isolated directory admission denied'), { code: 'EACCES' });
+        const chdirFn = vi.fn(() => { throw osFailure; });
+        try {
+          const result = handleResumeCommand([sessionId], {
+            terminalRuntime: {
+              mode: 'herdr', herdrSessionName: 'work', herdrSocketPath: socketPath,
+              herdrPaneId: runner === 'foreign-pane' ? 'foreign' : 'managed',
+              herdrTerminalId: 'restored-terminal',
+            },
+            readCredentialsFn: async () => credentials,
+            fetchSessionByIdFn: async () => rawSession,
+            readAccountSettingsFn: async () => accountSettingsParse({}),
+            chdirFn,
+            attachDeps: {
+              readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+              readTerminalAttachmentInfoFn: async () => null,
+            },
+          });
+          if (runner === 'absent') {
+            await expect(result).rejects.toBe(osFailure);
+            expect(chdirFn).toHaveBeenCalledWith(home);
+          } else {
+            await expect(result).rejects.not.toBe(osFailure);
+            expect(chdirFn).not.toHaveBeenCalled();
+          }
+          expect(await readdir(join(home, 'tmp', 'session-attach')).catch(() => [])).toEqual([]);
+        } finally {
+          nativeBoundary.supportedHerdr = false;
+          if (lock?.ok) await lock.release();
+          env.restore();
+          reloadConfiguration();
+        }
+      });
+    },
+  );
+
+  it.each([
+    { agent: 'claude', runner: 'absent' },
+    { agent: 'opencode', runner: 'absent' },
+    { agent: 'opencode', runner: 'live' },
+    { agent: 'opencode', runner: 'unknown' },
+    { agent: 'opencode', runner: 'stale-active' },
+  ] as const)('opens a recorded local Herdr restoration candidate without fresh provider dispatch ($agent/$runner)', async ({ agent, runner }) => {
+    await withTempDir('happier-herdr-cold-resume-', async (home) => {
+      await withHerdrApi(async (api) => {
+        api.panes.add('managed');
+        const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HERDR_BIN_PATH', 'HERDR_PANE_ID', 'HERDR_SOCKET_PATH']);
+        env.patch({ HAPPIER_HOME_DIR: home, HERDR_BIN_PATH: join(home, 'isolated-herdr'), HERDR_PANE_ID: undefined, HERDR_SOCKET_PATH: undefined });
+        reloadConfiguration();
+        nativeBoundary.supportedHerdr = true;
+        nativeBoundary.interceptForeground = true;
+        nativeBoundary.foregroundSpawn.mockReset();
+        nativeBoundary.foregroundSpawn.mockImplementation(() => {
+          const child = new EventEmitter();
+          queueMicrotask(() => child.emit('exit', 0));
+          return child;
+        });
+        const credentials: Credentials = { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(11) } };
+        const sessionId = 'sid_cold_generic_resume';
+        const rawSession = createSessionRecordFixture({
+          id: sessionId, active: runner === 'stale-active', encryptionMode: 'plain',
+          metadata: JSON.stringify(projectSessionMetadataForWire({
+            flavor: agent, machineId: 'machine-local', path: home,
+            ...(agent === 'claude' ? { claudeSessionId: 'same-native-session' } : {
+              opencodeSessionId: 'same-native-session', opencodeBackendMode: 'server',
+              opencodeServerBaseUrl: 'https://opencode.test/', opencodeServerBaseUrlExplicit: true,
+            }),
+            terminal: { mode: 'herdr', herdr: { sessionName: 'work', socketPath: api.socketPath, paneId: 'managed', terminalId: 'old-terminal' } },
+          })),
+        });
+        const lock = runner === 'live' ? await acquireSessionRunnerLock({ sessionId, happyHomeDir: home }) : null;
+        if (lock) expect(lock.ok).toBe(true);
+        if (runner === 'unknown') {
+          const lockPath = sessionRunnerLockPathForSessionId({ sessionId, happyHomeDir: home });
+          if (!lockPath) throw new Error('Expected canonical runner lock path');
+          await mkdir(dirname(lockPath), { recursive: true });
+          await writeFile(lockPath, '{malformed', 'utf8');
+        }
+        // A fresh-provider branch must fail at the real OS directory boundary,
+        // before any provider execution. The intended path uses the real socket.
+        const chdirFn = vi.fn(() => { throw new Error('unexpected fresh provider dispatch'); });
+        try {
+          const result = handleResumeCommand([sessionId], {
+            readCredentialsFn: async () => credentials,
+            fetchSessionByIdFn: async () => rawSession,
+            readAccountSettingsFn: async () => accountSettingsParse({}), chdirFn,
+            attachDeps: {
+              readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-local' } as Settings),
+              readTerminalAttachmentInfoFn: async () => null,
+            },
+          });
+          if (runner === 'live' || runner === 'unknown') {
+            await expect(result).rejects.toThrow('stopped controller has no RPC endpoint');
+            expect(nativeBoundary.foregroundSpawn).not.toHaveBeenCalled();
+            expect(chdirFn).not.toHaveBeenCalled();
+            return;
+          }
+          await result;
+          expect(chdirFn).not.toHaveBeenCalled();
+          expect(nativeBoundary.foregroundSpawn).toHaveBeenCalledWith(expect.any(String),
+            ['--session', 'work', 'terminal', 'attach', 'terminal_1'], expect.any(Object));
+          expect(api.requests.some(request => request.method === 'pane.close' || request.method === 'layout.apply')).toBe(false);
+        } finally {
+          if (lock?.ok) await lock.release();
+          nativeBoundary.supportedHerdr = false;
+          nativeBoundary.interceptForeground = false;
+          env.restore(); reloadConfiguration();
+        }
+      });
+    });
   });
 
   it('attaches an active Happier session through the existing terminal attach path without vendor-resuming it', async () => {

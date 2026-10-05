@@ -5,10 +5,14 @@ import { join } from 'node:path';
 
 import { logger } from '@/ui/logger';
 import { refreshRetainedClaudeHookPlugin } from '@/backends/claude/utils/generateHookSettings';
+import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { createDefaultTerminalHostRegistry } from '@/integrations/terminalHost/defaultRegistry';
+import { evaluateTerminalHostLivenessForRecovery } from '@/integrations/terminalHost/livenessPolicy';
 import {
   HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY,
   type AttachmentBoundClaudeEndpointState,
   parseAttachmentBoundClaudeEndpointState,
+  readClaudeEndpointDescriptor,
   writeClaudeEndpointDescriptor,
 } from './claudeEndpointArtifacts';
 
@@ -161,8 +165,19 @@ export async function resolveClaudeAdoptEndpointRecoveryForState(
 
 export async function resolveClaudeAdoptEndpointRecovery(options: Readonly<{
   permissionHookTimeoutSeconds?: number;
+  /** Explicit continuation, consumed only after this runner's Session lock admission. */
+  existingSession?: Readonly<{ happyHomeDir: string; sessionId: string }>;
 }> = {}): Promise<ClaudeAdoptEndpointRecovery | null> {
-  const state = parseClaudeEndpointStateFromEnv();
+  let state = parseClaudeEndpointStateFromEnv();
+  if (!hasClaudeEndpointRecoveryRequest() && options.existingSession) {
+    const attachment = await readTerminalAttachmentInfo(options.existingSession);
+    // A foreground shell is not transferable owned-host custody. A dead or
+    // unproven host still belongs to the existing terminal disposition owner.
+    if (attachment?.version !== 2) return null;
+    const adapter = (await createDefaultTerminalHostRegistry())[attachment.handle.kind];
+    if (!adapter || (await evaluateTerminalHostLivenessForRecovery(adapter, attachment.handle)).status !== 'alive') return null;
+    state = await readClaudeEndpointDescriptor({ ...options.existingSession, attachmentId: attachment.attachmentId });
+  }
   return state ? await resolveClaudeAdoptEndpointRecoveryForState(state, options) : null;
 }
 

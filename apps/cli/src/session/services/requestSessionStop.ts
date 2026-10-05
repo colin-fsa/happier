@@ -144,6 +144,9 @@ async function stopSessionOnOwningMachine(params: Readonly<{
       machineId: params.machineId,
       method: RPC_METHODS.STOP_SESSION,
       request: { sessionId: params.sessionId },
+      // Stop's graceful/forced exit and retirement phases can exceed the generic RPC
+      // cutoff. The relay retains its finite forwarding deadline and disconnect guard.
+      timeoutMs: null,
       authorization: {
         kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
         sessionId: params.sessionId,

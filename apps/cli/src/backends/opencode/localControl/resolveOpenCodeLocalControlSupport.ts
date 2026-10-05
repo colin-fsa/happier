@@ -5,11 +5,12 @@ export type OpenCodeLocalControlSupport =
 export function resolveOpenCodeLocalControlSupport(params: Readonly<{
   backendMode: 'server' | 'acp';
   hasTTY: boolean;
+  hasHostedTerminal?: boolean;
 }>): OpenCodeLocalControlSupport {
   if (params.backendMode !== 'server') {
     return { ok: false, reason: 'backend_mode_unsupported' };
   }
-  if (params.hasTTY !== true) {
+  if (params.hasTTY !== true && params.hasHostedTerminal !== true) {
     return { ok: false, reason: 'tty_unavailable' };
   }
   return { ok: true };

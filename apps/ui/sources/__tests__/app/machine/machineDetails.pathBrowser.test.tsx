@@ -175,6 +175,9 @@ vi.mock('@/sync/ops/sessionMachineTarget', async (importOriginal) => {
     };
 });
 
+// Module preparation belongs to collection, not the interaction's per-test budget.
+const { default: PreparedMachineDetailScreen } = await import('@/app/(app)/machine/[id]');
+
 describe('MachineDetailScreen path browser', () => {
     beforeEach(() => {
         mockState.openMachinePathBrowserModalMock.mockClear();
@@ -200,6 +203,17 @@ describe('MachineDetailScreen path browser', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const screen = await renderScreen(React.createElement(MachineDetailScreen));
         expect(screen.findAllByType(DropdownMenu).some((menu) => menu.props.selectedId === 'herdr')).toBe(true);
+    });
+
+    it('shows the effective account terminal host when no machine override exists', async () => {
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        mockState.settingsState = { ...settingsDefaults, sessionTerminalHost: 'herdr' };
+        const screen = await renderScreen(React.createElement(PreparedMachineDetailScreen));
+        const row = screen.findByTestId('machine-terminal-effective-host');
+        expect(row).not.toBeNull();
+        if (!row) throw new Error('Expected the inherited terminal-host summary');
+        expect(row.props.subtitle).toBe('Herdr');
+        expect(row.props.mode).toBe('info');
     });
 
     it('opens the shared path browser with the current absolute path preselected and writes the chosen folder relative to the machine home', async () => {

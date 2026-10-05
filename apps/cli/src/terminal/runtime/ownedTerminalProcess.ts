@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
@@ -16,7 +17,14 @@ type OwnedTerminalChild = Readonly<{
   send(message: unknown, callback: (error: Error | null) => void): boolean;
 }>;
 
+export type OwnedTerminalProcessIdentity = Readonly<{
+  pid: number;
+  processInstanceFingerprint: string;
+}>;
+
 export type OwnedTerminalProcess = Readonly<{
+  /** Captured only after the real native-spawn IPC acknowledgement. Unknown is not custody. */
+  launcherIdentity: OwnedTerminalProcessIdentity | null;
   whenExited: Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>;
   terminate: () => Promise<void>;
   signal: (signal: 'SIGINT' | 'SIGKILL') => Promise<void>;
@@ -88,21 +96,59 @@ export async function launchOwnedTerminalProcess(params: Readonly<{
   try {
     await startup;
   } catch (error) {
-    await params.spawn.cleanupUnreadArtifacts?.();
+    try {
+      await params.spawn.cleanupUnreadArtifacts?.();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Owned terminal startup failed with incomplete cleanup', { cause: error });
+    }
     throw error;
   }
 
   const terminateProcess = params.terminateProcess
     ?? (async (target: OwnedTerminalChild) => await killProcessTree(target));
   let termination: Promise<void> | null = null;
+  const processInstanceFingerprint = typeof child.pid === 'number'
+    ? readProcessInstanceFingerprintSync(child.pid) : null;
+  const launcherIdentity = typeof child.pid === 'number' && processInstanceFingerprint
+    ? { pid: child.pid, processInstanceFingerprint } : null;
   return {
+    launcherIdentity,
     whenExited,
     signal: (signal) => new Promise<void>((resolve, reject) => {
       child.send({ type: 'terminal-native-signal', signal }, (error) => error ? reject(error) : resolve());
     }),
     terminate: () => {
-      termination ??= terminateProcess(child);
+      if (!termination) {
+        const attempt = Promise.resolve().then(() => terminateProcess(child));
+        const guardedAttempt = attempt.catch((error) => {
+          if (termination === guardedAttempt) termination = null;
+          throw error;
+        });
+        termination = guardedAttempt;
+      }
       return termination;
     },
   };
+}
+
+/** One same-pane child lifetime, including an optional admitted external host association. */
+export async function runOwnedTerminalProcess(params: Parameters<typeof launchOwnedTerminalProcess>[0] & Readonly<{
+  onStarted?: (identity: OwnedTerminalProcessIdentity) => Promise<void>;
+  onExited?: (identity: OwnedTerminalProcessIdentity) => Promise<void>;
+}>): Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>> {
+  const child = await launchOwnedTerminalProcess(params);
+  let admitted = false;
+  try {
+    if (params.onStarted) {
+      if (!child.launcherIdentity) throw new Error('terminal_native_client_identity_unknown');
+      await params.onStarted(child.launcherIdentity);
+      admitted = true;
+    }
+    return await child.whenExited;
+  } catch (error) {
+    await child.terminate();
+    throw error;
+  } finally {
+    if (admitted && child.launcherIdentity) await params.onExited?.(child.launcherIdentity);
+  }
 }

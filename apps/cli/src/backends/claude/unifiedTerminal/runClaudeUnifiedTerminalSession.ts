@@ -1,5 +1,4 @@
-import { rmdir, unlink } from 'node:fs/promises';
-import { basename, dirname } from 'node:path';
+import { createUnreadTerminalArtifactsCleanup } from '@/terminal/runtime/terminalLaunchSpec';
 
 import type {
   ClaudeUnifiedTerminalHost,
@@ -138,7 +137,7 @@ import {
   isTerminalHostConfirmedDeadForRelaunch,
   type TerminalHostConfirmedDeadProbeResult,
 } from '@/integrations/terminalHost/livenessPolicy';
-import { TerminalHostStartupError } from '@/integrations/terminalHost/errors';
+import { TerminalHostCreationError, TerminalHostStartupError, resolveTerminalHostLaunchFailure } from '@/integrations/terminalHost/errors';
 import { createDefaultTerminalHostRegistry } from '@/integrations/terminalHost/defaultRegistry';
 import { resolveTerminalHost } from '@/integrations/terminalHost/resolveTerminalHost';
 import { isTmuxAvailable } from '@/integrations/tmux';
@@ -719,15 +718,11 @@ async function readExistingTerminalHostAttachment(params: Readonly<{
 
 async function removeUnreadLaunchSpec(spawn: ClaudeUnifiedTerminalSpawn): Promise<void> {
   if (spawn.cleanupUnreadArtifacts) {
-    await spawn.cleanupUnreadArtifacts().catch(() => undefined);
+    await spawn.cleanupUnreadArtifacts();
     return;
   }
   if (!spawn.launchSpecPath) return;
-  await unlink(spawn.launchSpecPath).catch(() => undefined);
-  const specDir = dirname(spawn.launchSpecPath);
-  if (basename(specDir).startsWith('happier-terminal-launch-')) {
-    await rmdir(specDir).catch(() => undefined);
-  }
+  await createUnreadTerminalArtifactsCleanup({ launchSpecPath: spawn.launchSpecPath })();
 }
 
 function isClaudePromptInputExit(event: ClaudeUnifiedSessionEndEvent): boolean {
@@ -1166,13 +1161,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
   let handle: TerminalHostHandle | null = null;
   let terminalHostLifecycle: 'owned' | 'borrowed' = 'owned';
   let currentTerminalProcess: Pick<OwnedTerminalProcess, 'whenExited' | 'terminate'> | null = null;
-  let currentTerminalProcessTermination: Promise<void> | null = null;
-  const terminateCurrentTerminalProcess = (): Promise<void> => {
-    if (currentTerminalProcessTermination) return currentTerminalProcessTermination;
-    if (!currentTerminalProcess) return Promise.resolve();
-    currentTerminalProcessTermination = currentTerminalProcess.terminate();
-    return currentTerminalProcessTermination;
-  };
+  // The process owner coalesces termination, retains success, and permits retry
+  // after failure. A second promise cache here would override that contract.
+  const terminateCurrentTerminalProcess = (): Promise<void> => currentTerminalProcess?.terminate() ?? Promise.resolve();
   let controller: ClaudeUnifiedController | null = null;
   let runtimeControlBridge: ClaudeUnifiedRuntimeControlBridge | null = null;
   let dialogChoiceScreenProbe: ClaudeUnifiedDialogChoiceScreenProbe | null = null;
@@ -1333,6 +1324,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         ensureHookSubscription();
         explicitResumeIdentityRequired = expectedProviderResumeSessionId !== null;
         await opts.onProviderLaunchStarting?.();
+        spawnArtifactsHandedOff = true;
         handle = await hostResolution.adapter.createOrAttachHost({
           sessionName: hostResolution.adapter.kind === 'herdr' ? sessionName : fallbackSessionName,
           ...(hostResolution.adapter.kind === 'herdr' ? { label: fallbackSessionName } : {}),
@@ -1341,7 +1333,6 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           spawnEnv: fallbackSpawn.spawnEnv,
           isolatedEnv: true,
         });
-        spawnArtifactsHandedOff = true;
       }
     } else {
       if (existingTerminalHost) {
@@ -1364,15 +1355,28 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         } as const;
         explicitResumeIdentityRequired = expectedProviderResumeSessionId !== null;
         await opts.onProviderLaunchStarting?.();
-        handle = await hostResolution.adapter.createOrAttachHost(createOptions);
         spawnArtifactsHandedOff = true;
+        handle = await hostResolution.adapter.createOrAttachHost(createOptions);
       }
     }
   } catch (error) {
+    const launchFailure = resolveTerminalHostLaunchFailure(error);
+    if (launchFailure && launchFailure.launchDisposition !== 'unconfirmed') {
+      spawnArtifactsHandedOff = false;
+    }
     removeProcessSignalCleanup?.();
     removeProcessSignalCleanup = null;
     disposeReplayableHookSubscription(hookSubscription);
-    if (spawn && !spawnArtifactsHandedOff) await removeUnreadLaunchSpec(spawn);
+    if (spawn && !spawnArtifactsHandedOff) {
+      try {
+        await removeUnreadLaunchSpec(spawn);
+      } catch (cleanupError) {
+        if (launchFailure) {
+          throw new TerminalHostCreationError([error, cleanupError], { launchDisposition: launchFailure.launchDisposition, cleanupIncomplete: true }, error instanceof Error ? error.message : 'Terminal host startup failed');
+        }
+        throw new AggregateError([error, cleanupError], 'Claude terminal startup failed with incomplete cleanup', { cause: error });
+      }
+    }
     throw error;
   }
   if (processSignalAbortController.signal.aborted) {
@@ -1393,7 +1397,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     const sessionId = typeof opts.happySessionId === 'string' ? opts.happySessionId.trim() : '';
     if (!sessionId) return Promise.resolve();
     const attachmentId = activeHandle.attachmentId;
-    borrowedHostRelease = (async () => {
+    const attempt = (async () => {
       // Wrapper/Stop release requires positive owned-child termination. A provider-exit
       // release already has physical exit evidence and must not signal a departed PID.
       if (reason !== 'provider_exit') await terminateCurrentTerminalProcess();
@@ -1421,7 +1425,12 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         throw new Error(`Claude Unified borrowed terminal release did not complete: ${failure}`);
       }
     })();
-    return borrowedHostRelease;
+    const guardedAttempt = attempt.catch((error) => {
+      if (borrowedHostRelease === guardedAttempt) borrowedHostRelease = null;
+      throw error;
+    });
+    borrowedHostRelease = guardedAttempt;
+    return guardedAttempt;
   };
   const preserveActiveTerminalHost = async (
     reason: 'planned_runner_refresh' | 'wrapper_exit' | 'controller_failure' | 'auth_switch_handoff',

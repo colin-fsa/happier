@@ -397,6 +397,16 @@ In current development builds, `happier herdr` opens Herdr from the terminal. Ha
 
 In current development builds, Herdr's saved Happier resume command retains the original local Happier home and relay profile. It also uses the session's release-channel command (`happier`, `hprev`, or `hdev`), rather than always invoking `happier`.
 
+In current development builds, `happier resume <session-id>` can reopen a preserved local Herdr pane after its controller has stopped, including after a Herdr restart. Opening the pane starts its saved resume command; it is not confirmation that the Happier session has reconnected. Live or unverified controllers keep the existing admission checks. A session resumed in a foreground shell is borrowed: stopping Happier preserves that pane rather than assuming its former ownership.
+
+If a shared controller survives the Herdr restart, attaching inside its restored
+pane can rebind a verified native client to that same conversation with managed
+status. **Detach terminal** then closes only the native client and preserves the
+restored shell and pane. The saved release-channel command must be available in
+the shell; otherwise invoke that CLI's `attach <session-id>` there yourself.
+
+Cold restoration verifies the original Herdr namespace before starting it; it never substitutes another server with the same name. If a stopped server uses a custom socket whose saved namespace cannot be located, reopen that original server and retry. Attachment to an already-running custom socket remains supported.
+
 ## Continue a session
 
 `happier resume` attaches to a running, attachable session or resumes a stopped, vendor-resumable session.

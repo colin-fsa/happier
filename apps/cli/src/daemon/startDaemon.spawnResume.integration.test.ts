@@ -3,7 +3,7 @@ import { access, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs
 import { createServer } from 'node:net';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY } from './platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
@@ -30,6 +30,9 @@ import { accountSettingsParse, isConnectedServiceUxDiagnosticSpawnErrorDetail } 
 import { UsageLimitRecoveryScheduler } from './connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { RuntimeAuthRecoveryScheduler } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
 import { TemporaryThrottleRecoveryScheduler } from './connectedServices/temporaryThrottle/TemporaryThrottleRecoveryScheduler';
+import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { parseAndStripTerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import type { StopSessionResult } from './sessions/stopSessionContract';
 import type { TerminalHostAdapter } from '@/integrations/terminalHost/_types';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -841,7 +844,8 @@ vi.mock('@/backends/claude/endpointRecovery/claudeEndpointArtifacts', async (imp
   };
 });
 
-vi.mock('@/integrations/terminalHost/defaultRegistry', () => ({
+vi.mock('@/integrations/terminalHost/defaultRegistry', async importOriginal => ({
+  ...await importOriginal<typeof import('@/integrations/terminalHost/defaultRegistry')>(),
   createDefaultTerminalHostRegistry: vi.fn(async () => ({
     zellij: {
       kind: 'zellij' as const,
@@ -2223,6 +2227,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
   it.each([
     'wake', 'wake_rpc_failed', 'resume_after_stop', 'respawn_with_nonce', 'early_webhook', 'marker_write_failed', 'early_webhook_marker_failed',
+    'tmux_creation_unconfirmed', 'tmux_creation_not_started',
+    'herdr_creation_unconfirmed', 'herdr_creation_stopped',
     'binding_write_failed', 'windows_binding_write_failed', 'binding_exit_overlap', 'committed_binding_exit_overlap', 'heartbeat_binding_exit_overlap', 'tmux_binding_exit_overlap',
     'early_regular_exit', 'early_regular_report_exit', 'exit_before_first_report', 'wrapper_promotion',
     'ready_nonce_replay', 'unready_nonce_replay', 'unbound_nonce_replay', 'restored_plain_nonce_replay',
@@ -2231,6 +2237,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     'late_retiring_nonce_replay', 'late_owner_nonce_replay', 'missing_id_nonce_replay', 'legacy_windows_nonce_replay', 'wrong_windows_nonce_replay',
     'console_nonce_replay', 'tmux_nonce_replay', 'zellij_nonce_replay', 'pty_console_missing_id_nonce_replay',
   ] as const)('completes an accepted runner through real owners (%s)', async (contract) => {
+    const runContract = async (api?: Parameters<Parameters<typeof withHerdrApi>[0]>[0]) => {
     const { configuration } = await import('@/configuration');
     const originalHome = configuration.happyHomeDir;
     const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-hosted-completion-'));
@@ -2238,9 +2245,13 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const previousNonceTtl = process.env.HAPPIER_DAEMON_SPAWN_ACCEPTED_NONCE_TTL_MS;
     const previousExitPoll = process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS;
     const previousHeartbeatInterval = process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL;
-    const isTmux = contract === 'tmux_binding_exit_overlap';
+    const previousTmuxInlineLimit = process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
+    const previousHerdrBinary = process.env.HERDR_BIN_PATH;
+    const isTmuxCreation = contract === 'tmux_creation_unconfirmed' || contract === 'tmux_creation_not_started';
+    const isHerdrCreation = contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped';
+    const isTmux = contract === 'tmux_binding_exit_overlap' || isTmuxCreation;
     const isWindows = contract === 'windows_binding_write_failed';
-    const isHeartbeatExit = contract === 'heartbeat_binding_exit_overlap' || isTmux;
+    const isHeartbeatExit = contract === 'heartbeat_binding_exit_overlap' || contract === 'tmux_binding_exit_overlap';
     const isCommittedBindingExit = contract === 'committed_binding_exit_overlap';
     const isBindingExit = contract === 'binding_exit_overlap' || isCommittedBindingExit || isHeartbeatExit;
     const isRestoredPlain = contract === 'restored_plain_nonce_replay';
@@ -2305,6 +2316,36 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         if (previous) target.mockImplementation(previous);
       });
     };
+    if (isHerdrCreation || isTmuxCreation) {
+      setActiveAccountSettingsSnapshot({
+        source: 'network', settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
+        settings: accountSettingsParse({ claudeUnifiedTerminalEnabled: false }),
+      });
+      vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
+        id: 'sess_plain', encryptionMode: 'plain', dataEncryptionKey: null,
+        metadata: JSON.stringify({ flavor: 'claude', claudeSessionId: 'vendor-claude-1', path: '/tmp' }),
+      }));
+    }
+    if (isHerdrCreation && api) {
+      // The shim substitutes only the external native executable; registry, version
+      // admission, socket protocol, and creation/cleanup decisions remain real.
+      process.env.HERDR_BIN_PATH = await writeExecutableShim({
+        dir: fixtureHome, fileName: 'herdr-inventory',
+        contents: `#!${process.execPath}\nif (process.argv.slice(2).join(' ') === '--version') console.log('herdr 0.9.2');\nelse if (process.argv.slice(2).join(' ') === 'session list --json') console.log(${JSON.stringify(JSON.stringify({ sessions: [{ name: 'default', socket_path: api.socketPath, running: true }] }))});\nelse process.exit(1);\n`,
+      });
+      const binaries = await import('@/integrations/herdr/runtimeBinary');
+      const actualBinaries = await vi.importActual<typeof import('@/integrations/herdr/runtimeBinary')>('@/integrations/herdr/runtimeBinary');
+      delegateToActual(vi.mocked(binaries.resolveHerdrRuntimeBinary), actualBinaries.resolveHerdrRuntimeBinary);
+      api.faults.set('pane.get', 'error');
+      if (contract === 'herdr_creation_unconfirmed') api.faults.set('pane.close', 'error');
+      const clients = await import('@/integrations/herdr/client');
+      const actualClients = await vi.importActual<typeof import('@/integrations/herdr/client')>('@/integrations/herdr/client');
+      // Only the external socket address changes; inventory parsing and creation/cleanup stay real.
+      delegateToActual(vi.mocked(clients.createHerdrClient), (params) => actualClients.createHerdrClient({ ...params, socketPath: api.socketPath }));
+      const hosts = await import('@/integrations/terminalHost/defaultRegistry');
+      const actualHosts = await vi.importActual<typeof import('@/integrations/terminalHost/defaultRegistry')>('@/integrations/terminalHost/defaultRegistry');
+      delegateToActual(vi.mocked(hosts.createDefaultTerminalHostRegistry), () => actualHosts.createDefaultTerminalHostRegistry({ zellijBinary: null }));
+    }
     delegateToActual(vi.mocked(catalog.requireCatalogEntry), actualCatalog.requireCatalogEntry);
     if (isWindows) {
       Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'win32' });
@@ -2339,7 +2380,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       return timer;
     }) as typeof setInterval);
     const availabilityTimers: ReturnType<typeof setTimeout>[] = [];
+    let tmuxLaunchHandoffPath: string | undefined;
     if (isTmux) {
+      if (isTmuxCreation) process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS = '1';
       const originalSetTimeout = globalThis.setTimeout;
       vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...args: Parameters<typeof setTimeout>) => {
         const timer = originalSetTimeout(...args);
@@ -2359,8 +2402,21 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         const stderr = new EventEmitter();
         Object.assign(child, { stdout, stderr });
         queueMicrotask(() => {
-          stdout.emit('data', args.includes('new-window') ? '12345\t@1\n' : 'happier-fixture\n');
-          child.emit('close', 0);
+          if (args.includes('new-window') && isTmuxCreation) {
+            tmuxLaunchHandoffPath = /'([^']*happier-tmux-spawn-[^']*\/spawn\.sh)'/.exec(args[args.length - 1] ?? '')?.[1];
+            if (contract === 'tmux_creation_not_started') {
+              stderr.emit('data', 'create window failed: index 1 in use.');
+              child.emit('close', 1);
+            } else {
+              // The tmux server has accepted creation; the client reply cannot
+              // prove the immutable window identity. It is not a failed spawn.
+              stdout.emit('data', '12345\tmalformed-window-id\n');
+              child.emit('close', 0);
+            }
+          } else {
+            stdout.emit('data', args.includes('new-window') ? '12345\t@1\n' : 'happier-fixture\n');
+            child.emit('close', 0);
+          }
         });
         return child;
       }) as unknown as typeof childProcess.spawn);
@@ -2409,7 +2465,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const bindingReleased = new Promise<void>((resolve) => { releaseBinding = resolve; });
     const regularChildEvents = new EventEmitter();
     let regularAttachFilePath: string | undefined;
-    if (isEarlyRegularExit) {
+    if (isEarlyRegularExit || isHerdrCreation) {
       const exits = await import('./sessions/onChildExited');
       delegateToActual(vi.mocked(exits.createOnChildExited), actualChildExitOwner.createOnChildExited);
       const attachFiles = await import('./sessionAttachFile');
@@ -2419,7 +2475,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         regularAttachFilePath = attachment.filePath;
         return attachment;
       });
-      spawnHappyCLI.mockImplementationOnce(() => ({
+      if (isEarlyRegularExit) spawnHappyCLI.mockImplementationOnce(() => ({
         pid: 12345, stdout: null, stderr: null, unref: vi.fn(),
         on: vi.fn((event: string, listener: (...args: unknown[]) => void) => regularChildEvents.on(event, listener)),
       }));
@@ -2513,8 +2569,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }
       guardedRpc.mockClear();
       const accepting = spawnSession({
-        directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        existingSessionId: 'sess_plain', codexBackendMode: 'appServer',
+        directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: isHerdrCreation || isTmuxCreation ? 'claude' : 'codex' },
+        existingSessionId: 'sess_plain', ...(!isHerdrCreation && !isTmuxCreation ? { codexBackendMode: 'appServer' as const } : {}),
         terminal: isTmux ? { mode: 'tmux', tmux: { sessionName: 'happier-fixture' } } : isEarlyRegularExit || isRestoredPlain || isWindows ? { mode: 'plain' } : { mode: 'herdr', herdr: { sessionName: 'default' } },
         ...(isWindows ? { windowsRemoteSessionLaunchMode: 'console' as const } : {}),
         token: 'token-daemon', ...(contract !== 'resume_after_stop' ? { spawnNonce: `hosted-completion-${contract}` } : {}),
@@ -2557,6 +2613,54 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         releaseMarker();
       }
       const accepted = await accepting;
+      if (isHerdrCreation) {
+        expect(api?.requests.map((request) => request.method)).toContain('layout.apply');
+        expect(accepted).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED });
+        expect(spawnHappyCLI).not.toHaveBeenCalled();
+        expect(regularAttachFilePath).toBeDefined();
+        if (contract === 'herdr_creation_unconfirmed') {
+          await expect(access(regularAttachFilePath!)).resolves.toBeUndefined();
+          expect(api?.panes.has('managed')).toBe(true);
+          // Inspect the real private handoff to the actual runner parser. This
+          // proves daemon admission preserves the chosen endpoint across child setup.
+          const layout = api?.requests.find(request => request.method === 'layout.apply');
+          const root = layout?.params.root;
+          if (!root || typeof root !== 'object' || !('command' in root)
+            || !Array.isArray(root.command) || typeof root.command[2] !== 'string') {
+            throw new Error('Missing real hosted runner handoff');
+          }
+          const spec: unknown = JSON.parse(await readFile(root.command[2], 'utf8'));
+          if (!spec || typeof spec !== 'object' || !('args' in spec)
+            || !Array.isArray(spec.args) || !spec.args.every(arg => typeof arg === 'string')) {
+            throw new Error('Invalid real hosted runner handoff');
+          }
+          expect(parseAndStripTerminalRuntimeFlags(spec.args).terminal).toMatchObject({
+            mode: 'herdr', requested: 'herdr', herdrSessionName: 'default', herdrSocketPath: api?.socketPath,
+          });
+        } else {
+          await expect(access(regularAttachFilePath!)).rejects.toMatchObject({ code: 'ENOENT' });
+          expect(api?.panes.has('managed')).toBe(false);
+        }
+        return;
+      }
+      if (isTmuxCreation) {
+        if (contract === 'tmux_creation_unconfirmed') {
+          expect(accepted).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED });
+          expect(spawnHappyCLI).not.toHaveBeenCalled();
+          expect(tracked?.has(12345)).toBe(false);
+          expect(awaiters?.size).toBe(0);
+          expect(tmuxLaunchHandoffPath).toBeDefined();
+          await expect(access(tmuxLaunchHandoffPath!)).resolves.toBeUndefined();
+        } else {
+          expect(accepted).toMatchObject({ type: 'success', sessionId: 'sess_plain' });
+          expect(spawnHappyCLI).toHaveBeenCalledTimes(1);
+          await report!('sess_plain', metadata);
+          expect(tmuxLaunchHandoffPath).toBeDefined();
+          await expect(access(tmuxLaunchHandoffPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+        }
+        expect(await actualAttachments.readTerminalAttachmentInfo({ happyHomeDir: fixtureHome, sessionId: 'sess_plain' })).toBeNull();
+        return;
+      }
       if (isWrapperPromotion) {
         expect(accepted).toMatchObject({ type: 'success', sessionId: 'sess_plain' });
         await report!('sess_plain', { ...metadata, hostPid: 23456 });
@@ -2845,6 +2949,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         }
       }
     } finally {
+      if (previousHerdrBinary === undefined) delete process.env.HERDR_BIN_PATH;
+      else process.env.HERDR_BIN_PATH = previousHerdrBinary;
       replayClock?.mockRestore();
       releaseMarker();
       releaseBinding();
@@ -2870,6 +2976,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       if (run) { harness.requestShutdown('happier-cli'); await run; }
       for (const timer of exitPolls) clearInterval(timer);
       for (const timer of availabilityTimers) clearTimeout(timer);
+      if (tmuxLaunchHandoffPath) await rm(dirname(tmuxLaunchHandoffPath), { recursive: true, force: true });
+      if (previousTmuxInlineLimit === undefined) delete process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS;
+      else process.env.HAPPIER_CLI_TMUX_INLINE_SPAWN_MAX_CHARS = previousTmuxInlineLimit;
       for (const restore of restoreDelegates) restore();
       Object.defineProperty(configuration, 'happyHomeDir', { value: originalHome });
       if (previousRefresh === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
@@ -2882,6 +2991,56 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       else process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = previousHeartbeatInterval;
       delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS;
       delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS;
+      await rm(fixtureHome, { recursive: true, force: true });
+    }
+    };
+    // Native executable shebang substitution is POSIX-only; socket-owner coverage
+    // remains platform-independent in the existing Herdr client tests.
+    if ((contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped') && process.platform === 'win32') return;
+    if (contract === 'herdr_creation_unconfirmed' || contract === 'herdr_creation_stopped') await withHerdrApi(runContract);
+    else await runContract();
+  });
+
+  it('returns typed host setup recovery when the actual Herdr executable is absent', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const previousRefresh = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+    const previousHerdr = process.env.HERDR_BIN_PATH;
+    const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-host-unavailable-'));
+    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
+    process.env.HERDR_BIN_PATH = join(fixtureHome, 'absent-herdr');
+    let run: Promise<void> | null = null;
+    const hosts = await import('@/integrations/terminalHost/defaultRegistry');
+    const previousInventory = vi.mocked(hosts.createDefaultTerminalHostRegistry).getMockImplementation();
+    const runtime = await import('@/integrations/herdr/runtimeBinary');
+    const previousRuntime = vi.mocked(runtime.resolveHerdrRuntimeBinary).getMockImplementation();
+    try {
+      // Keep registry/version admission real; the missing executable is the OS boundary.
+      const actualRuntime = await vi.importActual<typeof import('@/integrations/herdr/runtimeBinary')>('@/integrations/herdr/runtimeBinary');
+      vi.mocked(runtime.resolveHerdrRuntimeBinary).mockImplementation(actualRuntime.resolveHerdrRuntimeBinary);
+      const actual = await vi.importActual<typeof import('@/integrations/terminalHost/defaultRegistry')>('@/integrations/terminalHost/defaultRegistry');
+      vi.mocked(hosts.createDefaultTerminalHostRegistry).mockImplementation(() => actual.createDefaultTerminalHostRegistry({ zellijBinary: null }));
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      const spawnSession = await waitForSpawnSessionRegistration();
+      const result = await spawnSession({
+        directory: fixtureHome, backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        terminal: { mode: 'herdr', herdr: { sessionName: 'default' } }, token: 't',
+      });
+      expect(result).toMatchObject({ errorMessage: expect.stringContaining('hosting requires a supported') });
+      expect(result).toMatchObject({
+        type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorDetail: { kind: 'terminal_host_unavailable', host: 'herdr', reason: 'installation_unavailable' },
+      });
+      expect(herdrSpawnCapture.createPane).not.toHaveBeenCalled();
+    } finally {
+      if (run) { harness.requestShutdown('happier-cli'); await run; }
+      if (previousInventory) vi.mocked(hosts.createDefaultTerminalHostRegistry).mockImplementation(previousInventory);
+      if (previousRuntime) vi.mocked(runtime.resolveHerdrRuntimeBinary).mockImplementation(previousRuntime);
+      if (previousRefresh === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
+      else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = previousRefresh;
+      if (previousHerdr === undefined) delete process.env.HERDR_BIN_PATH;
+      else process.env.HERDR_BIN_PATH = previousHerdr;
+      exitSpy.mockRestore();
       await rm(fixtureHome, { recursive: true, force: true });
     }
   });
@@ -4257,6 +4416,10 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
     let run: Promise<void> | null = null;
+    const catalog = await import('@/backends/catalog');
+    const actualCatalog = await vi.importActual<typeof import('@/backends/catalog')>('@/backends/catalog');
+    const previousCatalog = vi.mocked(catalog.requireCatalogEntry).getMockImplementation();
+    vi.mocked(catalog.requireCatalogEntry).mockImplementation(actualCatalog.requireCatalogEntry);
 
     try {
       harness.resetControlRefs();
@@ -4267,7 +4430,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           pid: number;
           trackedSession: unknown;
           exit: { reason: string; code: number | null; signal: string | null };
-        }>) => boolean),
+        }>) => boolean | Promise<boolean>),
         onFinalTrackedSessionExitStaged: null as null | ((input: Readonly<{
           pid: number;
           trackedSession: any;
@@ -4380,20 +4543,38 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       await prepareStopSession(missingResume);
 
       const exit = { reason: 'signal', code: null, signal: 'SIGTERM' };
-      expect(shouldPreserveSessionMarkerOnExit({
+      expect(await shouldPreserveSessionMarkerOnExit({
         pid: eligible.pid,
         trackedSession: eligible as any,
         exit,
       })).toBe(false);
-      expect(shouldPreserveSessionMarkerOnExit({
+      expect(await shouldPreserveSessionMarkerOnExit({
         pid: terminalOwned.pid,
         trackedSession: terminalOwned as any,
         exit,
       })).toBe(true);
-      expect(shouldPreserveSessionMarkerOnExit({
+      expect(await shouldPreserveSessionMarkerOnExit({
         pid: missingResume.pid,
         trackedSession: missingResume as any,
         exit,
+      })).toBe(false);
+
+      // The native client was detached earlier; its historical webhook is not
+      // current custody and must not preserve a normally exited controller.
+      const optionalPresentation = {
+        ...terminalOwned,
+        pid: 7515,
+        happySessionId: 'sess-detached-opencode',
+        spawnOptions: {
+          directory: '/tmp/workspace-opencode',
+          backendTarget: { kind: 'builtInAgent' as const, agentId: 'opencode' as const },
+          terminal: { mode: 'zellij' as const },
+        },
+      };
+      expect(await shouldPreserveSessionMarkerOnExit({
+        pid: optionalPresentation.pid,
+        trackedSession: optionalPresentation,
+        exit: { reason: 'process-exited', code: 0, signal: null },
       })).toBe(false);
 
       await onFinalTrackedSessionExitStaged({
@@ -4435,7 +4616,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         publishedTerminalControlServiceabilityAttachmentId: borrowedAttachmentId,
         publishedTerminalControlServiceabilityAttachmentLifecycle: 'borrowed' as const,
       };
-      expect(shouldPreserveSessionMarkerOnExit({
+      expect(await shouldPreserveSessionMarkerOnExit({
         pid: terminalBorrowed.pid,
         trackedSession: terminalBorrowed,
         exit,
@@ -4523,6 +4704,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
       exitSpy.mockRestore();
+      vi.mocked(catalog.requireCatalogEntry).mockReset();
+      if (previousCatalog) vi.mocked(catalog.requireCatalogEntry).mockImplementation(previousCatalog);
     }
   });
 

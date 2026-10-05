@@ -36,15 +36,17 @@ beforeEach(() => {
 });
 
 describe('opencodeDaemonSpawnHooks.validateSpawn', () => {
-  it('opens server-backed OpenCode locally in Herdr but leaves ACP headless', async () => {
+  it('presents only the native client while retaining headless OpenCode server controller custody', async () => {
     const { opencodeDaemonSpawnHooks } = await import('./spawnHooks');
-    const selection = { host: 'herdr' as const, accountSettings: null, runtimeSelection: {} };
-    expect(opencodeDaemonSpawnHooks.resolveTerminalPresentation?.({
-      ...selection, processEnv: {},
-    })).toMatchObject({ kind: 'runner', startingMode: 'local' });
-    expect(opencodeDaemonSpawnHooks.resolveTerminalPresentation?.({
-      ...selection, processEnv: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
-    })).toEqual({ kind: 'none' });
+    for (const host of ['tmux', 'zellij', 'herdr'] as const) {
+      const selection = { host, accountSettings: null, runtimeSelection: {} };
+      expect(opencodeDaemonSpawnHooks.resolveTerminalPresentation?.({
+        ...selection, processEnv: {},
+      })).toEqual({ kind: 'provider_attach', startingMode: 'local' });
+      expect(opencodeDaemonSpawnHooks.resolveTerminalPresentation?.({
+        ...selection, processEnv: { HAPPIER_OPENCODE_BACKEND_MODE: 'acp' },
+      })).toEqual({ kind: 'none' });
+    }
   });
 
   it('rejects spawn when HAPPIER_OPENCODE_PATH points to an invalid executable', async () => {

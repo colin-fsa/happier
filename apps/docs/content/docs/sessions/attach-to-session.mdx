@@ -109,6 +109,11 @@ In the app:
 
 New sessions with a real terminal surface start in the selected host. Server-backed Codex and OpenCode sessions open their local TUI against the same provider session. ACP and other headless runtimes stay headless. Machine details can override the account-wide choice.
 
+In development builds, a server-backed Codex or OpenCode terminal is an optional
+local client. Closing that managed terminal leaves the session available in Happier;
+it does not stop the shared controller or automatically reopen the terminal. Use
+**Detach terminal** to release it from the app, or **Stop** to end the session.
+
 ### Choose the default Windows mode
 
 For Windows machines:
@@ -163,6 +168,15 @@ and app writable. A separate native `happier attach` client is independent: clos
 it in its terminal, rather than expecting the app to close it.
 If the session has a terminal host, `happier attach` restores its managed TUI there
 before opening or focusing the host. An already-attached TUI is reused.
+
+After a Herdr restart, development builds can also admit a native client started
+inside the session's restored pane while its shared controller remains running.
+Happier verifies the same conversation and current client before showing managed
+attachment and **Detach terminal**. Detaching closes that client, not the restored
+shell or pane, and leaves the session writable in the app. A restored pane alone
+does not grant this managed association; failed admission leaves it unbound.
+The saved Happier resume command must be available in the restored shell. If it
+is not, invoke the matching Happier CLI's `attach <session-id>` there yourself.
 
 ## Supported providers
 

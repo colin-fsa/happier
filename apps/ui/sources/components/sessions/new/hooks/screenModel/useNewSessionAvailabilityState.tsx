@@ -29,7 +29,7 @@ import { isAgentSelectableForNewSession, resolveProfileAvailabilityForNewSession
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
-import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
+import { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -125,10 +125,10 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     }, [selectedMachineCapabilities]);
 
     const tmuxRequested = React.useMemo(() => {
-        return Boolean(resolveTerminalSpawnOptions({
+        return resolveTerminalHost({
             settings: params.settings,
             machineId: params.selectedMachineId,
-        }));
+        }) === 'tmux';
     }, [params.selectedMachineId, params.settings]);
 
     const resumeCapabilityOptionsResolved = React.useMemo(() => {

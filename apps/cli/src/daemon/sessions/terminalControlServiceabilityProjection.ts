@@ -94,6 +94,18 @@ export function applyTerminalControlServiceabilityProjection(params: Readonly<{
  * blocks an already-in-flight publisher from resurrecting it while allowing replacement evidence.
  */
 export function clearTerminalControlServiceabilityProjection(params: Readonly<{
+  metadata: Metadata;
+  retiredAttachmentId: string;
+  retiredAt: number;
+  terminalMode?: NonNullable<Metadata['terminal']>['mode'];
+}>): Metadata;
+export function clearTerminalControlServiceabilityProjection(params: Readonly<{
+  metadata: Record<string, unknown>;
+  retiredAttachmentId: string;
+  retiredAt: number;
+  terminalMode?: NonNullable<Metadata['terminal']>['mode'];
+}>): Record<string, unknown>;
+export function clearTerminalControlServiceabilityProjection(params: Readonly<{
   metadata: Record<string, unknown>;
   retiredAttachmentId: string;
   retiredAt: number;

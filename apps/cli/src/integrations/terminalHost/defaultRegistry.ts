@@ -13,11 +13,17 @@ import type { TerminalHostAdapter } from './_types';
 
 import { createTerminalHostRegistry, type TerminalHostRegistry } from './registry';
 
+export function resolveDefaultTerminalHostStartupTimeoutMs(): number {
+  return Math.max(configuration.claudeUnifiedTerminalHostActionTimeoutMs, DEFAULT_ZELLIJ_STARTUP_ACTION_TIMEOUT_MS);
+}
+
 export async function createDefaultTerminalHostRegistry(options: Readonly<{
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
   zellijBinary?: string | null;
   zellijDefaultShell?: string;
   zellijLaunchStrategy?: ZellijLaunchStrategy;
+  herdrSessionName?: string;
+  herdrSocketPath?: string;
   windowsConsoleAdapter?: TerminalHostAdapter | null;
 }> = {}): Promise<TerminalHostRegistry> {
   const zellijBinary = options.zellijBinary === undefined
@@ -38,22 +44,18 @@ export async function createDefaultTerminalHostRegistry(options: Readonly<{
           defaultShell: options.zellijDefaultShell,
           launchStrategy: options.zellijLaunchStrategy,
           actionTimeoutMs: configuration.claudeUnifiedTerminalHostActionTimeoutMs,
-          startupActionTimeoutMs: Math.max(
-            configuration.claudeUnifiedTerminalHostActionTimeoutMs,
-            DEFAULT_ZELLIJ_STARTUP_ACTION_TIMEOUT_MS,
-          ),
+          startupActionTimeoutMs: resolveDefaultTerminalHostStartupTimeoutMs(),
         }),
       ]
       : []),
     ...(herdrBinary
       ? [createHerdrTerminalHostAdapter({
         binary: herdrBinary,
+        sessionName: options.herdrSessionName,
+        socketPath: options.herdrSocketPath,
         promptSubmitVerification: options.promptSubmitVerification,
         actionTimeoutMs: configuration.claudeUnifiedTerminalHostActionTimeoutMs,
-        startupTimeoutMs: Math.max(
-          configuration.claudeUnifiedTerminalHostActionTimeoutMs,
-          DEFAULT_ZELLIJ_STARTUP_ACTION_TIMEOUT_MS,
-        ),
+        startupTimeoutMs: resolveDefaultTerminalHostStartupTimeoutMs(),
       })]
       : []),
   ]);

@@ -181,6 +181,33 @@ function removeIsolatedTmuxTempDir(dir: string): void {
 }
 
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
+    it('owns only the optional client window in an existing selected tmux session', async () => {
+        const dir = mkShortTempDir('hp-tmux-presenter-');
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const adapter = createTmuxTerminalHostAdapter({ tmux: utils });
+        const sessionName = `presenter-${process.pid}`;
+        try {
+            const original = await utils.spawnInTmux([process.execPath, '-e', 'setInterval(()=>{},1000)'], {
+                sessionName, windowName: 'original', cwd: dir,
+            }, {});
+            expect(original.success).toBe(true);
+            const before = await utils.executeTmuxCommand(['list-windows', '-t', sessionName, '-F', '#{window_id}']);
+            const options = { sessionName, label: 'optional-client', topology: 'shared' as const,
+                workingDirectory: dir, spawnArgv: [process.execPath, '-e', 'setInterval(()=>{},1000)'],
+                spawnEnv: {}, isolatedEnv: true };
+            const handle = await adapter.createOrAttachHost(options);
+            expect(handle.attachMetadata.topology).toBe('shared');
+            expect(handle.paneId).not.toBe(original.windowId);
+            await adapter.dispose(handle);
+            const windows = await utils.executeTmuxCommand(['list-windows', '-t', sessionName, '-F', '#{window_id}']);
+            if (!windows || !before) throw new Error('Isolated tmux window listing failed');
+            expect(windows.stdout.trim().split('\n')).toEqual(before.stdout.trim().split('\n'));
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            removeIsolatedTmuxTempDir(dir);
+        }
+    });
     it('spawnInTmux can start many windows concurrently without index-conflict failures', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 
 import { prepareOwnedTerminalSpawn } from '@/terminal/runtime/terminalLaunchSpec';
-import { launchOwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
+import { runOwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
 import { logger } from '@/ui/logger';
 import type { ProviderAttachOps } from '@/backends/types';
 
@@ -23,6 +23,7 @@ export async function runOpenCodeProviderAttach(params: Readonly<{
   sessionId: string;
   metadata: Record<string, unknown>;
   prepareProviderCliAttach?: Parameters<ProviderAttachOps['runAttach']>[0]['prepareProviderCliAttach'];
+  terminalClient?: Parameters<ProviderAttachOps['runAttach']>[0]['terminalClient'];
   spawnProcess?: typeof spawn;
   command?: string;
   commandArgs?: readonly string[];
@@ -74,7 +75,7 @@ export async function runOpenCodeProviderAttach(params: Readonly<{
       ...(params.readManagedServerStateFn ? { readManagedServerStateFn: params.readManagedServerStateFn } : {}),
     }),
   });
-  if (dialect === 'v2') {
+  if (dialect === 'v2' || params.terminalClient) {
     if (!params.prepareProviderCliAttach) {
       throw new Error('provider_cli_attach_preparation_unavailable');
     }
@@ -101,8 +102,14 @@ export async function runOpenCodeProviderAttach(params: Readonly<{
     cwd: process.cwd(),
   });
   try {
-    const child = await launchOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess });
-    return (await child.whenExited).code ?? 1;
+    const observe = params.terminalClient ? async (attached: boolean, launcher: Parameters<NonNullable<Parameters<typeof runOwnedTerminalProcess>[0]['onStarted']>>[0]) => {
+      const result = await params.prepareProviderCliAttach!({ providerSessionId: target.vendorSessionId,
+        terminalClient: { attached, herdr: params.terminalClient!, launcher } });
+      if (!result.ok || result.providerSessionId !== target.vendorSessionId) throw new Error('provider_cli_attach_admission_failed');
+    } : null;
+    const result = await runOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess,
+      ...(observe ? { onStarted: launcher => observe(true, launcher), onExited: launcher => observe(false, launcher) } : {}) });
+    return result.code ?? 1;
   } catch {
     logger.infoFile('[terminal] Native terminal attach failed (terminal_native_attach_failed)');
     return 1;

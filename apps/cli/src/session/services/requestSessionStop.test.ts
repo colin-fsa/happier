@@ -159,6 +159,7 @@ describe('requestSessionStop marker fallback', () => {
       machineId: 'machine-owning-session',
       method: 'stop-session',
       request: { sessionId: 'sess-marker-stop' },
+      timeoutMs: null,
       authorization: { kind: 'session.write', sessionId: 'sess-marker-stop' },
     });
     expect(mocks.stopDaemonSession).not.toHaveBeenCalled();

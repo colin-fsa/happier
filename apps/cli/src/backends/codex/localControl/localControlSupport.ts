@@ -42,11 +42,13 @@ export function decideCodexLocalControlSupport(opts: Readonly<{
   experimentalCodexAcpEnabled: boolean;
   localControlBackend?: CodexLocalControlBackend | null;
   hasTtyForLocal?: boolean;
+  hasHostedTerminal?: boolean;
 }>): CodexLocalControlSupportDecision {
   const hasTtyForLocal = opts.hasTtyForLocal === true;
   const localControlBackend = opts.localControlBackend ?? (opts.experimentalCodexAcpEnabled ? 'acp' : null);
 
-  if (opts.startedBy === 'daemon' && !hasTtyForLocal) return { ok: false, reason: 'started-by-daemon' };
+  if (opts.startedBy === 'daemon' && !hasTtyForLocal
+    && !(opts.hasHostedTerminal && localControlBackend === 'appServer')) return { ok: false, reason: 'started-by-daemon' };
 
   if (!localControlBackend) return { ok: false, reason: 'resume-disabled' };
   return { ok: true, backend: localControlBackend };

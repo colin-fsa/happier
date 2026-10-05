@@ -13,6 +13,7 @@ import type { AccountSettings, ConnectedServiceBindingsV1 } from '@happier-dev/p
 import {
   accountSettingsParse,
   ConnectedServiceBindingsV1Schema,
+  SessionTerminalMetadataSchema,
 } from '@happier-dev/protocol';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
@@ -20,6 +21,9 @@ import { buildContinueSelectionModel } from '@/cli/commands/resumeInteractiveSel
 import { RESUME_COMMAND_USAGE } from '@/cli/commandSurfaceManifest';
 import { handleAttachCommand } from '@/cli/commands/attach';
 import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { probeSessionRunnerPresence } from '@/daemon/sessions/isSessionRunnerActive';
+import { evaluateCliSessionAttachEligibility } from '@/session/attach/evaluateCliSessionAttachEligibility';
+import { configuration } from '@/configuration';
 import { isTmuxAvailable } from '@/integrations/tmux';
 import { hostname } from 'node:os';
 import {
@@ -194,7 +198,35 @@ export async function handleResumeCommand(
   if (rowModel.archivedAt !== null) {
     throw new Error('Session is archived and cannot be resumed.');
   }
-  if (rowModel.active === true) {
+  const savedTerminal = SessionTerminalMetadataSchema.safeParse(sessionMetadata?.terminal);
+  const inheritedTerminal = deps?.terminalRuntime;
+  const inheritedHerdrMatchesSavedPane = inheritedTerminal?.mode === 'herdr'
+    && savedTerminal.success && savedTerminal.data.mode === 'herdr'
+    && Boolean(savedTerminal.data.herdr?.paneId?.trim())
+    && inheritedTerminal.herdrPaneId === savedTerminal.data.herdr?.paneId
+    && inheritedTerminal.herdrSocketPath === savedTerminal.data.herdr?.socketPath
+    && inheritedTerminal.herdrSessionName === savedTerminal.data.herdr?.sessionName;
+  // Herdr's deferred resume can arrive before relay activity has expired. The
+  // inherited pane is only placement: auth, runner custody and provider admission
+  // still own this same-session continuation. Unknown/present never imply absence.
+  const resumeInInheritedHerdrPane = inheritedHerdrMatchesSavedPane
+    && (await probeSessionRunnerPresence({ sessionId: rawSession.id, trackedSessions: [] })).state === 'runner_absent';
+  let openRestorationCandidate = false;
+  if (rowModel.active !== true && !resumeInInheritedHerdrPane) {
+    const settings = await (deps?.attachDeps?.readSettingsFn ?? readSettings)();
+    const eligibility = await evaluateCliSessionAttachEligibility({
+      credentials, rawSession,
+      currentMachineId: typeof settings.machineId === 'string' ? settings.machineId.trim() || null : null,
+      currentMachineHost: hostname(),
+      localAttachmentInfo: await (deps?.attachDeps?.readTerminalAttachmentInfoFn ?? readTerminalAttachmentInfo)({
+        happyHomeDir: configuration.happyHomeDir, sessionId: rawSession.id,
+      }),
+      insideTmux: Boolean(process.env.TMUX),
+      currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
+    });
+    openRestorationCandidate = eligibility.eligible && eligibility.attachStrategy === 'terminal_host';
+  }
+  if ((rowModel.active === true || openRestorationCandidate) && !resumeInInheritedHerdrPane) {
     await handleAttachCommand([rawSession.id], {
       ...deps?.attachDeps,
       readCredentialsFn: async () => credentials,
@@ -278,6 +310,8 @@ export async function handleResumeCommand(
     if (!handlerCompleted) {
       connectedServiceEnv?.cleanupOnFailure?.();
     }
+    // The file owner records incomplete cleanup by default. Retain the provider's
+    // original failure rather than replacing it with this nonfatal retirement error.
     await attach.cleanup().catch(() => {});
     throw error;
   } finally {

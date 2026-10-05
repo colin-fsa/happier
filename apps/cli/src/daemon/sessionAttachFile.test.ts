@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
+import { configuration as cleanupConfiguration } from '@/configuration';
+import { logger as cleanupLogger } from '@/ui/logger';
+import { createSessionAttachFile as createCleanupFixture } from './sessionAttachFile';
 
 describe('createSessionAttachFile', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -72,7 +75,28 @@ describe('createSessionAttachFile', () => {
       expect(s.mode & 0o077).toBe(0);
     }
     await cleanup();
+    await cleanup();
     await expect(stat(filePath)).rejects.toBeTruthy();
+  });
+
+  test('reports an actual attach-file cleanup failure without deleting a replacement directory', async () => {
+    const { dir } = await createHappyHomeFixture();
+    const originalHome = cleanupConfiguration.happyHomeDir;
+    Object.defineProperty(cleanupConfiguration, 'happyHomeDir', { value: dir });
+    const signal = vi.spyOn(cleanupLogger, 'infoFile');
+    const { filePath, cleanup } = await createCleanupFixture({
+      happySessionId: 'cleanup-failure', payload: { v: 2, encryptionMode: 'plain' },
+    });
+    await unlink(filePath);
+    await mkdir(filePath);
+    try {
+      await expect(cleanup()).rejects.toMatchObject({ syscall: 'unlink' });
+      expect((await stat(filePath)).isDirectory()).toBe(true);
+      expect(signal).toHaveBeenCalledWith('[daemon] Session attach-file cleanup incomplete (session_attach_cleanup_incomplete)');
+    } finally {
+      signal.mockRestore();
+      Object.defineProperty(cleanupConfiguration, 'happyHomeDir', { value: originalHome });
+    }
   });
 
   test('scopes session attach files by public release ring (dev lane)', async () => {

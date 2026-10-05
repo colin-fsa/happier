@@ -43,6 +43,12 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform === 'win32')('readProcessRunState (posix)', () => {
+  it('observes death that occurs while the OS state probe is pending', async () => {
+    // The signal adapter reports the before/after observations around a real missing ps row.
+    const isPidAlive = vi.fn().mockReturnValueOnce(true).mockReturnValue(false);
+    await expect(readProcessRunState(2_147_483_647, { isPidAlive })).resolves.toBe('dead');
+  });
+
   it('reports a running process as servable', async () => {
     const pid = spawnSleeper();
     await expect(readProcessRunState(pid)).resolves.toBe('servable');

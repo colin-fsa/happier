@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { resolveCodexStartingMode } from './resolveCodexStartingMode';
 
 describe('resolveCodexStartingMode', () => {
+  it('honors optional native presentation without assigning the headless controller a TTY', () => {
+    const hosted = { explicitStartingMode: 'local' as const, startedBy: 'daemon' as const,
+      hasTtyForLocal: false, hasHostedTerminal: true, localControlEnabled: true };
+    expect(resolveCodexStartingMode(hosted)).toBe('local');
+    expect(resolveCodexStartingMode({ ...hosted, localControlEnabled: false })).toBe('remote');
+  });
   it('respects an explicit startingMode override', () => {
     expect(
       resolveCodexStartingMode({

@@ -561,8 +561,8 @@ export async function disposeZellijSession(params: Readonly<{
     runnerPid: process.pid,
     callSite: 'integrations.zellij.adapter.dispose',
   };
-  const warn = (action: 'kill-session' | 'delete-session', error: unknown): void => {
-    logger.warn(`[zellij teardown] ${action} failed; continuing best-effort teardown`, {
+  const warn = (action: 'kill-session' | 'delete-session', _error: unknown): void => {
+    logger.infoFile(`[zellij teardown] ${action} failed; continuing best-effort teardown`, {
       action,
       actor: audit.actor,
       reason: audit.reason,
@@ -570,7 +570,7 @@ export async function disposeZellijSession(params: Readonly<{
       sessionId: audit.sessionId,
       runnerPid: audit.runnerPid,
       sessionName: params.sessionName,
-      error,
+      cleanupIncomplete: true,
     });
   };
   const recordAudit = (action: 'kill-session' | 'delete-session'): void => {
@@ -664,7 +664,7 @@ async function cleanupZellijSessionAndRethrowStartupError(params: Readonly<{
     sessionName: params.sessionName,
     actionTimeoutMs: params.actionTimeoutMs,
   });
-  await disposeZellijSession({
+  const cleanup = await disposeZellijSession({
     actions: params.actions,
     zellijBinary: params.zellijBinary,
     env: params.env,
@@ -678,6 +678,19 @@ async function cleanupZellijSessionAndRethrowStartupError(params: Readonly<{
       callSite: 'integrations.zellij.adapter.startupCleanup',
     },
   });
+  if (isTerminalHostStartupError(startupError)) {
+    throw new TerminalHostStartupError({
+      hostKind: startupError.hostKind,
+      reason: startupError.reason,
+      message: startupError.message,
+      diagnostics: startupError.diagnostics,
+      cause: startupError,
+      launchFailure: {
+        launchDisposition: cleanup.killCompleted ? 'stopped' : 'unconfirmed',
+        cleanupIncomplete: !cleanup.killCompleted || !cleanup.deleteCompleted,
+      },
+    });
+  }
   throw startupError;
 }
 

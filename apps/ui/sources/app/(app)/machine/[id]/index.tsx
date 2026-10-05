@@ -1032,6 +1032,18 @@ export default function MachineDetailScreen() {
                             onPress={() => setTmuxOverrideEnabled(!tmuxOverrideEnabled)}
                         />
 
+                        {!tmuxOverrideEnabled && (
+                            <Item
+                                testID="machine-terminal-effective-host"
+                                title={t('settingsSession.terminalHostTitle')}
+                                subtitle={selectedMachineTerminalHost === 'none'
+                                    ? t('settingsSession.terminalHostNone')
+                                    : selectedMachineTerminalHost === 'tmux' ? 'tmux' : selectedMachineTerminalHost === 'zellij' ? 'Zellij' : 'Herdr'}
+                                mode="info"
+                                showChevron={false}
+                            />
+                        )}
+
                         {tmuxOverrideEnabled && (
                             <>
                                 <DropdownMenu

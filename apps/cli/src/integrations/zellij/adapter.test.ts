@@ -8,7 +8,7 @@ import { createClaudePromptSubmitVerificationPolicy } from '@/backends/claude/un
 import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 
 const recordTerminalHostKillAudit = vi.hoisted(() => vi.fn());
-const loggerWarn = vi.hoisted(() => vi.fn());
+const loggerInfoFile = vi.hoisted(() => vi.fn());
 
 vi.mock('@/daemon/sessionKillAudit', () => ({
   recordTerminalHostKillAudit,
@@ -17,7 +17,7 @@ vi.mock('@/daemon/sessionKillAudit', () => ({
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
-    warn: loggerWarn,
+    infoFile: loggerInfoFile,
   },
 }));
 
@@ -65,7 +65,7 @@ describe('createZellijTerminalHostAdapter', () => {
   afterEach(() => {
     vi.useRealTimers();
     recordTerminalHostKillAudit.mockReset();
-    loggerWarn.mockReset();
+    loggerInfoFile.mockReset();
   });
 
   it('starts the requested spawn command inside the background session', async () => {
@@ -674,7 +674,7 @@ describe('createZellijTerminalHostAdapter', () => {
     expect(launcherDisposed).toBe(true);
   });
 
-  it('preserves the typed startup failure and attributes best-effort cleanup failures', async () => {
+  it.each([true, false])('preserves the typed startup failure and creation disposition when kill completes=$killCompleted', async (killCompleted) => {
     let listCount = 0;
     let launcherDisposed = false;
     let bootstrapClosed = false;
@@ -716,7 +716,7 @@ describe('createZellijTerminalHostAdapter', () => {
       closePane: async () => {
         bootstrapClosed = true;
       },
-      killSession: async () => ({ exitCode: 1, stdout: '', stderr: 'cleanup denied' }),
+      killSession: async () => ({ exitCode: killCompleted ? 0 : 1, stdout: '', stderr: killCompleted ? '' : 'cleanup denied' }),
       deleteSession: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
     } as ZellijActions & {
       startCommandDetached(): Promise<{ dispose(): void }>;
@@ -749,6 +749,10 @@ describe('createZellijTerminalHostAdapter', () => {
       code: 'terminal_host_startup_failed',
       hostKind: 'zellij',
       reason: 'pane_disappeared_after_bootstrap_cleanup',
+      launchFailure: {
+        launchDisposition: killCompleted ? 'stopped' : 'unconfirmed',
+        cleanupIncomplete: !killCompleted,
+      },
     });
     const diagnostics = (error as { diagnostics?: Record<string, unknown> }).diagnostics;
     expect(diagnostics).toMatchObject({
@@ -759,14 +763,16 @@ describe('createZellijTerminalHostAdapter', () => {
       closedPaneIds: ['terminal_1'],
     });
     expect(String((error as { message?: unknown }).message)).not.toContain('cleanup failed');
-    expect(loggerWarn).toHaveBeenCalledWith(
-      expect.stringContaining('kill-session'),
-      expect.objectContaining({
-        action: 'kill-session',
-        callSite: 'integrations.zellij.adapter.startupCleanup',
-        sessionName: 'session-a',
-      }),
-    );
+    if (!killCompleted) {
+      expect(loggerInfoFile).toHaveBeenCalledWith(
+        expect.stringContaining('kill-session'),
+        expect.objectContaining({
+          action: 'kill-session',
+          callSite: 'integrations.zellij.adapter.startupCleanup',
+          sessionName: 'session-a',
+        }),
+      );
+    }
     expect(launcherDisposed).toBe(true);
   });
 
@@ -2319,12 +2325,12 @@ describe('createZellijTerminalHostAdapter', () => {
       attachMetadata: { attachStrategy: 'terminal_host', topology: 'exclusive' },
     })).rejects.toThrow(/owned zellij session/i);
     expect(calls).toEqual(['kill', 'delete']);
-    expect(loggerWarn).toHaveBeenCalledTimes(2);
-    expect(loggerWarn).toHaveBeenNthCalledWith(1, expect.stringContaining('kill-session'), expect.objectContaining({
+    expect(loggerInfoFile).toHaveBeenCalledTimes(2);
+    expect(loggerInfoFile).toHaveBeenNthCalledWith(1, expect.stringContaining('kill-session'), expect.objectContaining({
       callSite: 'integrations.zellij.adapter.dispose',
       sessionName: 'session-a',
     }));
-    expect(loggerWarn).toHaveBeenNthCalledWith(2, expect.stringContaining('delete-session'), expect.objectContaining({
+    expect(loggerInfoFile).toHaveBeenNthCalledWith(2, expect.stringContaining('delete-session'), expect.objectContaining({
       callSite: 'integrations.zellij.adapter.dispose',
       sessionName: 'session-a',
     }));
@@ -2390,7 +2396,7 @@ describe('createZellijTerminalHostAdapter', () => {
     });
     expect(String((thrown as Error).message)).not.toContain('cleanup failed');
     expect(calls).toEqual(['attach', 'kill', 'delete']);
-    expect(loggerWarn).toHaveBeenCalledTimes(2);
+    expect(loggerInfoFile).toHaveBeenCalledTimes(2);
   });
 
   it('cleans up the background zellij session when background attach throws after partial creation', async () => {

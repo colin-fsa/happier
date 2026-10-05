@@ -5140,6 +5140,8 @@ localTailscale: {
   },
 
   newSession: {
+    terminalHostUnavailableTitle: "ターミナルホストを利用できません",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `このマシンで ${host} をインストールまたは更新してサーバーを再起動するか、別のターミナルホストを選択してください。下書きは保持されます。`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -10843,11 +10845,9 @@ settingsSession: {
     unknownPath: "不明なパス",
     previousSessionsTitle: "以前のセッション（直近5件まで）",
     tmux: {
-      overrideTitle: "グローバル tmux 設定を上書き",
-      overrideEnabledSubtitle:
-        "このマシンの新しいセッションにカスタム tmux 設定が適用されます。",
-      overrideDisabledSubtitle:
-        "新しいセッションはグローバル tmux 設定を使用します。",
+      overrideTitle: "アカウントの既定値を上書き",
+      overrideEnabledSubtitle: "このマシンの新しいセッションには独自のターミナルホストを使います。",
+      overrideDisabledSubtitle: "新しいセッションはアカウントのターミナルホストを継承します。",
       notDetectedSubtitle: "このマシンで tmux が検出されません。",
       notDetectedMessage:
         "このマシンで tmux が検出されません。tmux をインストールして検出を更新してください。",

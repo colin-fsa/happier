@@ -448,6 +448,12 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
               })
           : 'not_applicable';
         if (attachment?.version === 2) {
+          const spawnOptions = applyRecoveredRuntimeSnapshot({
+            spawnOptions: restoreSpawnOptionsFromRespawnDescriptor({
+              parsedRespawnDescriptor: parseRecoveredRespawnDescriptor(marker.respawn), credentials: params.credentials,
+            }),
+            metadata: marker.metadata,
+          });
           disconnectedTerminalHostCandidates.push({
             sessionId,
             pid: marker.pid,
@@ -456,6 +462,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
             attachmentId: attachment.attachmentId,
             handle: attachment.handle,
             controlDescriptorStatus,
+            ...(spawnOptions ? { spawnOptions } : {}),
           });
           continue;
         }

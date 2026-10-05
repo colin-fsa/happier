@@ -173,6 +173,10 @@ function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlReque
     });
   }
 
+  // Runner exit and terminal retirement belong to the daemon Stop lifecycle. An
+  // explicitly supplied caller timeout/signal still applies above and at fetch.
+  if (path === '/stop-session') return null;
+
   if (path === '/spawn-session') {
     const rawSpawnTimeout = process.env[DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY];
     if (rawSpawnTimeout !== undefined && String(rawSpawnTimeout).trim().length > 0) {

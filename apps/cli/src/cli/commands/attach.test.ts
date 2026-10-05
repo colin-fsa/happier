@@ -22,8 +22,12 @@ import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { createCodexSharedLocalControl } from '@/backends/codex/localControl/createCodexSharedLocalControl';
 import { createCodexSharedAttachArgs } from '@/backends/codex/localControl/createCodexSharedAttachArgs';
 import { createAttachedTerminalSupervisor } from '@/agent/localControl/createAttachedTerminalSupervisor';
-
 import { terminalLauncherBoundary, expectTerminalNativeInvocation } from '@/testkit/process/terminalLauncher';
+import { createTerminalAttachmentId, readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { buildTerminalHostHandleFromAttachmentMetadata } from '@/agent/runtime/terminal/attachmentMetadata';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
+
 import { handleAttachCommand } from './attach';
 
 const { mockIo } = vi.hoisted(() => ({ mockIo: vi.fn() }));
@@ -217,12 +221,16 @@ describe('happier attach', () => {
     const runProviderAttachFn = vi.fn(async () => 0);
     const runTmuxAttachFn = vi.fn(async () => 0);
 
+    const attachmentId = createTerminalAttachmentId();
     await (handleAttachCommand as any)(['sid_opencode_local_marker_1'], {
       readCredentialsFn: async () => credentials,
       readSettingsFn: async (): Promise<Settings> => ({ machineId: 'machine-after-reauth' } as Settings),
       fetchSessionByIdFn: async () => rawSession,
       readTerminalAttachmentInfoFn: async () => ({
-        version: 1,
+        version: 2,
+        attachmentId,
+        handle: { attachmentId, kind: 'tmux', sessionName: 'happy', paneId: 'opencode-1',
+          attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } },
         sessionId: 'sid_opencode_local_marker_1',
         terminal: {
           mode: 'tmux',
@@ -340,23 +348,25 @@ describe('happier attach', () => {
       rows: Array<Record<string, unknown>>;
       probeSessionIdFn?: (sessionId: string) => Promise<{ reachable: boolean; reason?: string }>;
     }) => {
-      expect(rows).toHaveLength(3);
-      expect(rows[0]).toMatchObject({
+      expect(rows).toHaveLength(4);
+      const byId = new Map(rows.map(row => [row.sessionId, row]));
+      expect(byId.get('sid_attachable_1')).toMatchObject({
         sessionId: 'sid_attachable_1',
         disabled: false,
       });
-      expect(rows[1]).toMatchObject({
+      expect(byId.get('sid_remote_opencode_1')).toMatchObject({
         sessionId: 'sid_remote_opencode_1',
         disabled: true,
         annotation: 'remote',
         disabledReason: 'Press P to check remote reachability.',
         probeable: true,
       });
-      expect(rows[2]).toMatchObject({
+      expect(byId.get('sid_not_attachable_1')).toMatchObject({
         sessionId: 'sid_not_attachable_1',
         disabled: true,
       });
-      expect(String(rows[2].disabledReason)).toMatch(/outside tmux|not started in tmux/i);
+      expect(String(byId.get('sid_not_attachable_1')?.disabledReason)).toMatch(/outside tmux|not started in tmux/i);
+      expect(byId.get('sid_inactive_1')).toMatchObject({ disabled: true });
 
       await expect(probeSessionIdFn?.('sid_remote_opencode_1')).resolves.toMatchObject({
         reachable: true,
@@ -504,10 +514,9 @@ describe('happier attach', () => {
     const settled = command.then(() => null, (error: unknown) => error);
     try {
       await vi.waitFor(() => expect(standaloneSpawn).toHaveBeenCalled());
-      await expectTerminalNativeInvocation(standaloneSpawn.mock.calls,
-        'opencode-fixture', ['--server', metadata.opencodeServerBaseUrl, '--session', nativeId, metadata.path],
-        expect.objectContaining({ stdio: 'inherit', shell: false }),
-      );
+      await expectTerminalNativeInvocation(standaloneSpawn.mock.calls, 'opencode-fixture',
+        ['--server', metadata.opencodeServerBaseUrl, '--session', nativeId, metadata.path],
+        expect.objectContaining({ stdio: 'inherit', shell: false }));
       expect(readRelayState()).toMatchObject({ controlledByUser: false, localControl: {
         attached: owned, canDetach: owned, remoteWritable: true, topology: 'shared',
       } });
@@ -537,12 +546,14 @@ describe('happier attach', () => {
     { host: 'zellij', outcome: 'detached' },
     { host: 'windows_terminal', outcome: 'detached' },
     { host: 'windows_console', outcome: 'detached' },
+    { host: 'windows_console', outcome: 'replaced' },
     { host: 'herdr', outcome: 'attached' },
     { host: 'herdr', outcome: 'codex' },
     { host: 'herdr', outcome: 'unavailable' },
     { host: 'herdr', outcome: 'rejected' },
     { host: 'herdr', outcome: 'malformed' },
   ] as const)('hosted shared attach restores runner custody before host focus: $host / $outcome', async ({ host, outcome }) => {
+    await withConfiguredDaemonTestHome({ prefix: 'attach-managed-host-' }, async ({ homeDir }) => {
     const credentials: Credentials = {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -550,13 +561,13 @@ describe('happier attach', () => {
     const sessionId = 'test-session-id';
     const nativeId = 'opencode-session-1';
     const terminal: NonNullable<Metadata['terminal']> = host === 'herdr'
-      ? { mode: host, requested: host, herdr: { sessionName: 'owned', socketPath: '/tmp/owned.sock', terminalId: 'owned-term' } }
+      ? { mode: host, requested: host, herdr: { sessionName: 'owned', socketPath: '/tmp/owned.sock', terminalId: 'owned-term', paneId: 'owned-pane' } }
       : host === 'tmux'
         ? { mode: host, requested: host, tmux: { target: 'owned:1' } }
         : host === 'zellij'
-          ? { mode: host, requested: host, zellij: { sessionName: 'owned' } }
+          ? { mode: host, requested: host, zellij: { sessionName: 'owned', paneId: 'owned-pane' } }
           : host === 'windows_terminal'
-            ? { mode: host, requested: host, windows: { host, windowId: 'owned-window' } }
+            ? { mode: host, requested: host, windows: { host, windowId: 'owned-window', title: 'owned-tab', pid: 12345 } }
             : { mode: host, requested: 'console', windows: { host: 'console', pid: 12345 } };
     const metadata = createTestMetadata({
       machineId: 'machine-local', path: '/tmp/provider-workspace', terminal,
@@ -582,7 +593,7 @@ describe('happier attach', () => {
         return true;
       });
       children.push(child);
-      return child;
+      return terminalLauncherBoundary(child);
     });
     let targetAvailable = true;
     const { supervisor, controller } = (() => {
@@ -611,6 +622,18 @@ describe('happier attach', () => {
       });
       return { supervisor, controller };
     })();
+    const lock = await acquireSessionRunnerLock({ sessionId });
+    if (!lock.ok) throw new Error('Synthetic current runner did not claim its lock');
+    const attachmentId = createTerminalAttachmentId();
+    const handle = buildTerminalHostHandleFromAttachmentMetadata(terminal);
+    const attachmentInfo = host === 'windows_terminal' || host === 'windows_console'
+      ? { version: 1 as const, sessionId, terminal, updatedAt: 1 }
+      : handle ? { version: 2 as const, sessionId, attachmentId, handle: { ...handle, attachmentId }, terminal, updatedAt: 1 } : null;
+    if (!attachmentInfo) throw new Error('Synthetic host has no canonical descriptor');
+    await writeTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId,
+      terminal,
+      ...(attachmentInfo.version === 2 ? { attachmentId, handle: attachmentInfo.handle } : {}),
+    });
     try {
       await controller.onAfterStart();
       expect(supervisor.isAttached()).toBe(true);
@@ -633,14 +656,23 @@ describe('happier attach', () => {
         readCredentialsFn: async () => credentials,
         readSettingsFn: async () => localSettings,
         fetchSessionByIdFn: async () => rawSession,
-        readTerminalAttachmentInfoFn: async () => ({ version: 1, sessionId, terminal, updatedAt: 1 }),
+        // Replace only the real persisted OS descriptor between admission and
+        // post-switch reread; replacement before admission is a different target.
+        readTerminalAttachmentInfoFn: async (input) => {
+          const current = await readTerminalAttachmentInfo(input);
+          if (outcome === 'replaced' && current?.terminal.windows?.pid === 12345) {
+            await writeTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId,
+              terminal: { ...terminal, windows: { host: 'console', pid: 54321 } } });
+          }
+          return current;
+        },
         runHerdrAttachFn: focusHost, runTmuxAttachFn: focusHost, runZellijAttachFn: focusHost,
         runWindowsTerminalAttachFn: focusHost, runWindowsConsoleAttachFn: focusHost,
       });
-      if (outcome === 'unavailable' || outcome === 'rejected' || outcome === 'malformed') {
-        await expect(command).rejects.toThrow(outcome === 'rejected' ? 'Switch transport rejected' : 'terminal attachment');
+      if (outcome === 'unavailable' || outcome === 'rejected' || outcome === 'malformed' || outcome === 'replaced') {
+        await expect(command).rejects.toThrow();
         expect(focusHost).not.toHaveBeenCalled();
-        expect(supervisor.isAttached()).toBe(false);
+        expect(supervisor.isAttached()).toBe(outcome === 'replaced');
       } else {
         await command;
         expect(focusHost).toHaveBeenCalledOnce();
@@ -651,7 +683,9 @@ describe('happier attach', () => {
       }
     } finally {
       await controller.dispose();
+      await lock.release();
     }
+    });
   });
 
   it('uses local terminal attachment info for tmux-backed attach on the current machine', async () => {

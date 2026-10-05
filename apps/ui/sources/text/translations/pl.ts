@@ -4898,6 +4898,8 @@ export const pl: TranslationStructure = {
   },
 
   newSession: {
+    terminalHostUnavailableTitle: "Host terminala niedostępny",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `Zainstaluj lub zaktualizuj ${host} i uruchom jego serwer ponownie na tej maszynie albo wybierz inny host terminala. Szkic zostaje zachowany.`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -10616,10 +10618,9 @@ settingsSession: {
     unknownPath: "nieznana ścieżka",
     previousSessionsTitle: "Poprzednie sesje (do 5 najnowszych)",
     tmux: {
-      overrideTitle: "Zastąp globalne ustawienia tmux",
-      overrideEnabledSubtitle:
-        "Niestandardowe ustawienia tmux dotyczą nowych sesji na tej maszynie.",
-      overrideDisabledSubtitle: "Nowe sesje używają globalnych ustawień tmux.",
+      overrideTitle: "Zastąp domyślne ustawienie konta",
+      overrideEnabledSubtitle: "Ta maszyna używa własnego hosta terminala dla nowych sesji.",
+      overrideDisabledSubtitle: "Nowe sesje dziedziczą host terminala z konta.",
       notDetectedSubtitle: "tmux nie został wykryty na tej maszynie.",
       notDetectedMessage:
         "tmux nie został wykryty na tej maszynie. Zainstaluj tmux i odśwież wykrywanie.",

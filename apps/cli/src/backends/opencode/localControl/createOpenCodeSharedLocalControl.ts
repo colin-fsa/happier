@@ -1,5 +1,6 @@
 import { createSharedProviderLocalControl } from '@/agent/localControl/createSharedProviderLocalControl';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { logger } from '@/ui/logger';
 import type { SessionProviderCliAttachPrepareRequestV1, SessionProviderCliAttachPrepareResultV1 } from '@happier-dev/protocol';
 
@@ -13,6 +14,7 @@ type OpenCodeAttachTarget = OpenCodeTuiAttachTarget;
 export function createOpenCodeSharedLocalControl(params: Readonly<{
   support: OpenCodeLocalControlSupport;
   startingMode: Mode;
+  terminalRuntime?: TerminalRuntimeFlags | null;
   getSession: () => ApiSessionClient | null;
   getSessionId: () => string | null;
   getDirectory: () => string;
@@ -35,10 +37,14 @@ export function createOpenCodeSharedLocalControl(params: Readonly<{
     if (params.getSessionId() !== request.providerSessionId) {
       return { ok: false, errorCode: 'provider_cli_attach_identity_mismatch' };
     }
+    if (request.terminalClient && !await localControl.observeTerminalClient(request.terminalClient)) {
+      return { ok: false, errorCode: 'provider_cli_attach_admission_failed' };
+    }
     return { ok: true, providerSessionId: request.providerSessionId };
   };
   let localControl: ReturnType<typeof createSharedProviderLocalControl<OpenCodeAttachTarget>>;
   const supervisor = params.supervisor ?? createOpenCodeTuiSupervisor({
+    terminalPresentation: { runtime: params.terminalRuntime, getSession: params.getSession },
     onExit: async () => {
       await localControl.onTerminalExit();
     },

@@ -13,6 +13,7 @@ import type {
 } from '../terminalHost/_types';
 import { delay } from '@/utils/time';
 import { logger } from '@/ui/logger';
+import { TerminalHostCreationError } from '@/integrations/terminalHost/errors';
 
 import { createTmuxTerminalControlPort } from './control';
 import { resolveTmuxPromptSubmitDelayMs } from './env';
@@ -152,18 +153,20 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
   const createOrAttachHost: TerminalHostAdapter['createOrAttachHost'] = async (opts) => {
     const result = await tmux.spawnInTmux([...opts.spawnArgv], {
       sessionName: opts.sessionName,
-      windowName: opts.sessionName,
+      windowName: opts.topology === 'shared' ? opts.label ?? opts.sessionName : opts.sessionName,
       cwd: opts.workingDirectory,
-      requireNewSession: true,
+      requireNewSession: opts.topology !== 'shared',
     }, { ...opts.spawnEnv });
     if (!result.success) {
-      throw new Error(result.error ?? 'Failed to create tmux terminal host');
+      const error = new Error(result.error ?? 'Failed to create tmux terminal host');
+      throw new TerminalHostCreationError([error], result, error.message);
     }
     return createTmuxTerminalHostHandle({
       attachmentId: randomUUID() as TerminalAttachmentId,
       sessionName: result.sessionName ?? opts.sessionName,
       windowId: result.windowId ?? '',
-      topology: 'exclusive',
+      topology: opts.topology ?? 'exclusive',
+      ...(opts.spawnEnv.TMUX_TMPDIR ? { tmuxTmpDir: opts.spawnEnv.TMUX_TMPDIR } : {}),
     });
   };
 

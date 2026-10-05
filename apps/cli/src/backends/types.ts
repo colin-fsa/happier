@@ -139,6 +139,7 @@ export type ProviderAttachOps = Readonly<{
     sessionId: string;
     metadata: Record<string, unknown>;
     prepareProviderCliAttach?: (request: Readonly<SessionProviderCliAttachPrepareRequestV1>) => Promise<SessionProviderCliAttachPrepareResultV1>;
+    terminalClient?: NonNullable<SessionProviderCliAttachPrepareRequestV1['terminalClient']>['herdr'];
   }>) => Promise<number | false>;
 }>;
 

@@ -6,8 +6,9 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
     expect(parseAndStripTerminalRuntimeFlags([
       'codex', '--happy-terminal-mode', 'herdr', '--happy-terminal-requested', 'herdr',
       '--happy-herdr-session-name', 'work terminals',
+      '--happy-herdr-socket-path', '/tmp/selected-herdr.sock',
     ])).toEqual({
-      terminal: { mode: 'herdr', requested: 'herdr', herdrSessionName: 'work terminals' },
+      terminal: { mode: 'herdr', requested: 'herdr', herdrSessionName: 'work terminals', herdrSocketPath: '/tmp/selected-herdr.sock' },
       argv: ['codex'],
     });
     expect(parseAndStripTerminalRuntimeFlags([

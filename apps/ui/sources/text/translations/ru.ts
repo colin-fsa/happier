@@ -4808,6 +4808,8 @@ export const ru: TranslationStructure = {
   },
 
   newSession: {
+    terminalHostUnavailableTitle: "Терминал недоступен",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `Установите или обновите ${host} и перезапустите его сервер на этой машине либо выберите другой терминал. Черновик сохранён.`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -10510,11 +10512,9 @@ settingsSession: {
     unknownPath: "неизвестный путь",
     previousSessionsTitle: "Предыдущие сессии (до 5 последних)",
     tmux: {
-      overrideTitle: "Переопределить глобальные настройки tmux",
-      overrideEnabledSubtitle:
-        "Пользовательские настройки tmux применяются к новым сессиям на этой машине.",
-      overrideDisabledSubtitle:
-        "Новые сессии используют глобальные настройки tmux.",
+      overrideTitle: "Переопределить значение аккаунта",
+      overrideEnabledSubtitle: "Эта машина использует свой терминал для новых сессий.",
+      overrideDisabledSubtitle: "Новые сессии наследуют терминал аккаунта.",
       notDetectedSubtitle: "tmux не обнаружен на этой машине.",
       notDetectedMessage:
         "tmux не обнаружен на этой машине. Установите tmux и обновите обнаружение.",

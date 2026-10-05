@@ -4520,6 +4520,8 @@ export const fr: TranslationStructure = {
     },
 
     newSession: {
+      terminalHostUnavailableTitle: "Hôte de terminal indisponible",
+      terminalHostUnavailableBody: ({ host }: { host: string }) => `Installez ou mettez à jour ${host} et redémarrez son serveur sur cette machine, ou choisissez un autre hôte de terminal. Votre brouillon est conservé.`,
         ...newSessionMcpTranslationExtension,
         ...acpCatalogTranslationExtension.newSession,
         // Used by new-session screen and launch flows
@@ -9947,9 +9949,9 @@ settingsSession: {
         unknownPath: 'chemin inconnu',
         previousSessionsTitle: 'Sessions précédentes (5 plus récentes au maximum)',
         tmux: {
-            overrideTitle: 'Surcharger les réglages tmux globaux',
-            overrideEnabledSubtitle: 'Les réglages tmux personnalisés s’appliquent aux nouvelles sessions sur cette machine.',
-            overrideDisabledSubtitle: 'Les nouvelles sessions utilisent les réglages tmux globaux.',
+            overrideTitle: "Remplacer le choix du compte",
+            overrideEnabledSubtitle: "Cette machine utilise son propre hôte de terminal pour les nouvelles sessions.",
+            overrideDisabledSubtitle: "Les nouvelles sessions héritent de l’hôte de terminal du compte.",
             notDetectedSubtitle: 'tmux n’est pas détecté sur cette machine.',
             notDetectedMessage: 'tmux n’est pas détecté sur cette machine. Installe tmux et actualise la détection.',
         },

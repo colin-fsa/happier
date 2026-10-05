@@ -57,7 +57,7 @@ export function createOnChildExited(params: Readonly<{
   onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void;
   isExitUnexpectedOverride?: (trackedSession: TrackedSession, exit: ChildExit) => boolean | null | undefined;
   onPidPromoted?: (input: Readonly<{ fromPid: number; toPid: number; trackedSession: TrackedSession }>) => void;
-  shouldPreserveSessionMarkerOnExit?: (input: Readonly<{ pid: number; trackedSession: TrackedSession; exit: ChildExit }>) => boolean;
+  shouldPreserveSessionMarkerOnExit?: (input: Readonly<{ pid: number; trackedSession: TrackedSession; exit: ChildExit }>) => boolean | Promise<boolean>;
   onFinalTrackedSessionExitStaged?: (input: Readonly<{
     pid: number;
     trackedSession: TrackedSession;
@@ -154,7 +154,7 @@ export function createOnChildExited(params: Readonly<{
       const hasServerBackedSession = Boolean(finalSessionId) && isServerBackedSessionId(finalSessionId);
       const actionableUnexpectedExit = shouldReportSessionEnd && isUnexpected && hasServerBackedSession;
       const preserveExitedMarker = hasServerBackedSession
-        && shouldPreserveSessionMarkerOnExit?.({ pid, trackedSession: tracked, exit }) === true;
+        && await shouldPreserveSessionMarkerOnExit?.({ pid, trackedSession: tracked, exit }) === true;
       const apiMachineForSessions = getApiMachineForSessions();
       const observedAt = Date.now();
       try {

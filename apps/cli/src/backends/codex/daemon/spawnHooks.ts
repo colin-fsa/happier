@@ -22,7 +22,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
       experimentalCodexAcpEnabledByDefault: false,
     });
     if (mode === 'acp') return { kind: 'none' };
-    if (mode === 'appServer') return { kind: 'runner', startingMode: host === 'tmux' ? 'remote' : 'local' };
+    if (mode === 'appServer') return { kind: 'provider_attach', startingMode: 'local' };
     return host === 'tmux' ? { kind: 'runner', startingMode: 'remote' } : { kind: 'none' };
   },
   validateSpawn: async (runtimeSelection) => {

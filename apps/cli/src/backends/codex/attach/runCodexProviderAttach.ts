@@ -5,7 +5,8 @@ import {
   resolvePersistedCodexVendorSessionId,
 } from '@happier-dev/agents';
 import { prepareOwnedTerminalSpawn } from '@/terminal/runtime/terminalLaunchSpec';
-import { launchOwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
+import { runOwnedTerminalProcess } from '@/terminal/runtime/ownedTerminalProcess';
+import type { ProviderAttachOps } from '@/backends/types';
 import { logger } from '@/ui/logger';
 
 import { configuration } from '@/configuration';
@@ -17,6 +18,8 @@ import { resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
 export async function runCodexProviderAttach(params: Readonly<{
   sessionId: string;
   metadata: Record<string, unknown>;
+  prepareProviderCliAttach?: Parameters<ProviderAttachOps['runAttach']>[0]['prepareProviderCliAttach'];
+  terminalClient?: Parameters<ProviderAttachOps['runAttach']>[0]['terminalClient'];
   happyHomeDir?: string;
   env?: NodeJS.ProcessEnv;
   command?: string;
@@ -34,6 +37,7 @@ export async function runCodexProviderAttach(params: Readonly<{
     sessionId: params.sessionId,
   });
   if (!endpoint) return 1;
+  if (params.terminalClient && !params.prepareProviderCliAttach) return 1;
 
   const env = params.env ?? process.env;
   const resolved = params.command
@@ -55,8 +59,14 @@ export async function runCodexProviderAttach(params: Readonly<{
     cwd: process.cwd(),
   });
   try {
-    const child = await launchOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess: params.spawnProcess });
-    return (await child.whenExited).code ?? 1;
+    const observe = params.terminalClient ? async (attached: boolean, launcher: Parameters<NonNullable<Parameters<typeof runOwnedTerminalProcess>[0]['onStarted']>>[0]) => {
+      const result = await params.prepareProviderCliAttach!({ providerSessionId: vendorSessionId,
+        terminalClient: { attached, herdr: params.terminalClient!, launcher } });
+      if (!result.ok || result.providerSessionId !== vendorSessionId) throw new Error('provider_cli_attach_admission_failed');
+    } : null;
+    const result = await runOwnedTerminalProcess({ spawn: prepared, cwd: process.cwd(), spawnProcess: params.spawnProcess,
+      ...(observe ? { onStarted: launcher => observe(true, launcher), onExited: launcher => observe(false, launcher) } : {}) });
+    return result.code ?? 1;
   } catch {
     logger.infoFile('[terminal] Native terminal attach failed (terminal_native_attach_failed)');
     return 1;

@@ -51,7 +51,8 @@ export type DaemonSpawnValidationResult =
   | Readonly<{ ok: false; errorMessage: string; reasonCode?: string }>;
 
 export type DaemonTerminalPresentation = Readonly<{
-  kind: 'runner' | 'provider' | 'none';
+  /** provider hosts a session-bearing process; provider_attach hosts only an optional native client. */
+  kind: 'runner' | 'provider' | 'provider_attach' | 'none';
   startingMode?: 'local' | 'remote';
   childEnv?: Readonly<Record<string, string>>;
 }>;
@@ -80,3 +81,22 @@ export type DaemonSpawnHooks = Readonly<{
     processEnv: NodeJS.ProcessEnv;
   }>) => DaemonTerminalPresentation;
 }>;
+
+export function resolveDaemonTerminalPresentation(params: Readonly<{
+  hooks: DaemonSpawnHooks | null | undefined;
+  host: 'tmux' | 'zellij' | 'herdr';
+  agentId: AgentId;
+  configuredAcpBackend: boolean;
+  accountSettings: AccountSettings | null;
+  runtimeSelection: DaemonSpawnRuntimeSelection;
+  processEnv: NodeJS.ProcessEnv;
+  existingSessionId?: string;
+}>): DaemonTerminalPresentation {
+  const selected = params.hooks?.resolveTerminalPresentation?.(params)
+    ?? resolveDefaultDaemonTerminalPresentation(params);
+  // Recover the existing shared controller without silently recreating an optional client.
+  // Explicit Attach remains the same live runner's local-mode operation.
+  return selected.kind === 'provider_attach' && params.existingSessionId?.trim()
+    ? { ...selected, startingMode: 'remote' }
+    : selected;
+}

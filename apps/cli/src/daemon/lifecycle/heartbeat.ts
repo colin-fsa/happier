@@ -90,6 +90,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
   onChildExited?: (pid: number, exit: Readonly<{ reason: string; code: number | null; signal: string | null }>) => void | Promise<void>;
+  onTrackedSessionHealthy?: (tracked: TrackedSession) => Promise<void>;
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
@@ -236,6 +237,11 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           if (marker?.happySessionId === tracked.happySessionId) {
             tracked.terminalHostHealth = marker.terminalHostHealth;
           }
+        }
+        if (pidToTrackedSession.get(pid) === tracked
+          && typeof tracked.stopRequestedAtMs !== 'number'
+          && tracked.reportMarkerCustody?.retiring !== true) {
+          await params.onTrackedSessionHealthy?.(tracked);
         }
       }
 

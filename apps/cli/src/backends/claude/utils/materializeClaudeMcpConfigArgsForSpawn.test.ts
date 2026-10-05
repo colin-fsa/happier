@@ -1,12 +1,32 @@
 import { existsSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// File logging is an output boundary; private-file creation and cleanup stay real.
+vi.mock('@/ui/logger', () => ({ logger: { infoFile: vi.fn() } }));
+import { logger } from '@/ui/logger';
 
 import { materializeClaudeMcpConfigArgsForSpawn } from './materializeClaudeMcpConfigArgsForSpawn';
 
 describe('materializeClaudeMcpConfigArgsForSpawn', () => {
+    it('reports incomplete private configuration cleanup and preserves unexpected directory contents', async () => {
+        const materialized = await materializeClaudeMcpConfigArgsForSpawn(['--mcp-config', '{"mcpServers":{}}']);
+        const configPath = materialized.cleanupPaths[0]!;
+        const retainedPath = join(dirname(configPath), 'unexpected-entry');
+        await writeFile(retainedPath, 'retained');
+        try {
+            await expect(materialized.cleanup()).rejects.toMatchObject({
+                name: 'AggregateError',
+                errors: [expect.objectContaining({ code: 'ENOTEMPTY' })],
+            });
+            await expect(readFile(retainedPath, 'utf8')).resolves.toBe('retained');
+            expect(logger.infoFile).toHaveBeenCalledWith('[claude] Private MCP configuration cleanup incomplete (claude_mcp_config_cleanup_incomplete)');
+        } finally {
+            await rm(dirname(configPath), { recursive: true, force: true });
+        }
+    });
     it('replaces inline MCP JSON with private files, preserves path inputs, and cleans up idempotently', async () => {
         const first = JSON.stringify({
             mcpServers: { first: { command: 'mcp-one', env: { TOKEN: 'synthetic-first' } } },

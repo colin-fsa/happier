@@ -62,6 +62,9 @@ vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
     },
 }));
 
+// Prepare the real module before measuring hook interaction under the existing test budget.
+const { useNewSessionAvailabilityState: preparedAvailabilityHook } = await import('./useNewSessionAvailabilityState');
+
 describe('useNewSessionAvailabilityState', () => {
     beforeEach(() => {
         cliRefreshA.mockClear();
@@ -73,6 +76,22 @@ describe('useNewSessionAvailabilityState', () => {
         cliDetectionTimestamp = 123;
         capabilitiesRefreshCurrent = capabilitiesRefreshA;
         capabilitiesStateCurrent = { status: 'idle' };
+    });
+
+    it.each(['herdr', 'zellij', 'tmux', 'none'] as const)('requests a tmux warning only for effective tmux, not %s', async (host) => {
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        const hook = await renderHook(() => preparedAvailabilityHook({
+            selectedMachineId: 'machine-1', selectedMachine: null, capabilityServerId: 'server-1',
+            settings: { ...settingsDefaults, sessionTerminalHost: 'tmux', sessionUseTmux: true,
+                sessionTerminalHostByMachineId: host === 'herdr' || host === 'zellij' ? { 'machine-1': host } : {},
+                sessionTmuxByMachineId: { 'machine-1': { useTmux: host === 'tmux', sessionName: 'happy', isolated: true, tmpDir: null } },
+            },
+            agentType: 'codex', resumeSessionId: null, enabledAgentIds: ['codex'],
+            agentNewSessionOptionStateByAgentId: {}, resolvedBackendEntries: [], selectedBackendEntry: null,
+            setBackendTarget: vi.fn(), machines: [], dismissedCliWarnings: null,
+            setDismissedCliWarnings: vi.fn(), allProfiles: [],
+        }));
+        expect(hook.getCurrent().tmuxRequested).toBe(host === 'tmux');
     });
 
     it('keeps selection callbacks stable when CLI detection stays ready', async () => {

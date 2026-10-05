@@ -1,6 +1,7 @@
 import { spawn, type SpawnOptions } from 'child_process';
 
 import { logger } from '@/ui/logger';
+import type { TerminalHostLaunchFailure } from '@/integrations/terminalHost/_types';
 
 import {
   buildPosixShellCommand,
@@ -50,6 +51,15 @@ export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
   // and efficiency - only variables that differ from the tmux server
   // environment need to be passed via -e flags.
 }
+
+export type TmuxSpawnResult = Readonly<{
+  sessionId?: string;
+  sessionName?: string;
+  windowName?: string;
+  windowId?: string;
+  pid?: number;
+  error?: string;
+}> & (Readonly<{ success: true }> | (Readonly<{ success: false }> & TerminalHostLaunchFailure));
 
 export class TmuxUtilities {
   /** Default session name to prevent interference */
@@ -511,8 +521,9 @@ export class TmuxUtilities {
     args: string[],
     options: TmuxSpawnOptions = {},
     env?: Record<string, string>,
-  ): Promise<{ success: boolean; sessionId?: string; sessionName?: string; windowName?: string; windowId?: string; pid?: number; error?: string }> {
+  ): Promise<TmuxSpawnResult> {
     let spawnScriptPath: string | null = null;
+    let launchDisposition: TerminalHostLaunchFailure['launchDisposition'] = 'not_started';
     try {
       // Check if tmux is available
       const tmuxCheck = await this.executeTmuxCommand(['list-sessions']);
@@ -670,11 +681,17 @@ export class TmuxUtilities {
       let createResult: TmuxCommandResult | null = null;
       let createWindowArgsForAttempt = createWindowArgs;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        // A lost or malformed reply cannot undo a command the server accepted.
+        launchDisposition = 'unconfirmed';
         createResult = await this.executeTmuxCommand(createWindowArgsForAttempt);
-        if (createResult && createResult.returncode === 0) break;
+        if (createResult && createResult.returncode === 0 && createResult.timedOut !== true) break;
 
         const stderr = createResult?.stderr;
-        const shouldRetry = attempt < maxAttempts && isTmuxWindowIndexConflict(stderr);
+        const explicitWindowConflict = !requireNewSession && createResult?.timedOut !== true && isTmuxWindowIndexConflict(stderr);
+        const explicitSessionConflict = requireNewSession && createResult?.timedOut !== true
+          && /(?:duplicate session|session .+ already exists)/i.test(stderr ?? '');
+        if (explicitWindowConflict || explicitSessionConflict) launchDisposition = 'not_started';
+        const shouldRetry = attempt < maxAttempts && explicitWindowConflict;
         if (!shouldRetry) break;
 
         // In high-concurrency starts, tmux may keep retrying the same conflicting index.
@@ -696,7 +713,7 @@ export class TmuxUtilities {
         }
       }
 
-      if (!createResult || createResult.returncode !== 0) {
+      if (!createResult || createResult.returncode !== 0 || createResult.timedOut === true) {
         const tIndex = createWindowArgsForAttempt.indexOf('-t');
         const target = tIndex >= 0 ? createWindowArgsForAttempt[tIndex + 1] : sessionName;
         const resourceKind = requireNewSession ? 'session' : 'window';
@@ -737,12 +754,23 @@ export class TmuxUtilities {
         pid: panePid,
       };
     } catch (error) {
-      if (spawnScriptPath) {
-        await removeTmuxSpawnScript(spawnScriptPath);
+      let cleanupIncomplete = false;
+      // The pane may still need its launch handoff after the client reply is lost.
+      // Without an immutable identity, do not guess which window to stop.
+      if (spawnScriptPath && launchDisposition !== 'unconfirmed') {
+        try {
+          await removeTmuxSpawnScript(spawnScriptPath);
+        } catch (cleanupError) {
+          cleanupIncomplete = true;
+          logger.debug('[TMUX] Launch handoff cleanup failed:', cleanupError);
+        }
       }
       logger.debug('[TMUX] Failed to spawn in tmux:', error);
+      logger.infoFile('[WARN] [TMUX] Runner creation failed', { launchDisposition, cleanupIncomplete });
       return {
         success: false,
+        launchDisposition,
+        cleanupIncomplete,
         error: error instanceof Error ? error.message : String(error),
       };
     }

@@ -91,6 +91,15 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
       }
       continue;
     }
+    if (arg === '--happy-herdr-socket-path') {
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      const value = consumed.value;
+      if (typeof value === 'string' && value.trim().length > 0) {
+        terminal.herdrSocketPath = value;
+      }
+      continue;
+    }
     if (arg === '--happy-terminal-attachment-id') {
       const consumed = consumeFlagValue(argv, i);
       i = consumed.nextIndex;
@@ -129,6 +138,7 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
     terminal.tmuxTarget !== undefined ||
     terminal.tmuxTmpDir !== undefined ||
     terminal.herdrSessionName !== undefined ||
+    terminal.herdrSocketPath !== undefined ||
     terminal.attachmentId !== undefined ||
     terminal.windowId !== undefined ||
     terminal.title !== undefined;

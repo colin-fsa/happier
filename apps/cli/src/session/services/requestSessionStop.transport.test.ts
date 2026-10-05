@@ -39,6 +39,11 @@ describe('requestSessionStop machine transport', () => {
         if (boundary.mode === 'disconnect') events.emit('disconnect', 'transport close');
         if (boundary.mode === 'forbidden') callback?.({ ok: false, error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' });
         if (boundary.mode === 'unavailable') callback?.({ ok: false, error: 'RPC method not available', errorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+        if (boundary.mode === 'slow_stop') setTimeout(() => callback?.({ ok: true,
+          result: encodeBase64(encrypt(secret, 'legacy', { status: 'stopped' })),
+        }), 22_410);
+        // The finite relay forwarding deadline owns a request whose handler does not settle.
+        if (boundary.mode === 'timeout') setTimeout(() => callback?.({ ok: false, error: 'RPC call timeout' }), 30_000);
       },
     };
   });
@@ -56,13 +61,26 @@ describe('requestSessionStop machine transport', () => {
     vi.spyOn(console, 'log').mockImplementation(nodeConsole.log.bind(nodeConsole));
     boundary.mode = mode;
     const result = requestSessionStop({ credentials, idOrPrefix: sessionId });
-    await vi.advanceTimersByTimeAsync(20_001);
+    await vi.advanceTimersByTimeAsync(30_001);
     await expect(result).resolves.toEqual({
       ok: true, sessionId, stopped: false,
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: 'transport_ambiguous' },
     });
     expect(calls.filter((event) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
     expect(stdout).not.toHaveBeenCalled();
+  });
+
+  it('waits for a physical Stop acknowledgement beyond the generic machine RPC cutoff', async () => {
+    boundary.mode = 'slow_stop';
+    let settled = false;
+    const result = requestSessionStop({ credentials, idOrPrefix: sessionId })
+      .then((value) => { settled = true; return value; });
+    await vi.advanceTimersByTimeAsync(20_001);
+    expect(settled).toBe(false);
+    expect(calls).not.toContain(SOCKET_RPC_EVENTS.CANCEL);
+    await vi.advanceTimersByTimeAsync(2_410);
+    await expect(result).resolves.toEqual({ ok: true, sessionId, stopped: true });
+    expect(calls.filter((event) => event === SOCKET_RPC_EVENTS.CALL)).toHaveLength(1);
   });
 
   it('retains a definitive authorization refusal', async () => {

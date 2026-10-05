@@ -425,7 +425,7 @@ describe('terminalAttachmentInfo', () => {
         mode: 'tmux',
         tmux: { target: 'happy:owned-window', tmpDir: '/tmp/happy-tmux' },
       } as const;
-      await writeTerminalAttachmentInfo({
+      const committed = await writeTerminalAttachmentInfo({
         happyHomeDir: dir.name,
         sessionId,
         attachmentId: 'attachment-current',
@@ -433,7 +433,9 @@ describe('terminalAttachmentInfo', () => {
         terminal,
       });
 
-      await writeTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId, terminal });
+      const protectedRecord = await writeTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId, terminal });
+      expect(protectedRecord).toEqual(committed);
+      expect(protectedRecord).toMatchObject({ version: 2, attachmentId: 'attachment-current' });
 
       await expect(readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).resolves.toMatchObject({
         version: 2,

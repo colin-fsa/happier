@@ -1,6 +1,10 @@
 import { execFile, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
+import { basename, dirname, isAbsolute } from 'node:path';
 import { promisify } from 'node:util';
+
+import type { TerminalHostLaunchFailure } from '@/integrations/terminalHost/_types';
+import { TerminalHostCreationError } from '@/integrations/terminalHost/errors';
 
 import { isSupportedHerdrVersion } from './runtimeBinary';
 
@@ -33,21 +37,21 @@ export function readHerdrCreatedWorkspaceTarget(value: unknown): Readonly<{
 }
 
 export class HerdrApiError extends Error {
-  constructor(readonly code: string) {
-    super(`Herdr API request failed: ${code}`);
+  constructor(readonly code: string, message = `Herdr API request failed: ${code}`) {
+    super(message);
   }
 }
 
 /** A submitted layout can start its command even when its response is lost. */
-export class HerdrPaneCreationError extends AggregateError {
+export class HerdrPaneCreationError extends TerminalHostCreationError {
   readonly code = 'herdr_pane_creation_failed';
 
   constructor(
     errors: readonly unknown[],
-    readonly launchDisposition: 'not_started' | 'stopped' | 'unconfirmed',
-    readonly cleanupIncomplete: boolean,
+    launchDisposition: TerminalHostLaunchFailure['launchDisposition'],
+    cleanupIncomplete: boolean,
   ) {
-    super(errors, launchDisposition === 'unconfirmed'
+    super(errors, { launchDisposition, cleanupIncomplete }, launchDisposition === 'unconfirmed'
       ? 'Herdr pane creation could not be confirmed stopped. Its command may still be running; inspect Herdr before retrying.'
       : cleanupIncomplete
         ? 'Herdr pane creation failed and cleanup is incomplete. Inspect Herdr before retrying.'
@@ -80,6 +84,39 @@ function paneFrom(value: unknown): HerdrPane {
   return { paneId, terminalId, workspaceId, tabId };
 }
 
+function encodeRequest(method: string, params: JsonRecord): string {
+  return `${JSON.stringify({ id: 'happier', method, params })}\n`;
+}
+
+/** Herdr 0.9.2/0.9.3 api/server.rs limits the initial JSON line to 1 MiB. */
+const maxInitialRequestBytes = 1024 * 1024;
+
+function* textRequestChunks(method: string, paneId: string, text: string): Generator<string> {
+  const textBudget = maxInitialRequestBytes - Buffer.byteLength(encodeRequest(method, { pane_id: paneId, text: '' }));
+  if (textBudget <= 0) throw new HerdrApiError('request_too_large');
+  if (text.length === 0) {
+    yield '';
+    return;
+  }
+  for (let start = 0; start < text.length;) {
+    // A UTF-16 code unit requires at least one serialized byte. Bound the candidate
+    // before serializing; use JSON itself to account for UTF-8 and escape expansion.
+    let end = Math.min(text.length, start + textBudget);
+    let chunk: string;
+    while (true) {
+      const previous = text.charCodeAt(end - 1);
+      const next = text.charCodeAt(end);
+      if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) end--;
+      if (end <= start) throw new HerdrApiError('request_too_large');
+      chunk = text.slice(start, end);
+      if (Buffer.byteLength(encodeRequest(method, { pane_id: paneId, text: chunk })) <= maxInitialRequestBytes) break;
+      end = start + Math.floor((end - start) / 2);
+    }
+    yield chunk;
+    start = end;
+  }
+}
+
 function request(socketPath: string, method: string, params: JsonRecord, timeoutMs: number): Promise<JsonRecord> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
@@ -96,7 +133,7 @@ function request(socketPath: string, method: string, params: JsonRecord, timeout
     socket.setTimeout(timeoutMs, () => finish(new HerdrApiError('timeout')));
     socket.on('error', () => finish(new HerdrApiError('unreachable')));
     socket.on('connect', () => {
-      socket.write(`${JSON.stringify({ id: 'happier', method, params })}\n`);
+      socket.write(encodeRequest(method, params));
     });
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -127,22 +164,25 @@ export function createHerdrClient(params: Readonly<{
 }>) {
   let socketPath: string | null = params.socketPath ?? null;
 
-  async function listSessions(): Promise<readonly Readonly<{ name: string; socketPath: string; running: boolean }>[]> {
+  type StartupContext = Readonly<{ env: NodeJS.ProcessEnv; socketPath: string; sessionDir: string }>;
+
+  async function listSessions(env?: NodeJS.ProcessEnv): Promise<readonly Readonly<{ name: string; socketPath: string; sessionDir: string | null; running: boolean }>[]> {
     const { stdout } = await execFileAsync(params.binary, ['session', 'list', '--json'], {
       timeout: params.actionTimeoutMs,
       windowsHide: true,
+      ...(env ? { env } : {}),
     });
     const sessions = record(JSON.parse(stdout))?.sessions;
     if (!Array.isArray(sessions)) throw new HerdrApiError('invalid_session_list');
     return sessions.map(record).flatMap((session) => {
       const name = string(session?.name);
       const path = string(session?.socket_path);
-      return name && path ? [{ name, socketPath: path, running: session?.running === true }] : [];
+      return name && path ? [{ name, socketPath: path, sessionDir: string(session?.session_dir), running: session?.running === true }] : [];
     });
   }
 
-  async function findSession(): Promise<Readonly<{ socketPath: string; running: boolean }> | null> {
-    return (await listSessions()).find((session) => session.name === params.sessionName) ?? null;
+  async function findSession(env?: NodeJS.ProcessEnv) {
+    return (await listSessions(env)).find((session) => session.name === params.sessionName) ?? null;
   }
 
   async function api(method: string, values: JsonRecord = {}): Promise<JsonRecord> {
@@ -159,29 +199,47 @@ export function createHerdrClient(params: Readonly<{
   }
 
   async function ensureServer(): Promise<string> {
-    const current = await findSession();
+    if (params.socketPath) {
+      // A selected or inherited endpoint is already scoped by its launch owner.
+      // Native credential configuration can change ambient Herdr discovery roots.
+      // That never authorizes substituting or starting another named server.
+      await assertServerVersion();
+      return params.socketPath;
+    }
+    return await ensureServerInContext();
+  }
+
+  async function ensureServerInContext(context?: StartupContext): Promise<string> {
+    const current = await findSession(context?.env);
+    if (context && (current?.socketPath !== context.socketPath || current.sessionDir !== context.sessionDir)) {
+      throw new HerdrApiError('recorded_server_root_unavailable', 'The recorded Herdr namespace could not be verified. Reopen its original server before retrying attachment.');
+    }
     if (current?.running) {
       socketPath = current.socketPath;
       await assertServerVersion();
       return socketPath;
     }
 
-    const args = params.sessionName === 'default'
+    const args = context || params.sessionName === 'default'
       ? ['server']
       : ['--session', params.sessionName, 'server'];
     const server = spawn(params.binary, args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
+      ...(context ? { env: context.env } : {}),
     });
     let spawnError: Error | null = null;
     server.once('error', (error) => { spawnError = error; });
     server.unref();
     const deadline = Date.now() + params.startupTimeoutMs;
     while (Date.now() < deadline) {
-      const session = await findSession();
+      const session = await findSession(context?.env);
       if (spawnError) throw spawnError;
       if (session?.running) {
+        if (context && (session.socketPath !== context.socketPath || session.sessionDir !== context.sessionDir)) {
+          throw new HerdrApiError('recorded_server_endpoint_mismatch');
+        }
         socketPath = session.socketPath;
         await assertServerVersion();
         return socketPath;
@@ -189,6 +247,23 @@ export function createHerdrClient(params: Readonly<{
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new HerdrApiError('server_start_timeout');
+  }
+
+  async function restoreRecordedServer(): Promise<string> {
+    const recordedSocket = params.socketPath;
+    const unavailable = (): never => {
+      throw new HerdrApiError('recorded_server_root_unavailable', 'Cold attachment cannot locate this recorded Herdr server’s saved namespace. Reopen its original server before retrying attachment.');
+    };
+    if (!recordedSocket || !isAbsolute(recordedSocket) || basename(recordedSocket) !== 'herdr.sock') return unavailable();
+    const sessionDir = dirname(recordedSocket);
+    const configDir = params.sessionName === 'default' ? sessionDir : dirname(dirname(sessionDir));
+    // Released 0.9.2 and 0.9.3 persist named state at
+    // XDG_CONFIG_HOME/herdr/sessions/<name>; native inventory verifies the root.
+    if (basename(configDir) !== 'herdr'
+      || (params.sessionName !== 'default' && (basename(sessionDir) !== params.sessionName || basename(dirname(sessionDir)) !== 'sessions'))) return unavailable();
+    return await ensureServerInContext({ socketPath: recordedSocket, sessionDir, env: {
+      ...process.env, XDG_CONFIG_HOME: dirname(configDir), HERDR_SESSION: params.sessionName, HERDR_SOCKET_PATH: recordedSocket,
+    } });
   }
 
   async function createPane(input: Readonly<{
@@ -287,11 +362,15 @@ export function createHerdrClient(params: Readonly<{
   }
 
   async function sendText(paneId: string, text: string): Promise<void> {
-    await api('pane.send_input', { pane_id: paneId, text });
+    for (const chunk of textRequestChunks('pane.send_input', paneId, text)) {
+      await api('pane.send_input', { pane_id: paneId, text: chunk });
+    }
   }
 
   async function sendRaw(paneId: string, text: string): Promise<void> {
-    await api('pane.send_text', { pane_id: paneId, text });
+    for (const chunk of textRequestChunks('pane.send_text', paneId, text)) {
+      await api('pane.send_text', { pane_id: paneId, text: chunk });
+    }
   }
 
   async function sendKeys(paneId: string, keys: readonly string[]): Promise<void> {
@@ -323,6 +402,7 @@ export function createHerdrClient(params: Readonly<{
 
   return {
     ensureServer,
+    restoreRecordedServer,
     assertServerVersion,
     listSessions,
     createPane,

@@ -38,7 +38,7 @@ import {
   SpawnSessionRunnerAcceptanceHooks,
 } from '@/rpc/handlers/registerSessionHandlers';
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
-import { buildTrackedSpawnOptions, resolveDefaultDaemonTerminalPresentation } from '@/daemon/spawnHooks';
+import { buildTrackedSpawnOptions, resolveDaemonTerminalPresentation } from '@/daemon/spawnHooks';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration, reloadConfiguration } from '@/configuration';
@@ -138,6 +138,9 @@ import { publishOrphanedStartupSessionEnds } from './sessions/publishOrphanedSta
 import {
   resolveDisconnectedTerminalHostResumeGate,
   superviseDisconnectedTerminalHostCandidate,
+  superviseTrackedOptionalTerminalPresentation,
+  resolveTrackedSessionTerminalHostExitCandidate,
+  shouldRetainTrackedTerminalHostExitMarker,
   type DisconnectedTerminalHostCandidate,
   type DisconnectedTerminalHostSupervisionResult,
 } from './sessions/disconnectedTerminalHostSupervision';
@@ -221,6 +224,8 @@ import {
   resolveWindowsTerminalWindowName,
 } from './platform/windows/windowsHostedSessionRuntime';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { resolveTerminalHostLaunchFailure, resolveTerminalHostUnavailableSpawnErrorDetail } from '@/integrations/terminalHost/errors';
+import { prepareHerdrTerminalContext } from '@/terminal/runtime/prepareHerdrTerminalContext';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
   readSessionMarkerForPid,
@@ -3453,6 +3458,16 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               let spawnResourceCleanupOnExit: (() => void) | null = null;
               let spawnResourceCleanupArmed = false;
               let sessionAttachCleanup: (() => Promise<void>) | null = null;
+              const cleanupSessionAttachResources = async (primaryError?: unknown): Promise<void> => {
+                const cleanup = sessionAttachCleanup;
+                sessionAttachCleanup = null;
+                try { await cleanup?.(); } catch (cleanupError) {
+                  if (primaryError !== undefined) {
+                    throw new AggregateError([primaryError, cleanupError], 'Session launch failed with incomplete attach-file cleanup', { cause: primaryError });
+                  }
+                  throw cleanupError;
+                }
+              };
 
               const ensuredDirectory = await ensureSessionDirectory({
                 directory: resolvedDirectory,
@@ -3468,9 +3483,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
                 const cleanupSpawnResources = () => {
                   if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-                    spawnResourceCleanupOnFailure();
+                    const cleanup = spawnResourceCleanupOnFailure;
                     spawnResourceCleanupOnFailure = null;
                     spawnResourceCleanupOnExit = null;
+                    cleanup();
                   }
                 };
 
@@ -3754,8 +3770,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   ? terminalRequest.requested
                   : null;
                 const terminalPresentation = selectedHost
-                  ? daemonSpawnHooks?.resolveTerminalPresentation?.({
+                  ? resolveDaemonTerminalPresentation({
+                    hooks: daemonSpawnHooks,
                     host: selectedHost,
+                    agentId: catalogAgentId,
+                    configuredAcpBackend: backendTarget?.kind === 'configuredAcpBackend',
+                    existingSessionId: normalizedExistingSessionId,
                     accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? null,
                     runtimeSelection: {
                       experimentalCodexAcp,
@@ -3765,11 +3785,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                       environmentVariables: extraEnv,
                     },
                     processEnv: { ...sessionChildProcessEnv, ...spawnEnvironment.extraEnvForChild },
-                  }) ?? resolveDefaultDaemonTerminalPresentation({
-                    host: selectedHost,
-                    agentId: catalogAgentId,
-                    configuredAcpBackend: backendTarget?.kind === 'configuredAcpBackend',
                   })
+                  : null;
+                // Resolve the selected host in the daemon's terminal context, before
+                // provider authentication can replace the child's configuration root.
+                // The same admitted endpoint serves hosted runners and optional clients.
+                const admittedHerdrContext = terminalRequest.requested === 'herdr' && terminalPresentation?.kind !== 'none'
+                  ? await prepareHerdrTerminalContext({ sessionName: terminalRequest.herdr.sessionName,
+                    existingSessionId: normalizedExistingSessionId || undefined })
                   : null;
                 const extraEnvForChild = {
                   ...spawnEnvironment.extraEnvForChild,
@@ -3839,10 +3862,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 await acceptanceHooks.onBeforeRunnerLaunchAccepted();
               } catch (error) {
                 cleanupSpawnResources();
-                if (sessionAttachCleanup) {
-                  await sessionAttachCleanup();
-                  sessionAttachCleanup = null;
-                }
+                await cleanupSessionAttachResources(error);
                 return {
                   type: 'error',
                   errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -4173,6 +4193,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             const { acceptedResult } = await registration;
             return acceptedResult;
               } else {
+                if (tmuxResult.launchDisposition !== 'not_started' || tmuxResult.cleanupIncomplete) {
+                  // Preserve launch inputs while an already-submitted command may
+                  // still consume them. The report path can identify a live runner.
+                  return {
+                    type: 'error',
+                    errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+                    errorMessage: 'Tmux runner launch could not be safely completed. Inspect tmux before retrying; no fallback runner was started.',
+                  };
+                }
                 tmuxFallbackReason = tmuxResult.error ?? 'tmux spawn failed';
                 logger.debug(`[DAEMON RUN] Failed to spawn in tmux: ${tmuxResult.error}, falling back to regular spawning`);
                 useTmux = false;
@@ -4186,12 +4215,19 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           const agentCommand = resolveCliSubcommandFromBackendTarget(backendTarget);
               const args = [
                 agentCommand,
-                '--happy-starting-mode', 'remote',
+                '--happy-starting-mode', terminalPresentation?.startingMode ?? 'remote',
                 '--started-by', 'daemon'
               ];
 
-              if (selectedHost && terminalPresentation?.kind === 'provider') {
+              if (selectedHost && (terminalPresentation?.kind === 'provider' || terminalPresentation?.kind === 'provider_attach')) {
                 args.push('--happy-terminal-mode', 'plain', '--happy-terminal-requested', selectedHost);
+                if (terminalRequest.requested === 'herdr' && admittedHerdrContext) args.push(
+                  '--happy-herdr-session-name', admittedHerdrContext.herdrSessionName,
+                  '--happy-herdr-socket-path', admittedHerdrContext.herdrSocketPath);
+                if (terminalRequest.requested === 'tmux') {
+                  args.push('--happy-tmux-target', terminalRequest.tmux.sessionName);
+                  if (terminalRequest.tmux.tmpDir) args.push('--happy-tmux-tmpdir', terminalRequest.tmux.tmpDir);
+                }
               } else if (tmuxRunnerRequested) {
                 const reason = tmuxFallbackReason ?? 'tmux was not used';
                 args.push(
@@ -4314,15 +4350,21 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 sessionName: string;
                 startingMode: 'local' | 'remote';
               }>): Promise<SpawnSessionResult> => {
-                const adapter = (await loadTerminalHostAdapters())[params.host];
+                const adapter = params.host === 'herdr'
+                  ? (await createDefaultTerminalHostRegistry({
+                    herdrSessionName: admittedHerdrContext?.herdrSessionName,
+                    herdrSocketPath: admittedHerdrContext?.herdrSocketPath,
+                  })).herdr
+                  : (await loadTerminalHostAdapters())[params.host];
                 const displayName = params.host === 'zellij' ? 'Zellij' : 'Herdr';
                 if (!adapter) {
                   cleanupSpawnResources();
-                  if (sessionAttachCleanup) await sessionAttachCleanup();
+                  await cleanupSessionAttachResources(new Error(`${displayName} installation unavailable`));
                   return {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
                     errorMessage: `${displayName} hosting requires a supported ${displayName} installation on this machine.`,
+                    errorDetail: { kind: 'terminal_host_unavailable', host: params.host, reason: 'installation_unavailable' },
                   };
                 }
                 const attachmentId = createTerminalAttachmentId();
@@ -4340,7 +4382,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     '--happy-terminal-mode', params.host,
                     '--happy-terminal-requested', params.host,
                     ...(params.host === 'herdr'
-                      ? ['--happy-herdr-session-name', params.sessionName]
+                      ? ['--happy-herdr-session-name', admittedHerdrContext?.herdrSessionName ?? params.sessionName,
+                        ...(admittedHerdrContext ? ['--happy-herdr-socket-path', admittedHerdrContext.herdrSocketPath] : [])]
                       : []),
                     '--happy-terminal-attachment-id', attachmentId,
                     ...sessionControlArgs,
@@ -4368,17 +4411,36 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                     disposeUnboundHost: async () => await adapter.dispose(handle!),
                   });
                 } catch (error) {
+                  let launchFailure = resolveTerminalHostLaunchFailure(error);
+                  let safeToDiscardInputs = launchFailure !== null && launchFailure.launchDisposition !== 'unconfirmed';
                   if (handle) {
-                    await adapter.dispose(handle).catch((disposalError) => {
-                      logger.warn(`[DAEMON RUN] Failed to dispose ${displayName} host after launch inspection failed`, disposalError);
-                    });
+                    try {
+                      await adapter.dispose(handle);
+                      safeToDiscardInputs = true;
+                    } catch {
+                      safeToDiscardInputs = false;
+                    }
                   }
-                  cleanupSpawnResources();
-                  if (sessionAttachCleanup) await sessionAttachCleanup();
+                  let failure = error;
+                  if (safeToDiscardInputs) {
+                    try {
+                      cleanupSpawnResources();
+                      await cleanupSessionAttachResources();
+                    } catch (cleanupError) {
+                      failure = new AggregateError([error, cleanupError], 'Terminal host runner launch failed with incomplete cleanup', { cause: error });
+                      launchFailure = { launchDisposition: launchFailure?.launchDisposition ?? 'stopped', cleanupIncomplete: true };
+                    }
+                  }
+                  logger.infoFile('[DAEMON RUN] Terminal host runner launch failed', {
+                    host: params.host,
+                    launchDisposition: safeToDiscardInputs ? launchFailure?.launchDisposition ?? 'stopped' : 'unconfirmed',
+                    cleanupIncomplete: !safeToDiscardInputs || launchFailure?.cleanupIncomplete === true || failure !== error,
+                  });
                   return {
                     type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-                    errorMessage: `${displayName} runner launch failed. Check ${displayName} before retrying: ${error instanceof Error ? error.message : String(error)}`,
+                    errorMessage: `${displayName} runner launch failed. Check ${displayName} before retrying: ${failure instanceof Error ? failure.message : String(failure)}`,
+                    errorDetail: resolveTerminalHostUnavailableSpawnErrorDetail(error),
                   };
                 }
               };
@@ -4394,7 +4456,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               if (terminalRequest.requested === 'herdr' && terminalPresentation?.kind === 'runner') {
                 return await launchRunnerInTerminalHost({
                   host: 'herdr',
-                  sessionName: terminalRequest.herdr.sessionName,
+                  sessionName: admittedHerdrContext?.herdrSessionName ?? terminalRequest.herdr.sessionName,
                   startingMode: terminalPresentation.startingMode ?? 'local',
                 });
               }
@@ -4431,10 +4493,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   if (!started.ok) {
                     logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
                     cleanupSpawnResources();
-                    if (sessionAttachCleanup) {
-                      await sessionAttachCleanup();
-                      sessionAttachCleanup = null;
-                    }
+                    await cleanupSessionAttachResources(new Error(started.errorMessage));
                     return {
                       type: 'error',
                       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
@@ -4546,10 +4605,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   spawnResourceCleanupOnFailure = null;
                   spawnResourceCleanupOnExit = null;
                 }
-                if (sessionAttachCleanup) {
-                  await sessionAttachCleanup();
-                  sessionAttachCleanup = null;
-                }
+                await cleanupSessionAttachResources(new Error('Failed to spawn Happier process - no PID returned'));
                 return {
                   type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
@@ -4566,7 +4622,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               });
               const regularTrackedSpawnOptions = buildTrackedSpawnOptions({
                 options: trackedSpawnOptions,
-                ...(terminalPresentation?.kind === 'provider' ? {} : { actualTerminal: { mode: 'plain' as const } }),
+                ...(terminalPresentation?.kind === 'provider' || terminalPresentation?.kind === 'provider_attach'
+                  ? {} : { actualTerminal: { mode: 'plain' as const } }),
               });
                   const trackedSession: TrackedSession = {
                     startedBy: 'daemon',
@@ -4633,21 +4690,28 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           errorMessage: 'Unexpected error in session spawning'
         };
               } catch (error) {
-                if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-                  spawnResourceCleanupOnFailure();
-                  spawnResourceCleanupOnFailure = null;
-              spawnResourceCleanupOnExit = null;
-            }
-            if (sessionAttachCleanup) {
-              await sessionAttachCleanup();
-              sessionAttachCleanup = null;
-            }
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                logger.debug('[DAEMON RUN] Failed to spawn session:', error);
+                let failure = error;
+                try {
+                  if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+                    const cleanup = spawnResourceCleanupOnFailure;
+                    spawnResourceCleanupOnFailure = null;
+                    spawnResourceCleanupOnExit = null;
+                    cleanup();
+                  }
+                } catch (cleanupError) {
+                  logger.infoFile('[DAEMON RUN] Spawn resource cleanup incomplete (spawn_resource_cleanup_incomplete)');
+                  failure = new AggregateError([failure, cleanupError], 'Session launch failed with incomplete resource cleanup', { cause: failure });
+                }
+                try { await cleanupSessionAttachResources(); } catch (cleanupError) {
+                  failure = new AggregateError([failure, cleanupError], 'Session launch failed with incomplete attach-file cleanup', { cause: failure });
+                }
+                const errorMessage = failure instanceof Error ? failure.message : String(failure);
+                logger.debug('[DAEMON RUN] Failed to spawn session:', failure);
                     return {
                       type: 'error',
                     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-                      errorMessage: `Failed to spawn session: ${errorMessage}`
+                      errorMessage: `Failed to spawn session: ${errorMessage}`,
+                      errorDetail: resolveTerminalHostUnavailableSpawnErrorDetail(error),
                     };
                   }
               });
@@ -5599,15 +5663,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             }
             connectedServiceRestartAmplificationGuard.transferPid(fromPid, toPid);
           },
-          shouldPreserveSessionMarkerOnExit: ({ pid, trackedSession }) => {
+          shouldPreserveSessionMarkerOnExit: async ({ pid, trackedSession }) => {
             if (connectedServicesRestartRequestedPids.has(pid)) return true;
-            if (trackedSession.publishedTerminalControlServiceabilityAttachmentLifecycle === 'borrowed') {
-              return false;
-            }
-            const terminal = trackedSession.happySessionMetadataFromLocalWebhook?.terminal
-              ?? trackedSession.hostedTerminal;
-            return Boolean(trackedSession.publishedTerminalControlServiceabilityAttachmentId)
-              || Boolean(terminal?.mode && terminal.mode !== 'plain');
+            return await shouldRetainTrackedTerminalHostExitMarker({
+              tracked: trackedSession, happyHomeDir: configuration.happyHomeDir,
+            });
           },
           onFinalTrackedSessionExitStaged: async ({ pid, trackedSession }) => {
             if (connectedServicesRestartRequestedPids.has(pid)) return;
@@ -5660,40 +5720,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               }
               return;
             }
-            if (attachmentInfo?.version !== 2) {
-              if (
-                trackedSession.publishedTerminalControlServiceabilityAttachmentId
-                || (terminal?.mode && terminal.mode !== 'plain')
-              ) {
-                throw new Error('terminal_attachment_unavailable_after_runner_exit');
-              }
-              return;
-            }
-            if (
-              trackedSession.publishedTerminalControlServiceabilityAttachmentId
-              && trackedSession.publishedTerminalControlServiceabilityAttachmentId !== attachmentInfo.attachmentId
-            ) {
-              return;
-            }
-
-            const agentId = resolveTrackedSessionCatalogAgentId(trackedSession);
-            const controlDescriptorStatus = await resolveTerminalAttachmentControlDescriptorStatusThroughCatalog(agentId, {
-              happyHomeDir: configuration.happyHomeDir,
-              sessionId,
-              attachmentId: attachmentInfo.attachmentId,
-            }).catch(() => 'missing' as const);
-            registerDisconnectedTerminalHostCandidate({
-              sessionId,
-              pid,
-              ...(trackedSession.activeTurnId ? { activeTurnId: trackedSession.activeTurnId } : {}),
-              happyHomeDir: configuration.happyHomeDir,
-              attachmentId: attachmentInfo.attachmentId,
-              handle: attachmentInfo.handle,
-              controlDescriptorStatus,
+            const candidate = await resolveTrackedSessionTerminalHostExitCandidate({
+              tracked: trackedSession, pid, happyHomeDir: configuration.happyHomeDir, attachmentInfo,
             });
+            if (!candidate) return;
+            registerDisconnectedTerminalHostCandidate(candidate);
             await superviseStartupDisconnectedTerminalHosts();
             if (disconnectedTerminalHostResultsBySessionId.get(sessionId)?.state === 'stopped') {
-              await retireDisconnectedTerminalHostCandidate({ sessionId, attachmentId: attachmentInfo.attachmentId });
+              await retireDisconnectedTerminalHostCandidate({ sessionId, attachmentId: candidate.attachmentId });
             }
           },
             });
@@ -8841,6 +8875,21 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
       sessionAttachCleanupByPid,
       getApiMachineForSessions: () => apiMachineForSessions,
       onChildExited,
+      onTrackedSessionHealthy: async (tracked) => {
+        await superviseTrackedOptionalTerminalPresentation({
+          tracked, happyHomeDir: configuration.happyHomeDir,
+          isCurrent: () => pidToTrackedSession.get(tracked.pid) === tracked
+            && !shutdownInitiated && typeof tracked.stopRequestedAtMs !== 'number'
+            && tracked.reportMarkerCustody?.retiring !== true,
+          loadTerminalHostAdapters,
+          probeSessionServiceability: probeSessionRunnerServiceability,
+          retireExactTerminalControlServiceability: async ({ sessionId, attachmentInfo }) =>
+            await retireTerminalControlServiceabilityForCurrentAccount({
+              sessionId, attachmentId: attachmentInfo.attachmentId,
+              terminalMode: attachmentInfo.terminal.mode ?? attachmentInfo.handle.kind,
+            }),
+        });
+      },
       controlPort,
       fileState,
       currentCliVersion: configuration.currentCliVersion,
@@ -8966,15 +9015,17 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 
       // Best-effort cleanup for provider-managed background processes (e.g. shared OpenCode server).
       // Important: do not tear down shared provider background processes while session runners are still
-      // tracked by this daemon. Some harnesses stop the daemon while externally-started sessions are
-      // still live (e.g. in-flight provider tests). Killing the shared OpenCode server in that state
-      // can wedge or abort those sessions mid-turn.
+      // tracked by this daemon. Runner admission precedes durable marker persistence, so a tracked
+      // startup runner may not yet appear in the managed-server custody scan. Some harnesses also
+      // stop the daemon while externally-started sessions remain live.
       if (pidToTrackedSession.size === 0) {
         try {
-          const { stopSharedManagedOpenCodeServerFromEnvBestEffort } = await import('@/backends/opencode/server/sharedManagedServer');
-          await stopSharedManagedOpenCodeServerFromEnvBestEffort();
+          const { stopSharedManagedOpenCodeServerFromEnvBestEffort, resolveManagedOpenCodeDaemonOwnerIdFromState } = await import('@/backends/opencode/server/sharedManagedServer');
+          await stopSharedManagedOpenCodeServerFromEnvBestEffort({
+            daemonInstanceId: resolveManagedOpenCodeDaemonOwnerIdFromState(fileState, configuration.activeServerId),
+          });
         } catch {
-          // best-effort only
+          logger.warn('[DAEMON RUN] Provider-managed server cleanup failed during shutdown');
         }
       }
 

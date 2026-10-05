@@ -494,7 +494,9 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
       }),
     };
   } catch (error) {
-    await materializedMcpConfig.cleanup();
+    try { await materializedMcpConfig.cleanup(); } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Claude terminal launch preparation failed with incomplete cleanup', { cause: error });
+    }
     throw error;
   }
 }

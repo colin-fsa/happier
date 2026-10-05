@@ -2,6 +2,7 @@ import { access, rmdir, unlink } from 'node:fs/promises';
 import { chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -19,6 +20,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 import { isTerminalHostStartupError } from '@/integrations/terminalHost/errors';
 import { isClaudeUnifiedTerminalRuntimeIssueError } from '@/backends/claude/unifiedTerminal/surfaceClaudeUnifiedTerminalRuntimeIssue';
 import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
+import { prepareOwnedTerminalSpawn } from '@/terminal/runtime/terminalLaunchSpec';
 
 import { createHerdrTerminalHostAdapter } from './adapter';
 import { withHerdrApi } from './herdrApi.testkit';
@@ -42,6 +44,90 @@ async function discardSpec(specPath: string): Promise<void> {
 }
 
 describe('Herdr terminal host creation', () => {
+  it.each(['spawned', 'failed'] as const)('preserves one native handoff and its actual %s startup evidence', async (expected) => {
+    await withHerdrApi(async (api) => {
+      const prepared = await prepareOwnedTerminalSpawn({
+        command: expected === 'spawned' ? process.execPath : '/nonexistent/happier-native-test',
+        args: expected === 'spawned' ? ['--version'] : [], cwd: tmpdir(), env: process.env,
+        reportNativeSpawn: true,
+        diagnostics: { sessionId: 'single-native-handoff', logsDir: tmpdir(), sessionExitDir: tmpdir() },
+      });
+      const boundary: { child?: ChildProcess; completed?: Promise<void> } = {};
+      api.beforeResponse.set('layout.apply', () => {
+        const request = api.requests.at(-1)!;
+        const root = request.params.root as { command: string[] };
+        const [command, ...args] = root.command;
+        boundary.child = spawn(command!, args, { cwd: tmpdir(), env: prepared.spawnEnv, stdio: 'ignore' });
+        boundary.completed = new Promise((resolve, reject) => {
+          boundary.child!.once('error', reject);
+          boundary.child!.once('exit', () => resolve());
+        });
+      });
+      try {
+        const options = { ...launch, spawnArgv: prepared.spawnArgv, spawnEnv: prepared.spawnEnv, preparedLaunch: prepared };
+        await adapterFor(api.socketPath).createOrAttachHost(options);
+        await boundary.completed;
+        expect(await prepared.awaitNativeSpawnResult!(Date.now() + 1_000, 10)).toBe(expected);
+        const root = api.requests.find(request => request.method === 'layout.apply')?.params.root as { command: string[] };
+        expect(root.command).toEqual(prepared.spawnArgv);
+      } finally {
+        boundary.child?.kill('SIGKILL');
+        await boundary.completed;
+        await prepared.cleanupUnreadArtifacts?.();
+        const submittedSpec = readSpecPath(api.requests);
+        if (submittedSpec !== prepared.launchSpecPath) await discardSpec(submittedSpec);
+      }
+    });
+  });
+  it('reports actionable host-version admission before a managed command is submitted', async () => {
+    await withHerdrApi(async (api) => {
+      await expect(adapterFor(api.socketPath).createOrAttachHost(launch)).rejects.toMatchObject({
+        code: 'terminal_host_startup_failed', hostKind: 'herdr', reason: 'server_version_unsupported',
+        launchFailure: { launchDisposition: 'not_started', cleanupIncomplete: false },
+      });
+      expect(api.requests.map((request) => request.method)).toEqual(['session.snapshot']);
+      expect([...api.panes]).toEqual([]);
+    }, { serverVersion: '0.9.1' });
+  });
+  it('proves non-creation when server admission fails before any layout is submitted', async () => {
+    await withHerdrApi(async (api) => {
+      api.faults.set('session.snapshot', 'error');
+      await expect(adapterFor(api.socketPath).createOrAttachHost(launch)).rejects.toMatchObject({
+        launchDisposition: 'not_started', cleanupIncomplete: false,
+      });
+      expect(api.requests.some(request => request.method === 'layout.apply')).toBe(false);
+    });
+  });
+  it.each([false, true])('submits large staged input once, but never submits or replays a partial failed write (fail=%s)', async (fail) => {
+    await withHerdrApi(async (api) => {
+      api.panes.add('managed');
+      const text = '\\🌈'.repeat(400_000);
+      if (fail) api.beforeResponse.set('pane.send_input', () => {
+        if (api.requests.filter((request) => request.method === 'pane.send_input').length === 2) {
+          api.faults.set('pane.send_input', 'disconnect');
+        }
+      });
+      const result = await createHerdrTerminalHostAdapter({
+        binary: 'herdr', sessionName: 'work', actionTimeoutMs: 5_000, startupTimeoutMs: 5_000,
+      }).injectUserPrompt({
+        kind: 'herdr', sessionName: 'work', socketPath: api.socketPath,
+        terminalId: 'terminal_1', paneId: 'managed',
+        attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared' },
+      }, { text, multiline: false, origin: { kind: 'rpc', nonce: 'large-prompt' }, scheduling: {} });
+      const writes = api.requests.filter((request) => request.method === 'pane.send_input');
+      const enters = api.requests.filter((request) => request.method === 'pane.send_keys');
+      if (fail) {
+        expect(result).toMatchObject({ status: 'failed', phase: 'during_write', duplicateRisk: 'possible' });
+        expect(writes).toHaveLength(2);
+        expect(enters).toEqual([]);
+      } else {
+        expect(result).toMatchObject({ status: 'injected', bytesWritten: Buffer.byteLength(text) });
+        expect(writes.map((request) => request.params.text).join('')).toBe(text);
+        expect(enters.map((request) => request.params.keys)).toEqual([['enter']]);
+      }
+    }, { maxInitialRequestBytes: 1024 * 1024 });
+  });
+
   it('refuses recovery into an older running server without replacing the retained host', async () => {
     await withHerdrApi(async (api) => {
       api.panes.add('managed');

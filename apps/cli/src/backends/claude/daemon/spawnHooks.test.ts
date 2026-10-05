@@ -35,6 +35,19 @@ afterEach(async () => {
 });
 
 describe('claudeDaemonSpawnHooks.validateSpawn', () => {
+  it('keeps the admitted unified selection after account defaults change', async () => {
+    const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
+    for (const pinned of [true, false]) {
+      const selected = claudeDaemonSpawnHooks.resolveTerminalPresentation!({
+        host: 'tmux', runtimeSelection: {}, processEnv: {},
+        accountSettings: accountSettingsParse({ claudeUnifiedTerminalEnabled: pinned }),
+      });
+      expect(claudeDaemonSpawnHooks.resolveTerminalPresentation!({
+        host: 'tmux', runtimeSelection: {}, processEnv: selected.childEnv ?? {},
+        accountSettings: accountSettingsParse({ claudeUnifiedTerminalEnabled: !pinned }),
+      }).kind).toBe(selected.kind);
+    }
+  });
   it('uses the current Herdr pane for unified Claude while preserving detached hosts elsewhere', async () => {
     const { claudeDaemonSpawnHooks } = await import('./spawnHooks');
     const selection = { host: 'herdr' as const, runtimeSelection: {}, processEnv: {} };

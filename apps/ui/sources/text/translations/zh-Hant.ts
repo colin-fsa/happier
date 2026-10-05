@@ -4303,6 +4303,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
   newSession: {
+    terminalHostUnavailableTitle: '終端宿主無法使用',
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `請在此裝置上安裝或更新 ${host} 並重新啟動其伺服器，或選擇其他終端宿主。草稿已保留。`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -8490,6 +8492,11 @@ settingsSession: {
 	    },
 
     machine: {
+        tmux: {
+            overrideTitle: '覆蓋帳戶預設值',
+            overrideEnabledSubtitle: '此裝置的新工作階段使用自己的終端宿主。',
+            overrideDisabledSubtitle: '新工作階段繼承帳戶的終端宿主。',
+        },
         launchNewSessionInDirectory: '在目錄中啟動新工作階段',
         offlineUnableToSpawn: '裝置離線時無法啟動',
         offlineHelp: '• 確保您的電腦在線上\n• 執行 `happier daemon status` 進行診斷\n• 您是否在執行最新的 CLI 版本？請執行 `happier self update`',

@@ -1,10 +1,44 @@
-import { chmod, readFile, stat } from 'node:fs/promises';
+import { chmod, readFile, stat, unlink, rmdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Instrument only the external write boundary; all owned filesystem cleanup stays real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+});
 
 import { createHerdrLaunchSpec } from './launchSpec';
 
 describe('Herdr managed launch', () => {
+  it.skipIf(process.platform === 'win32')('retains non-creation and incomplete cleanup evidence after a partial handoff write', async () => {
+    let specPath = '';
+    const originalWrite = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).writeFile;
+    // Filesystem writes can fail after producing bytes; preserve real owned filesystem IO.
+    const write = vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      specPath = String(args[0]);
+      await originalWrite(...args);
+      await chmod(dirname(specPath), 0o500);
+      throw Object.assign(new Error('Partial filesystem write failed'), { code: 'EIO' });
+    });
+    try {
+      await expect(createHerdrLaunchSpec({
+        workingDirectory: tmpdir(), spawnArgv: ['/managed/happier'], spawnEnv: {},
+      })).rejects.toMatchObject({
+        launchDisposition: 'not_started', cleanupIncomplete: true,
+        errors: [expect.objectContaining({ code: 'EIO' }), expect.objectContaining({ code: 'EACCES' })],
+      });
+      await expect(readFile(specPath, 'utf8')).resolves.toContain('/managed/happier');
+    } finally {
+      write.mockImplementation(originalWrite);
+      if (specPath) {
+        await chmod(dirname(specPath), 0o700);
+        await unlink(specPath);
+        await rmdir(dirname(specPath));
+      }
+    }
+  });
   it.skipIf(process.platform === 'win32')('reports failure to remove an unread launch handoff instead of silently leaving secrets behind', async () => {
     const launch = await createHerdrLaunchSpec({
       workingDirectory: '/tmp', spawnArgv: ['/managed/happier'], spawnEnv: { TEST_SECRET: 'secret' },

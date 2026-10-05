@@ -3,15 +3,18 @@ import axios, { AxiosHeaders } from 'axios';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { readTerminalAttachmentInfo, writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createStopSession } from './stopSession';
 import { createOnChildExited } from './onChildExited';
+import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
 import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
 import type { TrackedSession } from '../types';
 import type { StopSessionResult } from './stopSessionContract';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
+import { probeSessionRunnerServiceability } from './isSessionRunnerActive';
 
 // Socket.IO is an external network boundary. A superseded projection must not write to it.
 vi.mock('socket.io-client', async (importOriginal) => ({
@@ -43,6 +46,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import type { TerminalHostAdapter, TerminalHostHandle } from '@/integrations/terminalHost/_types';
 import {
   resolveDisconnectedTerminalHostResumeGate,
+  shouldRetainTrackedTerminalHostExitMarker,
   superviseDisconnectedTerminalHostCandidate,
   type DisconnectedTerminalHostCandidate,
 } from './disconnectedTerminalHostSupervision';
@@ -61,6 +65,83 @@ const handle: TerminalHostHandle & { attachmentId: NonNullable<TerminalHostHandl
 };
 
 describe('disconnected terminal-host supervision', () => {
+  it.each(['absent', 'unreadable', 'owned', 'borrowed'] as const)(
+    'settles an optional controller exit against its %s current terminal custody', async (custody) => {
+      await withConfiguredDaemonTestHome({ prefix: `optional-marker-${custody}-` }, async ({ homeDir }) => {
+        const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' });
+        await once(child, 'spawn');
+        const pid = child.pid!;
+        await once(child, 'exit');
+        const sessionId = 'session-optional-marker';
+        const terminal = { mode: 'tmux' as const, tmux: { target: `${handle.sessionName}:${handle.paneId}` } };
+        const tracked: TrackedSession = {
+          pid, startedBy: 'daemon', happySessionId: sessionId,
+          hostedTerminal: terminal,
+          publishedTerminalControlServiceabilityAttachmentId: handle.attachmentId,
+          spawnOptions: { directory: homeDir, backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+            terminal: { mode: 'tmux' } },
+        };
+        await writeSessionMarker({ pid, happySessionId: sessionId });
+        if (custody === 'unreadable') {
+          const directory = join(homeDir, 'terminal', 'sessions');
+          await mkdir(directory, { recursive: true });
+          await writeFile(join(directory, `${sessionId}.json`), '{', 'utf8');
+        } else if (custody !== 'absent') {
+          await writeTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId, handle,
+            attachmentId: handle.attachmentId, terminal, lifecycle: custody });
+        }
+        const tracking = new Map([[pid, tracked]]);
+        await createOnChildExited({ pidToTrackedSession: tracking, spawnResourceCleanupByPid: new Map(),
+          sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+          shouldPreserveSessionMarkerOnExit: async () => await shouldRetainTrackedTerminalHostExitMarker({
+            tracked, happyHomeDir: homeDir,
+          }),
+        })(pid, { reason: 'process-exited', code: 0, signal: null });
+        expect(tracking.has(pid)).toBe(false);
+        expect(Boolean(await readSessionMarkerForPid(pid))).toBe(custody === 'owned' || custody === 'unreadable');
+      });
+    },
+  );
+
+  it('disposes an exact optional client after its controller is proven absent, preserving a newer remote projection', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'optional-controller-exit-' }, async ({ homeDir }) => {
+      const client = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      await once(client, 'spawn');
+      const exit = once(client, 'exit');
+      const sessionId = 'session-live-1';
+      const metadata = JSON.stringify({ terminal: { mode: 'tmux', controlServiceabilityV1: {
+        v: 1, attachmentId: 'newer-remote-attachment', state: 'servable', observedAt: 20,
+      } }, unrelated: 'retained' });
+      const raw = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata });
+      const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, statusText: 'OK', headers: {},
+        config: { headers: new AxiosHeaders() }, data: { session: raw } });
+      const adapter: TerminalHostAdapter = {
+        kind: 'tmux', createOrAttachHost: async () => handle,
+        injectUserPrompt: async () => ({ status: 'injected', at: 1, bytesWritten: 1 }), interruptTurn: async () => {},
+        evaluateLiveness: async () => ({ paneAlive: client.exitCode === null && client.signalCode === null, observedAt: Date.now() }),
+        dispose: async () => { client.kill('SIGTERM'); await exit; },
+      };
+      try {
+        await writeTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId, attachmentId: handle.attachmentId, handle,
+          terminal: { mode: 'tmux', tmux: { target: `${handle.sessionName}:${handle.paneId}` } } });
+        const candidate = { sessionId, pid: process.pid, happyHomeDir: homeDir, attachmentId: handle.attachmentId, handle,
+          controlDescriptorStatus: 'not_applicable' as const, spawnOptions: {
+            directory: homeDir, backendTarget: { kind: 'builtInAgent' as const, agentId: 'opencode' }, terminal: { mode: 'tmux' as const },
+          } } satisfies DisconnectedTerminalHostCandidate;
+        await expect(superviseDisconnectedTerminalHostCandidate({ candidate, terminalHostAdapters: { tmux: adapter },
+          probeSessionServiceability: async (id) => await probeSessionRunnerServiceability({ sessionId: id, trackedSessions: [],
+            probeCapability: async () => { throw new Error('Absent runner cannot provide RPC controls'); } }),
+          retireExactTerminalControlServiceability: async ({ attachmentInfo }) => await retireExactTerminalControlServiceability({
+            credentials: { token: 'synthetic-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
+            sessionId, attachmentId: attachmentInfo.attachmentId, terminalMode: attachmentInfo.terminal.mode,
+          }),
+        })).resolves.toEqual({ state: 'stopped' });
+        expect(client.signalCode).toBe('SIGTERM');
+        expect(await readTerminalAttachmentInfo({ happyHomeDir: homeDir, sessionId })).toBeNull();
+        expect(raw.metadata).toBe(metadata);
+      } finally { get.mockRestore(); client.kill('SIGTERM'); await exit; }
+    });
+  });
   async function createStopFixture(
     homeDir: string,
     adapter: TerminalHostAdapter,

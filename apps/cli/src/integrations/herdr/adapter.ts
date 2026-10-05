@@ -18,6 +18,7 @@ import type {
 import { resolveTerminalPromptWriteTimeoutMs } from '@/agent/runtime/terminal/injection/promptWriteTimeout';
 import { createTerminalHostDeadline, remainingTerminalHostDeadlineMs } from '@/integrations/terminalHost/deadline';
 import { logger } from '@/ui/logger';
+import { TerminalHostCreationError, TerminalHostStartupError, resolveTerminalHostLaunchFailure } from '@/integrations/terminalHost/errors';
 
 import { createHerdrClient, HerdrApiError, HerdrPaneCreationError, type HerdrClient } from './client';
 import { createHerdrLaunchSpec } from './launchSpec';
@@ -37,6 +38,24 @@ function paneFailure(error: unknown): boolean {
   return error instanceof HerdrApiError && error.code === 'pane_not_found';
 }
 
+/** Admit the endpoint before preparing a command; no managed process exists yet. */
+export async function admitHerdrServer(client: HerdrClient): Promise<string> {
+  try {
+    return await client.ensureServer();
+  } catch (error) {
+    if (error instanceof HerdrApiError && error.code === 'unsupported_server_version') {
+      throw new TerminalHostStartupError({
+        hostKind: 'herdr', reason: 'server_version_unsupported',
+        message: 'The running Herdr server is older than the supported version.', cause: error,
+        launchFailure: { launchDisposition: 'not_started', cleanupIncomplete: false },
+      });
+    }
+    throw new TerminalHostCreationError([error], {
+      launchDisposition: 'not_started', cleanupIncomplete: false,
+    }, 'Herdr server admission failed before the managed command was submitted');
+  }
+}
+
 function failedInjection(
   reason: Extract<TerminalInputInjectionResult, { status: 'failed' }>['reason'],
   phase: Extract<TerminalInputInjectionResult, { status: 'failed' }>['phase'],
@@ -50,6 +69,7 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
   actionTimeoutMs: number;
   startupTimeoutMs: number;
   sessionName?: string;
+  socketPath?: string;
   client?: HerdrClient;
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
 }>): TerminalHostAdapter {
@@ -57,6 +77,7 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
   const client = params.client ?? createHerdrClient({
     binary: params.binary,
     sessionName,
+    socketPath: params.socketPath,
     actionTimeoutMs: params.actionTimeoutMs,
     startupTimeoutMs: params.startupTimeoutMs,
   });
@@ -127,7 +148,7 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
   return {
     kind: 'herdr',
     async createOrAttachHost(opts) {
-      const launchClient = params.client || opts.sessionName === sessionName
+      const launchClient = params.client || params.socketPath || opts.sessionName === sessionName
         ? client
         : createHerdrClient({
             binary: params.binary,
@@ -135,15 +156,26 @@ export function createHerdrTerminalHostAdapter(params: Readonly<{
             actionTimeoutMs: params.actionTimeoutMs,
             startupTimeoutMs: params.startupTimeoutMs,
           });
-      await launchClient.ensureServer();
-      const launch = await createHerdrLaunchSpec(opts);
+      await admitHerdrServer(launchClient);
+      let launch;
+      try {
+        launch = opts.preparedLaunch
+          ? { argv: opts.preparedLaunch.spawnArgv, specPath: opts.preparedLaunch.launchSpecPath,
+              discard: opts.preparedLaunch.cleanupUnreadArtifacts }
+          : await createHerdrLaunchSpec(opts);
+      } catch (error) {
+        if (resolveTerminalHostLaunchFailure(error)) throw error;
+        throw new TerminalHostCreationError([error], {
+          launchDisposition: 'not_started', cleanupIncomplete: false,
+        }, 'Herdr launch preparation failed before the managed command was submitted');
+      }
       let pane;
       try {
         pane = await launchClient.createPane({
           label: opts.label ?? opts.sessionName,
           cwd: opts.workingDirectory,
           argv: launch.argv,
-          env: {},
+          env: opts.preparedLaunch ? opts.spawnEnv : {},
         });
       } catch (error) {
         let failure = error;

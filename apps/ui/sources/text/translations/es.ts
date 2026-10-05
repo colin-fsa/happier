@@ -4863,6 +4863,8 @@ export const es: TranslationStructure = {
   },
 
   newSession: {
+    terminalHostUnavailableTitle: "Host de terminal no disponible",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `Instala o actualiza ${host} y reinicia su servidor en esta máquina, o elige otro host de terminal. Se conserva tu borrador.`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -10625,11 +10627,9 @@ settingsSession: {
     unknownPath: "ruta desconocida",
     previousSessionsTitle: "Sesiones anteriores (hasta las 5 más recientes)",
     tmux: {
-      overrideTitle: "Sobrescribir la configuración global de tmux",
-      overrideEnabledSubtitle:
-        "La configuración personalizada de tmux se aplica a las nuevas sesiones en esta máquina.",
-      overrideDisabledSubtitle:
-        "Las nuevas sesiones usan la configuración global de tmux.",
+      overrideTitle: "Sobrescribir el valor del perfil",
+      overrideEnabledSubtitle: "Esta máquina usa su propio host de terminal para las sesiones nuevas.",
+      overrideDisabledSubtitle: "Las sesiones nuevas heredan el host de terminal de tu cuenta.",
       notDetectedSubtitle: "tmux no se detecta en esta máquina.",
       notDetectedMessage:
         "tmux no se detecta en esta máquina. Instala tmux y actualiza la detección.",

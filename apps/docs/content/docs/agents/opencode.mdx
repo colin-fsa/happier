@@ -140,6 +140,12 @@ A separate `happier attach` client stays independent. Close it in its own termin
 the app's detach action does not close that client. Its exit also does not detach a
 different TUI owned by the session runner.
 
+In development builds, a client admitted inside its restored Herdr pane after a
+server restart is managed instead: **Detach terminal** closes that native client
+while preserving the restored shell and the same running OpenCode session.
+See [Attach to a running session](/sessions/attach-to-session) for the restoration
+requirements.
+
 You can later run `happier attach <session-id>` from a terminal on the same machine to get back into the OpenCode TUI.
 In current development builds, a session with a terminal host reopens its managed
 TUI in that existing host; attachment does not merely show the waiting Happier
@@ -175,7 +181,8 @@ After attaching:
 - the app still stays connected and writable against the same session and transcript.
 
 In current development builds, a standalone attach client does not advertise an
-app-managed detach action. Close that client in its terminal when you are done.
+app-managed detach action unless the controller admits it as a managed restored
+Herdr client. Close an independent client in its terminal when you are done.
 
 This is the main “start in the app, continue in the terminal” workflow for OpenCode.
 
@@ -273,6 +280,7 @@ your own `OPENCODE_PASSWORD`.
 ## Notes
 
 - Resume availability is session-specific in Happier: the session must have valid OpenCode resume metadata, and your current backend/settings must allow resume.
+- Current development source reconciles exact saved message identities when resuming an existing OpenCode session, so settled native-terminal turns missing from Happier can be recovered without duplicating committed messages. Import identities preserve opaque IDs without delimiter collisions; older import identities require a separate matching native-session identity. If older history lacks provable identities, Happier reports an incomplete-history notice instead of guessing; those older rows may remain missing, while new native turns continue to sync. Failed or malformed history reads are not treated as empty history. These corrections are not available in CLI 0.2.12 stable.
 - Attach availability is also session-specific: the session must have the metadata/context Happier needs to reopen that OpenCode session locally.
 - Model, mode, and permission behavior can still vary by installed OpenCode runtime.
 - Tool events are normalized into Happier’s canonical tool timeline.

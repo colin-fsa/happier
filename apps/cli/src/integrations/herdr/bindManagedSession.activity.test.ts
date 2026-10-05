@@ -15,7 +15,14 @@ vi.mock('socket.io-client', async (importOriginal) => ({
 describe('managed Herdr activity', () => {
   it('projects pending remote approvals before thinking and clears them through the real session state', async () => {
     const sessionSocket = createApiSessionSocketStub({
-      emitWithAck: async (event, payload) => {
+      emitWithAck: async (event, payload, socket) => {
+        if (event === 'update-metadata') {
+          const update = payload as { metadata: string; expectedVersion: number };
+          socket.trigger('update', { id: 'metadata-retirement', seq: update.expectedVersion + 1, createdAt: Date.now(),
+            body: { t: 'update-session', sid: 'session-remote-approval',
+              metadata: { version: update.expectedVersion + 1, value: update.metadata } } });
+          return { result: 'success', metadata: update.metadata, version: update.expectedVersion + 1 };
+        }
         if (event === 'update-state') {
           const update = payload as { agentState: unknown; expectedVersion: number };
           return { result: 'success', agentState: update.agentState, version: update.expectedVersion + 1 };
@@ -55,6 +62,13 @@ describe('managed Herdr activity', () => {
       await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith('pane.report_agent', expect.objectContaining({ state: 'working' })));
       session.keepAlive(false, 'remote');
       await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith('pane.report_agent', expect.objectContaining({ state: 'idle' })));
+      await session.updateMetadata(metadata => ({ ...metadata, terminal: {
+        mode: 'herdr', herdr: { sessionName: 'test', socketPath: '/tmp/test-herdr.sock', terminalId: 'term_42' },
+        controlServiceabilityV1: { v: 1, attachmentId: 'retired-presenter', state: 'unknown', observedAt: Date.now(), retired: true },
+      } }));
+      await vi.waitFor(() => expect(request).toHaveBeenLastCalledWith('pane.release_agent', expect.objectContaining({ pane_id: 'w1:p2' })));
+      // A headless session remains alive, but its old presenter's subscription must be gone.
+      expect(session.listenerCount('local-presence')).toBe(0);
     } finally {
       await session.close();
       vi.unstubAllGlobals();

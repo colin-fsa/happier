@@ -65,8 +65,10 @@ export async function createSessionAttachFile(params: {
   const cleanup = async () => {
     try {
       await unlink(filePath);
-    } catch {
-      // ignore
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return;
+      logger.infoFile('[daemon] Session attach-file cleanup incomplete (session_attach_cleanup_incomplete)');
+      throw error;
     }
   };
 

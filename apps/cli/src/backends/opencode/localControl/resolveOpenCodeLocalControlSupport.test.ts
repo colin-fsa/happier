@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { resolveOpenCodeLocalControlSupport } from './resolveOpenCodeLocalControlSupport';
 
 describe('resolveOpenCodeLocalControlSupport', () => {
+  it('supports an optional hosted client without assigning the headless controller a TTY', () => {
+    const hosted = { backendMode: 'server' as const, hasTTY: false, hasHostedTerminal: true };
+    expect(resolveOpenCodeLocalControlSupport(hosted)).toEqual({ ok: true });
+    expect(resolveOpenCodeLocalControlSupport({ ...hosted, backendMode: 'acp' })).toEqual({ ok: false, reason: 'backend_mode_unsupported' });
+  });
   it('supports server-backed sessions with a tty even when started by the daemon', () => {
     expect(resolveOpenCodeLocalControlSupport({
       backendMode: 'server',

@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -45,6 +46,102 @@ function createRunnerScriptHarness() {
 }
 
 describe('terminal_launch_spec_runner.cjs', () => {
+  it('keeps a genuine native spawn receipt when Node reports a later process operation error', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-'));
+    const spawnResultPath = join(directory, 'native-startup.json');
+    const { child, module } = createRunnerScriptHarness();
+    const runLaunchSpec = module.exports.runLaunchSpec as (spec: {
+      command: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv;
+      diagnostics: { logsDir: string; sessionExitDir: string; spawnResultPath: string };
+    }) => Promise<number>;
+    try {
+      const result = runLaunchSpec({ command: 'native', args: [], cwd: directory, env: {},
+        diagnostics: { logsDir: directory, sessionExitDir: directory, spawnResultPath } });
+      const failed = expect(result).rejects.toThrow('native operation failed after startup');
+      child.emit('spawn');
+      child.emit('error', new Error('native operation failed after startup'));
+      await failed;
+      expect(JSON.parse(await readFile(spawnResultPath, 'utf8'))).toEqual({ status: 'spawned' });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+  it('reports unexpected launch-directory content when consuming the handoff', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-handoff-cleanup-'));
+    const directory = await mkdtemp(join(root, 'happier-terminal-launch-'));
+    const specPath = join(directory, 'launch.json');
+    const unexpected = join(directory, 'unexpected');
+    await writeFile(specPath, JSON.stringify({
+      command: 'native', args: [], cwd: root, env: {},
+      diagnostics: { logsDir: root, sessionExitDir: root },
+    }));
+    await writeFile(unexpected, 'retained');
+    try {
+      const scriptRequire = createRequire(resolve(__dirname, '../../../scripts/terminal_launch_spec_runner.cjs'));
+      const { readLaunchSpecFile } = scriptRequire('./terminal_launch_spec_runner.cjs') as {
+        readLaunchSpecFile(path: string): Promise<unknown>;
+      };
+      await readLaunchSpecFile(specPath);
+      await expect(readFile(unexpected, 'utf8')).resolves.toBe('retained');
+      await expect(readFile(join(root, 'terminal-launch-cleanup.log'), 'utf8')).resolves.toContain('terminal_launch_artifact_cleanup_incomplete:launch_handoff');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['spawned', 'failed'] as const)('reports incomplete artifact cleanup without masking native %s outcome', async (status) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-launcher-cleanup-fixture-'));
+    const configDir = join(directory, 'happier-claude-mcp-config-private');
+    const configPath = join(configDir, 'happier-claude-mcp-config.test.json');
+    const unexpected = join(configDir, 'unexpected');
+    const specPath = join(directory, 'launch.json');
+    await mkdir(configDir);
+    await writeFile(configPath, '{}');
+    await writeFile(unexpected, 'retained');
+    await writeFile(specPath, JSON.stringify({
+      command: status === 'spawned' ? process.execPath : join(directory, 'missing-native'),
+      args: status === 'spawned' ? ['-e', 'process.exit(0)'] : [],
+      cwd: directory, env: {}, cleanupPaths: [configPath],
+      diagnostics: { sessionId: 'fixture', logsDir: directory, sessionExitDir: directory },
+    }));
+    try {
+      const child = spawn(process.execPath, [resolve(__dirname, '../../../scripts/terminal_launch_spec_runner.cjs'), specPath], { stdio: 'ignore' });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => resolve(code));
+      });
+      if (status === 'spawned') expect(code).toBe(0);
+      else expect(code).not.toBe(0);
+      await expect(readFile(unexpected, 'utf8')).resolves.toBe('retained');
+      await expect(readFile(join(directory, 'terminal-launch-cleanup.log'), 'utf8')).resolves.toContain('terminal_launch_artifact_cleanup_incomplete');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['spawned', 'failed'] as const)('reports actual native %s through the hosted launch diagnostics boundary', async (status) => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-'));
+    const specPath = join(directory, 'launch.json');
+    const spawnResultPath = join(directory, 'native-startup.json');
+    await writeFile(spawnResultPath, JSON.stringify({ status: 'pending' }));
+    await writeFile(specPath, JSON.stringify({
+      command: status === 'spawned' ? process.execPath : join(directory, 'missing-native'),
+      args: status === 'spawned' ? ['-e', 'process.exit(0)'] : [],
+      cwd: directory, env: {}, inheritStderr: true,
+      diagnostics: { sessionId: 'fixture', logsDir: directory, sessionExitDir: directory, spawnResultPath },
+    }));
+    try {
+      const child = spawn(process.execPath, [resolve(__dirname, '../../../scripts/terminal_launch_spec_runner.cjs'), specPath], { stdio: 'ignore' });
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => resolve(code));
+      });
+      if (status === 'spawned') expect(code).toBe(0);
+      else expect(code).not.toBe(0);
+      expect(JSON.parse(await readFile(spawnResultPath, 'utf8'))).toEqual({ status });
+      await expect(readFile(join(directory, 'terminal-launch-cleanup.log'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it('preserves inherited native stderr instead of changing its terminal identity', async () => {
     const { child, module, spawn } = createRunnerScriptHarness();
     const runLaunchSpec = module.exports.runLaunchSpec as (spec: {

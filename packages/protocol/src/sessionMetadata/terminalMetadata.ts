@@ -26,6 +26,15 @@ function normalizeTerminalWireSelectors(value: unknown): unknown {
   };
 }
 
+export function createHerdrTerminalMetadataSchema(zod: typeof z) {
+  return zod.object({
+    sessionName: zod.string(),
+    socketPath: zod.string(),
+    terminalId: zod.string(),
+    paneId: zod.string().optional(),
+  });
+}
+
 export function createSessionTerminalMetadataSchema(zod: typeof z) {
   const terminalModeSchema = zod.enum(['plain', 'tmux', 'zellij', 'herdr', 'windows_terminal', 'windows_console']);
   const requestedModeSchema = zod.enum(['plain', 'tmux', 'zellij', 'herdr', ...WINDOWS_REMOTE_SESSION_LAUNCH_MODES]);
@@ -58,14 +67,7 @@ export function createSessionTerminalMetadataSchema(zod: typeof z) {
           socketDirV1: zod.string().optional(),
         })
         .optional(),
-      herdr: zod
-        .object({
-          sessionName: zod.string(),
-          socketPath: zod.string(),
-          terminalId: zod.string(),
-          paneId: zod.string().optional(),
-        })
-        .optional(),
+      herdr: createHerdrTerminalMetadataSchema(zod).optional(),
       windows: zod
         .object({
           host: zod.enum(['windows_terminal', 'console']),

@@ -21,6 +21,7 @@ import { configuration } from '@/configuration';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 
 import { isPidSafeHappySessionProcess } from '../pidSafety';
+import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
 import type { TrackedSession } from '../types';
 import { recordTerminalHostKillAudit } from '@/daemon/sessionKillAudit';
 import {
@@ -276,15 +277,16 @@ export function createStopSession(params: Readonly<{
       });
     };
     if (!isPidFallback) {
-      const terminalModes = pidsToStop.map((pid) => {
+      const terminalModes = await Promise.all(pidsToStop.map(async (pid) => {
+        const session = pidToTrackedSession.get(pid);
+        if (session && (await resolveTrackedSessionTerminalPresentation(session))?.kind === 'provider_attach') return 'plain';
         const provenTerminalHostKind = params.provenTerminalHostKindsByPid?.get(pid);
         if (provenTerminalHostKind) return provenTerminalHostKind;
-        const session = pidToTrackedSession.get(pid);
         if (!session) return undefined;
         if (typeof session.tmuxSessionId === 'string') return 'tmux';
         const terminal = (session.spawnOptions as { terminal?: { mode?: unknown } } | undefined)?.terminal;
         return typeof terminal?.mode === 'string' ? terminal.mode : undefined;
-      });
+      }));
       if (params.requireTerminalTopologyProof && terminalModes.some((mode) => mode === undefined)) {
         logWarning(`[DAEMON RUN] Refusing to stop marker-derived session ${normalizedSessionId} without explicit terminal topology provenance`);
         return incompleteStopSession('missing_topology_proof');
@@ -569,6 +571,13 @@ export function createStopSession(params: Readonly<{
           sessionId: normalizedSessionId,
           trackedPids: pidsToStop,
         });
+      } else if (params.areTrackedRunnersExited) {
+        // Identity inspection may await OS discovery while the runner exits. Refusal to
+        // signal remains fail-closed, but it is not a physical liveness observation.
+        runnersExited = await params.areTrackedRunnersExited({
+          sessionId: normalizedSessionId,
+          trackedPids: pidsToStop,
+        }).catch(() => false);
       }
       if (!runnersExited) {
         logWarning(

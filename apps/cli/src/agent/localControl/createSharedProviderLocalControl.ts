@@ -2,6 +2,7 @@ import { createAgentLocalControlState } from '@/agent/localControl/createAgentLo
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { SessionProviderCliAttachPrepareRequestV1 } from '@happier-dev/protocol';
 
 import type { AttachedTerminalSupervisor } from './createAttachedTerminalSupervisor';
 
@@ -23,10 +24,13 @@ export function createSharedProviderLocalControl<TTarget>(params: Readonly<{
   onSessionSwap: (session: ApiSessionClient) => Promise<void>;
   onTerminalExit: () => Promise<void>;
   switchToLocal: () => Promise<boolean>;
+  observeTerminalClient: (observation: NonNullable<SessionProviderCliAttachPrepareRequestV1['terminalClient']>) => Promise<boolean>;
   dispose: () => Promise<void>;
 }> {
   let currentMode: Mode = params.supported && params.startingMode === 'local' ? 'local' : 'remote';
   let attachedTarget: TTarget | null = null;
+  let attaching: Readonly<{ purpose: 'attach' | 'observation'; session: ApiSessionClient;
+    target: TTarget; completion: Promise<boolean> }> | null = null;
 
   const buildController = (session: ApiSessionClient) => createLocalRemoteModeController({
     session,
@@ -70,6 +74,21 @@ export function createSharedProviderLocalControl<TTarget>(params: Readonly<{
     const session = params.getSession();
     const target = await params.resolveTarget();
     if (!session || !target) return false;
+    const pending = attaching;
+    if (pending) {
+      if (pending.purpose === 'attach' && pending.session === session && params.isSameTarget(pending.target, target)) return await pending.completion;
+      await pending.completion;
+      // Re-resolve preparation/identity after the preceding client has been admitted.
+      return await attachLocal();
+    }
+    const completion = performAttachLocal(session, target).finally(() => {
+      if (attaching?.completion === completion) attaching = null;
+    });
+    attaching = { purpose: 'attach', session, target, completion };
+    return await completion;
+  }
+
+  async function performAttachLocal(session: ApiSessionClient, target: TTarget): Promise<boolean> {
     if (params.supervisor.isAttached() && attachedTarget && !params.isSameTarget(attachedTarget, target)) {
       await params.supervisor.detach();
       attachedTarget = null;
@@ -84,6 +103,9 @@ export function createSharedProviderLocalControl<TTarget>(params: Readonly<{
   }
 
   async function detachLocal(): Promise<boolean> {
+    // A known physical presenter must be retired before its receipt waiter can settle.
+    if (attaching) await params.supervisor.detach();
+    await attaching?.completion;
     const session = params.getSession();
     if (!session) return false;
     await params.supervisor.detach();
@@ -91,6 +113,35 @@ export function createSharedProviderLocalControl<TTarget>(params: Readonly<{
     currentMode = 'remote';
     await publishCurrentMode(session);
     return true;
+  }
+
+  async function observeTerminalClient(observation: NonNullable<SessionProviderCliAttachPrepareRequestV1['terminalClient']>): Promise<boolean> {
+    // An actual foreground client proves its own terminal; controller TTY
+    // availability governs creating a presentation, not admitting this client.
+    if (!params.supervisor.observeTerminalClient) return false;
+    const session = params.getSession();
+    const target = await params.resolveTarget();
+    if (!session || !target) return false;
+    if (attaching) {
+      await attaching.completion;
+      return await observeTerminalClient(observation);
+    }
+    const isStillCurrent = async () => {
+      const currentTarget = await params.resolveTarget();
+      return params.getSession() === session && currentTarget !== null && params.isSameTarget(target, currentTarget);
+    };
+    const completion = (async () => {
+      if (!await params.supervisor.observeTerminalClient!(target, observation, isStillCurrent)) return false;
+      if (!await isStillCurrent()) return false;
+      attachedTarget = observation.attached ? target : null;
+      currentMode = observation.attached ? 'local' : 'remote';
+      await publishCurrentMode(session);
+      return true;
+    })().finally(() => {
+      if (attaching?.completion === completion) attaching = null;
+    });
+    attaching = { purpose: 'observation', session, target, completion };
+    return await completion;
   }
 
   return {
@@ -115,7 +166,10 @@ export function createSharedProviderLocalControl<TTarget>(params: Readonly<{
       if (session) await publishCurrentMode(session);
     },
     switchToLocal: attachLocal,
+    observeTerminalClient,
     dispose: async () => {
+      if (attaching) await params.supervisor.dispose();
+      await attaching?.completion;
       attachedTarget = null;
       await params.supervisor.dispose();
     },

@@ -1,7 +1,8 @@
 import { configuration } from '@/configuration';
-import { createHerdrClient } from '@/integrations/herdr/client';
+import { createHerdrClient, HerdrApiError } from '@/integrations/herdr/client';
 import { resolveHerdrRuntimeBinary } from '@/integrations/herdr/runtimeBinary';
 import { runHerdrForeground } from '@/integrations/herdr/foreground';
+import { resolveDefaultTerminalHostStartupTimeoutMs } from '@/integrations/terminalHost/defaultRegistry';
 import type { Metadata } from '@/api/types';
 
 import { createTerminalAttachPlan } from './terminalAttachPlan';
@@ -26,20 +27,37 @@ export async function runHerdrAttach(params: Readonly<{
     sessionName: plan.sessionName,
     socketPath: plan.socketPath,
     actionTimeoutMs: configuration.claudeUnifiedTerminalHostActionTimeoutMs,
-    startupTimeoutMs: configuration.claudeUnifiedTerminalHostActionTimeoutMs,
+    startupTimeoutMs: resolveDefaultTerminalHostStartupTimeoutMs(),
   });
-  await client.assertServerVersion();
+  try {
+    await client.assertServerVersion();
+  } catch (error) {
+    // Starting the recorded namespace is convenience, not attachment admission.
+    // A reachable unsupported or malformed server must still fail closed.
+    if (!(error instanceof HerdrApiError) || error.code !== 'unreachable') throw error;
+    await client.restoreRecordedServer();
+  }
+  let pane = await client.findPane(plan.terminalId);
+  if (!pane) {
+    const recordedPaneId = params.terminal.herdr?.paneId?.trim();
+    if (!recordedPaneId) throw new Error('Herdr terminal is no longer available');
+    // Released restore keeps public pane IDs but allocates new terminal IDs.
+    // Opening this candidate activates its own deferred resume; it does not
+    // grant Happier attachment ownership or rewrite Session metadata.
+    pane = await client.getPane(recordedPaneId);
+    if (pane.paneId !== recordedPaneId) throw new Error('The recorded Herdr pane is unavailable');
+    if (!insideHerdr) console.log('Opening the preserved Herdr pane; its Happier session still needs to reconnect.');
+  }
 
   if (insideHerdr) {
-    const pane = await client.findPane(plan.terminalId);
-    if (!pane) throw new Error('Herdr terminal is no longer available');
     await client.request('pane.focus', { pane_id: pane.paneId });
     return 0;
   }
 
   return await runHerdrForeground({
     binary,
-    args: ['--session', plan.sessionName, 'terminal', 'attach', plan.terminalId],
-    socketPath: plan.socketPath,
+    args: ['terminal', 'attach', pane.terminalId],
+    sessionName: plan.sessionName,
+    socketPath: client.socketPath ?? plan.socketPath,
   });
 }

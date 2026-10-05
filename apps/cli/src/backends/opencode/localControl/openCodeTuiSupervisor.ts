@@ -1,4 +1,4 @@
-import { createAttachedTerminalSupervisor, type AttachedTerminalSupervisor } from '@/agent/localControl/createAttachedTerminalSupervisor';
+import { createAttachedTerminalSupervisor, type AttachedTerminalSupervisor, type AttachedTerminalPresentation } from '@/agent/localControl/createAttachedTerminalSupervisor';
 import type { SharedManagedOpenCodeServerState } from '@/backends/opencode/server/sharedManagedServer';
 
 import { createOpenCodeAttachArgs } from './createOpenCodeAttachArgs';
@@ -30,6 +30,7 @@ export function createOpenCodeTuiSupervisor(params?: Readonly<{
   commandArgs?: readonly string[];
   env?: NodeJS.ProcessEnv;
   onExit?: () => void | Promise<void>;
+  terminalPresentation?: AttachedTerminalPresentation;
   /** Overrides the target probe; omit in production so the actual server decides the dialect. */
   resolveDialectFn?: typeof resolveOpenCodeAttachCliDialect;
   readManagedServerStateFn?: () => Promise<SharedManagedOpenCodeServerState | null>;
@@ -53,6 +54,7 @@ export function createOpenCodeTuiSupervisor(params?: Readonly<{
     env,
     detachTimeoutMs: resolveDetachTimeoutMs(),
     onExit: params?.onExit,
+    terminalPresentation: params?.terminalPresentation,
     resolveInvocation: async ({ baseUrl, directory, sessionId, managedServerLaunchFingerprint }) => {
       // The attached CLI talks to the target server itself: it needs that server's credential (loopback
       // managed targets only) and the argv dialect the target actually speaks.

@@ -87,6 +87,7 @@ import {
     shouldUseCodexAppServerDaemonProxy,
 } from './appServer/daemon/codexAppServerDaemonTransport';
 import { createCodexSharedLocalControl } from './localControl/createCodexSharedLocalControl';
+import { hasHostedAttachedTerminalPresentation } from '@/agent/localControl/createAttachedTerminalSupervisor';
 import { resolveCodexSharedControlSupport } from './localControl/resolveCodexSharedControlSupport';
 import {
     removeCodexSharedControlEndpoint,
@@ -561,6 +562,7 @@ export async function runCodex(opts: {
         ? await resolveCodexSharedControlSupport({ cwd: requestedDirectory, processEnv: process.env })
         : { ok: false as const, reason: 'unsupported-version' as const };
     const useCodexSharedControl = codexSharedControlSupport.ok;
+    const hasHostedTerminal = useCodexSharedControl && hasHostedAttachedTerminalPresentation(opts.terminalRuntime);
 
     const localControlState: {
         experimentalCodexAcpEnabled: boolean;
@@ -575,12 +577,14 @@ export async function runCodex(opts: {
         experimentalCodexAcpEnabled: () => localControlState.experimentalCodexAcpEnabled,
         localControlBackend: () => localControlState.localControlBackend,
         hasTtyForLocal,
+        hasHostedTerminal,
     });
 
     let mode: 'local' | 'remote' = resolveCodexStartingMode({
         explicitStartingMode: opts.startingMode,
         startedBy: startedByForLocalControl,
         hasTtyForLocal,
+        hasHostedTerminal,
         localControlEnabled,
 	    });
 	    let localModeFallbackMessage: string | null = null;
@@ -2325,6 +2329,7 @@ export async function runCodex(opts: {
                 directory,
                 endpoint: codexSharedAppServer.endpoint,
                 processEnv: codexAppServerProcessEnv,
+                terminalRuntime: opts.terminalRuntime,
                 mountRemoteUi: () => remoteTerminalUi!.mount(),
                 unmountRemoteUi: () => remoteTerminalUi!.unmount(),
             });

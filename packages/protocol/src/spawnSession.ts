@@ -69,6 +69,7 @@ export type SpawnSessionErrorCode = (typeof SPAWN_SESSION_ERROR_CODES)[keyof typ
  * result. Existing consumers that only read `errorCode`/`errorMessage` keep working unchanged.
  */
 export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
+  TERMINAL_HOST_UNAVAILABLE: 'terminal_host_unavailable',
   /**
    * A connected-service auth switch/resume fail-closed because the resumed session could not be
    * proven reachable in the materialized target before the vendor launched (K1 §2 gate). Surfaced
@@ -114,7 +115,15 @@ export type ConnectedServiceUxDiagnosticSpawnErrorDetail = Readonly<{
   uxDiagnostic: ConnectedServiceUxDiagnosticV1;
 }>;
 
+export const TerminalHostUnavailableSpawnErrorDetailSchema = z.object({
+  kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.TERMINAL_HOST_UNAVAILABLE),
+  host: z.enum(['herdr', 'zellij']),
+  reason: z.enum(['installation_unavailable', 'server_version_unsupported']),
+}).strict();
+export type TerminalHostUnavailableSpawnErrorDetail = z.infer<typeof TerminalHostUnavailableSpawnErrorDetailSchema>;
+
 export type SpawnSessionErrorDetail =
+  | TerminalHostUnavailableSpawnErrorDetail
   | ConnectedServiceResumeUnreachableSpawnErrorDetail
   | ConnectedServiceUxDiagnosticSpawnErrorDetail;
 
@@ -327,14 +336,17 @@ export function isConnectedServiceUxDiagnosticSpawnErrorDetail(
 }
 
 export function isSpawnSessionErrorDetail(value: unknown): value is SpawnSessionErrorDetail {
-  return isConnectedServiceResumeUnreachableSpawnErrorDetail(value)
+  return TerminalHostUnavailableSpawnErrorDetailSchema.safeParse(value).success
+    || isConnectedServiceResumeUnreachableSpawnErrorDetail(value)
     || isConnectedServiceUxDiagnosticSpawnErrorDetail(value);
 }
 
 export function normalizeSpawnSessionErrorDetail(value: unknown): SpawnSessionErrorDetail | undefined {
   const detail = asRecord(value);
   if (!detail) return undefined;
-  return normalizeConnectedServiceResumeUnreachableDetail(detail)
+  const terminalHost = TerminalHostUnavailableSpawnErrorDetailSchema.safeParse(detail);
+  return (terminalHost.success ? terminalHost.data : undefined)
+    ?? normalizeConnectedServiceResumeUnreachableDetail(detail)
     ?? normalizeConnectedServiceUxDiagnosticDetail(detail);
 }
 

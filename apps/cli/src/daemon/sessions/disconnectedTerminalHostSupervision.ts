@@ -2,16 +2,22 @@ import type { TerminalHostAdapter, TerminalHostHandle } from '@/integrations/ter
 import { evaluateTerminalHostLivenessForRecovery } from '@/integrations/terminalHost/livenessPolicy';
 import {
   readTerminalAttachmentInfo as readDefaultTerminalAttachmentInfo,
+  readTerminalAttachmentState,
   removeTerminalAttachmentInfo as removeDefaultTerminalAttachmentInfo,
   type BoundTerminalAttachmentInfo,
+  type ExactTerminalAttachmentInfo,
   type TerminalAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
-import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/backends/catalog';
+import { notifyTerminalAttachmentRetiredThroughCatalog, resolveTerminalAttachmentControlDescriptorStatusThroughCatalog } from '@/backends/catalog';
 import { logger } from '@/ui/logger';
 import { executeTerminalHostDisposition } from '@/terminal/attachment/terminalHostDisposition';
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
 import type { TerminalAttachmentControlDescriptorStatus } from '@/backends/types';
 import type { ExactTerminalControlServiceabilityRetirement } from './retireTerminalControlServiceability';
+import type { TrackedSession } from '../types';
+import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
+import { resolveTrackedSessionCatalogAgentId } from './resolveTrackedSessionCatalogAgentId';
+import { readTerminalClientProcessState } from '@/terminal/runtime/terminalClientCustody';
 
 export type DisconnectedTerminalHostCandidate = Readonly<{
   sessionId: string;
@@ -22,6 +28,8 @@ export type DisconnectedTerminalHostCandidate = Readonly<{
   handle: TerminalHostHandle & Readonly<{ attachmentId: NonNullable<TerminalHostHandle['attachmentId']> }>;
   /** Provider applicability and exact descriptor proof, distinct from immutable host identity. */
   controlDescriptorStatus: TerminalAttachmentControlDescriptorStatus;
+  /** Captured admitted runtime selection; reconstructed through the existing respawn owner on restart. */
+  spawnOptions?: TrackedSession['spawnOptions'];
 }>;
 
 export type DisconnectedTerminalHostSupervisionResult =
@@ -43,6 +51,109 @@ export function resolveDisconnectedTerminalHostResumeGate(
 }
 
 type TerminalHostAdapters = Readonly<Partial<Record<TerminalHostAdapter['kind'], TerminalHostAdapter>>>;
+
+/** Optional-client recovery follows current custody, not its initial webhook. */
+export async function shouldRetainTrackedTerminalHostExitMarker(input: Readonly<{
+  tracked: TrackedSession;
+  happyHomeDir: string;
+}>): Promise<boolean> {
+  const { tracked } = input;
+  const sessionId = tracked.happySessionId?.trim();
+  if (sessionId && (await resolveTrackedSessionTerminalPresentation(tracked))?.kind === 'provider_attach') {
+    const attachment = await readTerminalAttachmentState({ happyHomeDir: input.happyHomeDir, sessionId });
+    if (attachment.status === 'unreadable') {
+      logger.infoFile('[DAEMON RUN] Retaining runner-exit marker because terminal custody is unreadable', {
+        sessionId, reason: attachment.reason,
+      });
+      return true;
+    }
+    return attachment.status === 'present' && attachment.info.version !== 3;
+  }
+  if (tracked.publishedTerminalControlServiceabilityAttachmentLifecycle === 'borrowed') return false;
+  const terminal = tracked.happySessionMetadataFromLocalWebhook?.terminal ?? tracked.hostedTerminal;
+  return Boolean(tracked.publishedTerminalControlServiceabilityAttachmentId)
+    || Boolean(terminal?.mode && terminal.mode !== 'plain');
+}
+
+/** The existing final-exit callback's owned-host candidate selection. Borrowed release is separate. */
+export async function resolveTrackedSessionTerminalHostExitCandidate(input: Readonly<{
+  tracked: TrackedSession;
+  pid: number;
+  happyHomeDir: string;
+  attachmentInfo: TerminalAttachmentInfo | null;
+}>): Promise<DisconnectedTerminalHostCandidate | null> {
+  const { tracked, attachmentInfo } = input;
+  const sessionId = tracked.happySessionId?.trim();
+  if (!sessionId) return null;
+  const optionalPresentation = (await resolveTrackedSessionTerminalPresentation(tracked))?.kind === 'provider_attach';
+  const terminal = tracked.happySessionMetadataFromLocalWebhook?.terminal ?? tracked.hostedTerminal;
+  if (attachmentInfo?.version !== 2) {
+    if (!optionalPresentation && (tracked.publishedTerminalControlServiceabilityAttachmentId || (terminal?.mode && terminal.mode !== 'plain'))) {
+      throw new Error('terminal_attachment_unavailable_after_runner_exit');
+    }
+    return null;
+  }
+  if (!optionalPresentation && tracked.publishedTerminalControlServiceabilityAttachmentId
+    && tracked.publishedTerminalControlServiceabilityAttachmentId !== attachmentInfo.attachmentId) return null;
+  const controlDescriptorStatus = await resolveTerminalAttachmentControlDescriptorStatusThroughCatalog(
+    resolveTrackedSessionCatalogAgentId(tracked), {
+      happyHomeDir: input.happyHomeDir, sessionId, attachmentId: attachmentInfo.attachmentId,
+    },
+  ).catch(() => 'missing' as const);
+  return {
+    sessionId, pid: input.pid, happyHomeDir: input.happyHomeDir,
+    ...(tracked.activeTurnId ? { activeTurnId: tracked.activeTurnId } : {}),
+    ...(tracked.spawnOptions ? { spawnOptions: tracked.spawnOptions } : {}),
+    attachmentId: attachmentInfo.attachmentId, handle: attachmentInfo.handle, controlDescriptorStatus,
+  };
+}
+
+/** The existing heartbeat observes optional client exit without terminalizing its live Session. */
+export async function superviseTrackedOptionalTerminalPresentation(input: Readonly<{
+  tracked: TrackedSession;
+  isCurrent: () => boolean;
+  happyHomeDir: string;
+  loadTerminalHostAdapters: () => Promise<TerminalHostAdapters>;
+  probeSessionServiceability?: (sessionId: string) => Promise<SessionRunnerServiceabilityProbe>;
+  retireExactTerminalControlServiceability: (input: Readonly<{
+    happyHomeDir: string; sessionId: string; attachmentInfo: ExactTerminalAttachmentInfo;
+  }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
+}>): Promise<void> {
+  const sessionId = input.tracked.happySessionId;
+  if (!sessionId || (await resolveTrackedSessionTerminalPresentation(input.tracked))?.kind !== 'provider_attach'
+    || !input.isCurrent()) return;
+  const attachment = await readDefaultTerminalAttachmentInfo({ happyHomeDir: input.happyHomeDir, sessionId });
+  if (!input.isCurrent() || !attachment || attachment.version === 1) return;
+  if (attachment.version === 3) {
+    if (!attachment.nativeClientProcess || await readTerminalClientProcessState(attachment.nativeClientProcess) !== 'dead'
+      || !input.isCurrent()) return;
+    const result = await executeTerminalHostDisposition({ happyHomeDir: input.happyHomeDir, sessionId,
+      expectedAttachmentId: attachment.attachmentId,
+      intent: { kind: 'release_borrowed_host', reason: 'provider_exit' },
+      beforeDescriptorRetirement: async fact => {
+        if (!input.isCurrent()) throw new Error('Optional terminal presentation owner changed');
+        await input.retireExactTerminalControlServiceability(fact);
+      },
+    });
+    if (result.status !== 'retired') logger.infoFile('[terminal] Borrowed native client retirement incomplete', { status: result.status });
+    return;
+  }
+  // Explicit attach replaces the optional client without replacing its headless runner.
+  // The current exact descriptor, not the initial webhook publication cache, owns this probe.
+  const terminalHostAdapters = await input.loadTerminalHostAdapters();
+  if (!input.isCurrent()) return;
+  await superviseDisconnectedTerminalHostCandidate({
+    candidate: { sessionId, pid: input.tracked.pid, happyHomeDir: input.happyHomeDir,
+      attachmentId: attachment.attachmentId, handle: attachment.handle, controlDescriptorStatus: 'not_applicable',
+      spawnOptions: input.tracked.spawnOptions },
+    terminalHostAdapters,
+    probeSessionServiceability: input.probeSessionServiceability,
+    retireExactTerminalControlServiceability: async (fact) => {
+      if (!input.isCurrent()) throw new Error('Optional terminal presentation owner changed');
+      return await input.retireExactTerminalControlServiceability(fact);
+    },
+  });
+}
 
 export async function superviseDisconnectedTerminalHostCandidate(input: Readonly<{
   candidate: DisconnectedTerminalHostCandidate;
@@ -79,23 +190,28 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   if (!adapter) return { state: 'unknown', reason: 'adapter_unavailable' };
 
   const probe = await evaluateTerminalHostLivenessForRecovery(adapter, current.handle);
+  let destroyOptionalClient = false;
   if (probe.status === 'alive') {
-    if (input.candidate.controlDescriptorStatus === 'missing') {
+    const optionalPresentation = (await resolveTrackedSessionTerminalPresentation({
+      pid: input.candidate.pid, startedBy: 'daemon', happySessionId: input.candidate.sessionId,
+      spawnOptions: input.candidate.spawnOptions,
+    }))?.kind === 'provider_attach';
+    if (!optionalPresentation && input.candidate.controlDescriptorStatus === 'missing') {
       return { state: 'recoverable_unservable', reason: 'control_descriptor_missing' };
     }
     if (!input.probeSessionServiceability) return { state: 'unknown', reason: 'probe_inconclusive' };
     const serviceability = await input.probeSessionServiceability(input.candidate.sessionId);
     if (serviceability.state === 'runner_absent') {
-      return { state: 'recoverable_unservable', reason: 'runner_absent' };
-    }
-    if (serviceability.state === 'runner_unknown') {
+      if (!optionalPresentation) return { state: 'recoverable_unservable', reason: 'runner_absent' };
+      // This client is not provider-server custody. Retire its exact owned pane
+      // before recovering the headless controller; explicit Attach prepares a fresh endpoint.
+      destroyOptionalClient = true;
+    } else if (serviceability.state === 'runner_unknown') {
       return { state: 'unknown', reason: 'probe_inconclusive' };
-    }
-    if (serviceability.control.state === 'servable') return { state: 'servable' };
-    if (serviceability.control.state === 'recoverable_unservable') {
+    } else if (serviceability.control.state === 'servable') return { state: 'servable' };
+    else if (serviceability.control.state === 'recoverable_unservable') {
       return { state: 'recoverable_unservable', reason: serviceability.control.reason };
-    }
-    return { state: 'unknown', reason: 'probe_inconclusive' };
+    } else return { state: 'unknown', reason: 'probe_inconclusive' };
   }
   if (probe.status === 'inconclusive') return { state: 'unknown', reason: 'probe_inconclusive' };
 
@@ -103,7 +219,9 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
     happyHomeDir: input.candidate.happyHomeDir,
     sessionId: input.candidate.sessionId,
     expectedAttachmentId: input.candidate.attachmentId,
-    intent: { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
+    intent: destroyOptionalClient
+      ? { kind: 'destroy_owned_host', reason: 'unrecoverable_control_recovery' }
+      : { kind: 'retire_confirmed_dead_attachment', reason: 'positive_dead_recovery' },
     adapter,
     ...(input.readTerminalAttachmentInfo ? { readAttachmentInfo: input.readTerminalAttachmentInfo } : {}),
     removeAttachmentInfo: input.removeTerminalAttachmentInfo ?? removeDefaultTerminalAttachmentInfo,
@@ -127,7 +245,9 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
       }
     } : undefined,
   });
-  if (disposition.status !== 'retired') return { state: 'unknown', reason: 'retirement_failed' };
+  if (disposition.status !== 'retired' && (disposition.status !== 'destroyed' || disposition.descriptorRetained)) {
+    return { state: 'unknown', reason: 'retirement_failed' };
+  }
   try {
     await (input.onExactTerminalAttachmentRetired ?? notifyTerminalAttachmentRetiredThroughCatalog)({
       happyHomeDir: input.candidate.happyHomeDir,

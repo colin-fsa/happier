@@ -1440,6 +1440,16 @@ export function useCreateNewSession(params: Readonly<{
                     );
                     return;
                 }
+                if (result.errorDetail?.kind === 'terminal_host_unavailable') {
+                    current.setIsCreating(false);
+                    Modal.alert(
+                        t('newSession.terminalHostUnavailableTitle'),
+                        t('newSession.terminalHostUnavailableBody', {
+                            host: result.errorDetail.host === 'herdr' ? 'Herdr' : 'Zellij',
+                        }),
+                    );
+                    return;
+                }
                 if (result.errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE) {
                     current.setIsCreating(false);
                     showDaemonUnavailableAlert({

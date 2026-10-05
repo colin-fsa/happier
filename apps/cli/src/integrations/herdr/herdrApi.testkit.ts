@@ -1,6 +1,7 @@
 import { createServer, type Socket } from 'node:net';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -15,11 +16,16 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
   requests: Array<{ method: string; params: Record<string, unknown> }>;
   beforeResponse: Map<string, () => void>;
   setEmpty(): void;
-}>) => Promise<T>, options: Readonly<{ serverVersion?: string }> = {}): Promise<T> {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}>) => Promise<T>, options: Readonly<{ serverVersion?: string; maxInitialRequestBytes?: number; socketPath?: string;
+  response?: (method: string, params: Record<string, unknown>) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+}> = {}): Promise<T> {
   return await withTempDir('herdr-api-', async (directory) => {
-    const socketPath = process.platform === 'win32'
+    const socketPath = options.socketPath ?? (process.platform === 'win32'
       ? `\\\\.\\pipe\\happier-herdr-test-${randomUUID()}`
-      : join(directory, 'api.sock');
+      : join(directory, 'api.sock'));
+    if (process.platform !== 'win32') await mkdir(dirname(socketPath), { recursive: true });
     const faults = new Map<string, ApiFault>();
     const panes = new Set<string>();
     const tabs = new Set<string>();
@@ -32,9 +38,14 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
       let buffer = '';
-      socket.on('data', (chunk) => {
+      socket.on('data', async (chunk) => {
         buffer += chunk;
         const newline = buffer.indexOf('\n');
+        if (options.maxInitialRequestBytes !== undefined
+          && Buffer.byteLength(newline < 0 ? buffer : buffer.slice(0, newline)) > options.maxInitialRequestBytes) {
+          socket.end();
+          return;
+        }
         if (newline < 0) return;
         const request = JSON.parse(buffer.slice(0, newline)) as {
           id: string; method: string; params: Record<string, unknown>;
@@ -80,20 +91,27 @@ export async function withHerdrApi<T>(run: (api: Readonly<{
           socket.end();
           return;
         }
+        result = await options.response?.(request.method, request.params) ?? result;
         socket.end(`${JSON.stringify(fault === 'error'
           ? { id: request.id, error: { code: `${request.method}_failed` } }
           : { id: request.id, result })}\n`);
       });
     });
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(socketPath, resolve);
-    });
-    try {
-      return await run({ socketPath, faults, panes, tabs, requests, beforeResponse, setEmpty: () => { empty = true; } });
-    } finally {
+    const start = async () => {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(socketPath, resolve);
+      });
+    };
+    const stop = async () => {
       for (const socket of sockets) socket.destroy();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    };
+    await start();
+    try {
+      return await run({ socketPath, faults, panes, tabs, requests, beforeResponse, setEmpty: () => { empty = true; }, start, stop });
+    } finally {
+      await stop();
     }
   });
 }

@@ -660,6 +660,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const unifiedTerminalRuntimeActive = sessionRuntimeModeKind === 'unifiedTerminal';
     const adoptEndpointRecovery = unifiedTerminalRuntimeActive
         ? await resolveClaudeAdoptEndpointRecovery({
+            // claimSessionRunnerOwnership above admitted this exact continuation
+            // before retained hook/MCP endpoints can be rebound.
+            ...(existingSessionId ? { existingSession: {
+                happyHomeDir: configuration.happyHomeDir, sessionId: baseSession.id,
+            } } : {}),
             ...(currentClaudeRemoteMetaState.claudeLocalPermissionBridgeWaitIndefinitely === true
                 ? {}
                 : { permissionHookTimeoutSeconds: currentClaudeRemoteMetaState.claudeLocalPermissionBridgeTimeoutSeconds }),

@@ -3,9 +3,9 @@ import { resolveOpenCodeCliLaunchSpec } from '@/backends/opencode/utils/resolveO
 import { resolveOpenCodeBackendModeFromEnv } from '@/backends/opencode/backendMode';
 
 export const opencodeDaemonSpawnHooks: DaemonSpawnHooks = {
-  resolveTerminalPresentation: ({ host, processEnv }) => {
+  resolveTerminalPresentation: ({ processEnv }) => {
     if (resolveOpenCodeBackendModeFromEnv(processEnv) === 'acp') return { kind: 'none' };
-    return { kind: 'runner', startingMode: host === 'tmux' ? 'remote' : 'local' };
+    return { kind: 'provider_attach', startingMode: 'local' };
   },
   validateSpawn: async () => {
     try {

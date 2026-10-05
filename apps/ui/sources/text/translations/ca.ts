@@ -4581,6 +4581,8 @@ deps: {
     },
 
   newSession: {
+    terminalHostUnavailableTitle: "Terminal no disponible",
+    terminalHostUnavailableBody: ({ host }: { host: string }) => `Instal·la o actualitza ${host} i reinicia el seu servidor en aquesta màquina, o tria un altre terminal. Es conserva l’esborrany.`,
     ...newSessionMcpTranslationExtension,
     ...acpCatalogTranslationExtension.newSession,
     // Used by new-session screen and launch flows
@@ -9896,9 +9898,9 @@ settingsSession: {
         unknownPath: 'camí desconegut',
         previousSessionsTitle: 'Sessions anteriors (fins a les 5 més recents)',
         tmux: {
-            overrideTitle: 'Sobreescriu la configuració global de tmux',
-            overrideEnabledSubtitle: 'La configuració personalitzada de tmux s\'aplica a les noves sessions d\'aquesta màquina.',
-            overrideDisabledSubtitle: 'Les noves sessions utilitzen la configuració global de tmux.',
+            overrideTitle: "Sobreescriu el valor predeterminat del compte",
+            overrideEnabledSubtitle: "Aquesta màquina utilitza el seu propi terminal per a les sessions noves.",
+            overrideDisabledSubtitle: "Les sessions noves hereten el terminal del compte.",
             notDetectedSubtitle: 'tmux no s\'ha detectat en aquesta màquina.',
             notDetectedMessage: 'tmux no s\'ha detectat en aquesta màquina. Instal·la tmux i actualitza la detecció.',
         },

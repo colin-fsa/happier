@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { requireJavaScriptRuntimeExecutable } from '@/runtime/js/requireJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
+import { TerminalHostCreationError } from '@/integrations/terminalHost/errors';
 
 function ignoreMissingFile(error: unknown): void {
   if (typeof error !== 'object' || error === null || !('code' in error) || error.code !== 'ENOENT') throw error;
@@ -63,7 +64,9 @@ export async function createHerdrLaunchSpec(input: Readonly<{
     try {
       await discard();
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], 'Herdr launch handoff creation and cleanup failed');
+      throw new TerminalHostCreationError([error, cleanupError], {
+        launchDisposition: 'not_started', cleanupIncomplete: true,
+      }, 'Herdr launch handoff creation and cleanup failed');
     }
     throw error;
   }

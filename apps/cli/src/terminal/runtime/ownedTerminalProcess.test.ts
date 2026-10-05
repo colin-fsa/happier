@@ -1,18 +1,92 @@
 import { EventEmitter } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 import { bundleInstalledPackageWithRuntimeDependencies } from '@happier-dev/cli-common/workspaces';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { launchOwnedTerminalProcess } from './ownedTerminalProcess';
+import { createUnreadTerminalArtifactsCleanup, prepareOwnedTerminalSpawn } from './terminalLaunchSpec';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { isPidAlive, waitForProcessExit } from '@/testkit/process/spawn';
 
 describe('launchOwnedTerminalProcess', () => {
+  it('exposes exact launcher identity only after native startup while preserving its own child lifetime', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-terminal-custody-'));
+    const nativeIdentityPath = join(directory, 'native.json');
+    const prepared = await prepareOwnedTerminalSpawn({ command: process.execPath,
+      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(nativeIdentityPath)},JSON.stringify({pid:process.pid,launcherPid:process.ppid}));setInterval(()=>{},1000)`],
+      cwd: directory, env: { PATH: process.env.PATH ?? '' } });
+    let launcher: ReturnType<typeof spawn> | undefined;
+    // Instrument only actual OS process creation; launcher IPC and child execution stay real.
+    const spawnProcess = ((...args: Parameters<typeof spawn>) => {
+      launcher = spawn(...args);
+      return launcher;
+    }) as typeof spawn;
+    try {
+      const launched = await launchOwnedTerminalProcess({ spawn: prepared, cwd: directory, spawnProcess });
+      const fingerprint = readProcessInstanceFingerprintSync(launcher!.pid!);
+      expect(fingerprint).toBeTruthy();
+      expect(launched).toMatchObject({ launcherIdentity: { pid: launcher!.pid, processInstanceFingerprint: fingerprint } });
+      let native!: { pid: number; launcherPid: number };
+      await vi.waitFor(async () => { native = JSON.parse(await readFile(nativeIdentityPath, 'utf8')); });
+      expect(native.launcherPid).toBe(launcher!.pid);
+      expect(native.pid).not.toBe(launcher!.pid);
+      await launched.terminate();
+      await launched.whenExited;
+      expect(isPidAlive(native.pid)).toBe(false);
+    } finally {
+      if (launcher) await killProcessTree(launcher);
+      await prepared.cleanupUnreadArtifacts?.();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  it('retries failed physical termination while coalescing each attempt and retaining successful completion', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-terminal-termination-retry-'));
+    const prepared = await prepareOwnedTerminalSpawn({ command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'], cwd: directory, env: { PATH: process.env.PATH ?? '' } });
+    const failure = new Error('physical termination temporarily unavailable');
+    let rejectFirst!: (error: Error) => void;
+    const firstBoundary = new Promise<void>((_resolve, reject) => { rejectFirst = reject; });
+    let releaseSecond!: () => void;
+    const secondBoundary = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    let attempts = 0;
+    let launcherPid: number | undefined;
+    try {
+      const launched = await launchOwnedTerminalProcess({ spawn: prepared, cwd: directory,
+        terminateProcess: async (child) => {
+          launcherPid = child.pid;
+          attempts += 1;
+          if (attempts === 1) return firstBoundary;
+          await secondBoundary;
+          await killProcessTree(child);
+        } });
+      const first = launched.terminate();
+      const firstNeighbor = launched.terminate();
+      expect(firstNeighbor).toBe(first);
+      const failureObserved = expect(first).rejects.toBe(failure);
+      rejectFirst(failure);
+      await failureObserved;
+      expect(isPidAlive(launcherPid!)).toBe(true);
+      const retry = launched.terminate();
+      expect(launched.terminate()).toBe(retry);
+      releaseSecond();
+      await expect(retry).resolves.toBeUndefined();
+      await expect(waitForProcessExit(launcherPid!, { timeoutMs: 3_000 })).resolves.toBe(true);
+      await launched.whenExited;
+      expect(launched.terminate()).toBe(retry);
+      expect(attempts).toBe(2);
+    } finally {
+      releaseSecond();
+      if (launcherPid) await killProcessTree({ pid: launcherPid });
+      await prepared.cleanupUnreadArtifacts?.();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   const bunAvailable = spawnSync('bun', ['--version'], { stdio: 'ignore' }).status === 0;
   it.each([
     { controllerRuntime: process.execPath, launcherRuntime: process.execPath, lifetime: true },
@@ -70,7 +144,8 @@ describe('launchOwnedTerminalProcess', () => {
         try {
           tree = JSON.parse(await readFile(readyPath, 'utf8'));
         } catch (error) {
-          throw new Error(`Provider tree not ready (controller exit=${controller.exitCode}; stderr=${controllerStderr})`, { cause: error });
+          const handoffPending = await stat(specPath).then(() => true, (failure: NodeJS.ErrnoException) => failure.code !== 'ENOENT');
+          throw new Error(`Provider tree not ready (controller exit=${controller.exitCode}; handoffPending=${handoffPending}; stderr=${controllerStderr})`, { cause: error });
         }
       }, { timeout: 10_000 });
       expect(isPidAlive(tree!.descendant)).toBe(true);
@@ -169,5 +244,29 @@ describe('launchOwnedTerminalProcess', () => {
       cwd: '/workspace/project',
       spawnProcess: spawnProcess as never,
     })).rejects.toBe(failure);
+  });
+
+  it('retains the original OS spawn failure when private artifact cleanup is incomplete', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-terminal-launch-'));
+    const launchSpecPath = join(directory, 'launch.json');
+    await writeFile(launchSpecPath, '{}');
+    await writeFile(join(directory, 'unexpected-entry'), 'retained');
+    try {
+      await expect(launchOwnedTerminalProcess({
+        spawn: {
+          spawnArgv: [join(directory, 'nonexistent-executable')],
+          spawnEnv: {},
+          cleanupUnreadArtifacts: createUnreadTerminalArtifactsCleanup({ launchSpecPath }),
+        },
+        cwd: directory,
+      })).rejects.toMatchObject({
+        name: 'AggregateError',
+        cause: expect.objectContaining({ code: 'ENOENT' }),
+        errors: [expect.objectContaining({ code: 'ENOENT' }), expect.any(AggregateError)],
+      });
+      await expect(readFile(join(directory, 'unexpected-entry'), 'utf8')).resolves.toBe('retained');
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

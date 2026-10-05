@@ -17,11 +17,22 @@ import { resolveHerdrRuntimeBinary } from './runtimeBinary';
 type ManagedHerdrBinding = Readonly<{
   schedule(): void;
   preserveHostOnClose(): void;
+  closing: Promise<boolean> | null;
 }>;
 
-type ManagedHerdrSession = EventEmitter & Pick<ApiSessionClient, 'getAgentStateSnapshot'>;
+type ManagedHerdrSession = EventEmitter & Pick<ApiSessionClient, 'getAgentStateSnapshot'>
+  & Partial<Pick<ApiSessionClient, 'getMetadataSnapshot'>>;
 
 const managedHerdrBindings = new WeakMap<EventEmitter, Map<string, ManagedHerdrBinding>>();
+
+function isCurrentManagedTerminal(session: ManagedHerdrSession, terminalId: string): boolean {
+  const metadata = session.getMetadataSnapshot?.();
+  if (!metadata) return true;
+  const terminal = metadata.terminal;
+  if (!terminal) return true;
+  return terminal.mode === 'herdr' && terminal.herdr?.terminalId === terminalId
+    && terminal.controlServiceabilityV1?.retired !== true;
+}
 
 export function createHerdrResumeArgv(sessionId: string, releaseRing: PublicReleaseRingId): string[] {
   return [
@@ -91,6 +102,14 @@ export function bindManagedHerdrSession(params: Readonly<{
   let sessionBindings = managedHerdrBindings.get(params.session);
   const existing = sessionBindings?.get(bindingKey);
   if (existing) {
+    if (existing.closing) {
+      // Keep one write lifetime per terminal: a predecessor's delayed release
+      // must complete before the replacement reports its agent/resume state.
+      void existing.closing.then((sessionOpen) => {
+        if (sessionOpen && isCurrentManagedTerminal(params.session, params.terminalId)) bindManagedHerdrSession(params);
+      });
+      return;
+    }
     if (params.preserveHostOnClose) existing.preserveHostOnClose();
     existing.schedule();
     return;
@@ -106,8 +125,10 @@ export function bindManagedHerdrSession(params: Readonly<{
   let desiredState = resolveState(false);
   let reportedState: 'idle' | 'working' | 'blocked' | null = null;
   let closed = false;
+  let sessionClosed = false;
   let preserveHostOnClose = params.preserveHostOnClose === true;
   let reporting: Promise<void> | null = null;
+  let closing: Promise<boolean> | null = null;
 
   const report = async (state: 'idle' | 'working' | 'blocked') => {
     const pane = await params.client.findPane(params.terminalId);
@@ -156,20 +177,37 @@ export function bindManagedHerdrSession(params: Readonly<{
     schedule();
   };
   const onClosed = () => {
+    if (closed) return;
     closed = true;
     params.session.off('local-presence', onPresence);
-    params.session.off('local-closed', onClosed);
-    sessionBindings?.delete(bindingKey);
-    if (preserveHostOnClose) return;
-    void (reporting ?? Promise.resolve()).then(release).catch(() => {
+    params.session.off('metadata-updated', onMetadataUpdated);
+    closing = (reporting ?? Promise.resolve()).then(async () => {
+      if (!preserveHostOnClose) await release();
+    }).catch(() => {
       logger.infoFile('[WARN] [herdr] Failed to release managed agent state');
+    }).then(() => {
+      params.session.off('local-closed', onSessionClosed);
+      if (sessionBindings?.get(bindingKey) === binding) sessionBindings.delete(bindingKey);
+      return !sessionClosed;
     });
   };
-  sessionBindings.set(bindingKey, {
+  const onSessionClosed = () => {
+    sessionClosed = true;
+    onClosed();
+  };
+  const onMetadataUpdated = () => {
+    // A live headless session can release or replace only its optional presenter.
+    // Retire that terminal's existing subscription rather than accumulating reporters.
+    if (!isCurrentManagedTerminal(params.session, params.terminalId)) onClosed();
+  };
+  const binding: ManagedHerdrBinding = {
     schedule,
     preserveHostOnClose: () => { preserveHostOnClose = true; },
-  });
+    get closing() { return closing; },
+  };
+  sessionBindings.set(bindingKey, binding);
   params.session.on('local-presence', onPresence);
-  params.session.on('local-closed', onClosed);
+  params.session.on('local-closed', onSessionClosed);
+  params.session.on('metadata-updated', onMetadataUpdated);
   schedule();
 }
