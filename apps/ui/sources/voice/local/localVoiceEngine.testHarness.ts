@@ -381,41 +381,53 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('expo-audio', () => ({
-    RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
-    AudioModule: {
-        AudioRecorder: class {
-            uri: string | null = null;
-            async prepareToRecordAsync() {
-                if (nextRecorderPrepareError) {
-                    const error = nextRecorderPrepareError;
-                    nextRecorderPrepareError = null;
-                    throw error;
-                }
+vi.mock('expo-audio', () => {
+    class MockAudioRecorder {
+        uri: string | null = null;
+
+        async prepareToRecordAsync() {
+            if (nextRecorderPrepareError) {
+                const error = nextRecorderPrepareError;
+                nextRecorderPrepareError = null;
+                throw error;
             }
-            record() { }
-            async stop() {
-                this.uri = 'file:///tmp/rec.m4a';
-            }
-        },
-    },
-    createAudioPlayer: (source?: any) => {
-        const listeners = new Map<string, (arg: any) => void>();
-        const player = {
-            source,
-            addListener: (event: string, cb: (arg: any) => void) => {
-                listeners.set(event, cb);
-                return { remove: () => listeners.delete(event) };
+        }
+
+        record() { }
+
+        async stop() {
+            this.uri = 'file:///tmp/rec.m4a';
+        }
+    }
+
+    return {
+        RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
+        AudioModule: {
+            get AudioRecorder() {
+                return platformOs === 'web' ? undefined : MockAudioRecorder;
             },
-            play: () => { },
-            remove: () => { },
-            __emit: (event: string, arg: any) => listeners.get(event)?.(arg),
-            __hasListener: (event: string) => listeners.has(event),
-        };
-        createdAudioPlayers.push(player);
-        return player;
-    },
-}));
+            get AudioRecorderWeb() {
+                return platformOs === 'web' ? MockAudioRecorder : undefined;
+            },
+        },
+        createAudioPlayer: (source?: any) => {
+            const listeners = new Map<string, (arg: any) => void>();
+            const player = {
+                source,
+                addListener: (event: string, cb: (arg: any) => void) => {
+                    listeners.set(event, cb);
+                    return { remove: () => listeners.delete(event) };
+                },
+                play: () => { },
+                remove: () => { },
+                __emit: (event: string, arg: any) => listeners.get(event)?.(arg),
+                __hasListener: (event: string) => listeners.has(event),
+            };
+            createdAudioPlayers.push(player);
+            return player;
+        },
+    };
+});
 
 vi.mock('expo-file-system', () => ({
     Paths: { cache: 'file:///tmp/' },
