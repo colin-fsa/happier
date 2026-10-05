@@ -4,10 +4,21 @@ import {
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     setNextRecorderPrepareError,
+    setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();
+
+    it('uses the web recorder implementation in browsers', async () => {
+        setPlatformOs('web');
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
+
+        expect(getLocalVoiceState().status).toBe('recording');
+        expect(getLocalVoiceState().error).toBeNull();
+    });
 
     it('cleans up and reports an error when recording initialization fails', async () => {
         setNextRecorderPrepareError(new Error('prepare failed'));
