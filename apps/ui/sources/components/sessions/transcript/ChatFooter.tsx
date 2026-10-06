@@ -3,6 +3,7 @@ import { View, ViewStyle } from 'react-native';
 import { t } from '@/text';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
 import { SessionWarningActionBanner } from '@/components/sessions/shell/SessionWarningActionBanner';
+import type { DirectSessionImportOperation } from '@happier-dev/protocol';
 import type { SessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 
 export type ChatFooterDirectControlState = Readonly<{
@@ -12,6 +13,10 @@ export type ChatFooterDirectControlState = Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     takeoverInFlight: 'direct' | 'persisted' | null;
+    importOperation?: DirectSessionImportOperation | null;
+    importStatusError?: string | null;
+    onCancelImport?: () => void | Promise<void>;
+    onRefreshImport?: () => void | Promise<void>;
     onRequestTakeOverDirect?: () => void | Promise<void>;
     onRequestTakeOverPersist?: () => void | Promise<void>;
 }> | null;
@@ -111,7 +116,9 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
 
     const directModeBanner = React.useMemo(() => {
         if (!props.directControl) return null;
-        if (props.directControl.runnerActive) return null;
+        const operation = props.directControl.importOperation;
+        const importing = operation?.state === 'running' || operation?.state === 'cancelling';
+        if (props.directControl.runnerActive && !importing && operation?.state !== 'failed' && !props.directControl.importStatusError) return null;
 
         const switchingToDirect = props.directControl.takeoverInFlight === 'direct';
         const switchingToPersisted = props.directControl.takeoverInFlight === 'persisted';
@@ -129,31 +136,54 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             && typeof props.directControl.onRequestTakeOverPersist === 'function';
 
         const textKey = (() => {
+            if (operation?.state === 'cancelled') return 'chatFooter.directImportCancelled';
+            if (operation?.state === 'failed') return 'chatFooter.directImportFailed';
             if (switchingToPersisted) return 'chatFooter.switchingToPersistedTakeover';
             if (switchingToDirect) return 'chatFooter.switchingToDirectTakeover';
             if (!props.directControl.machineOnline) return 'chatFooter.directSessionMachineOffline';
             return 'chatFooter.directSessionTakeoverAvailable';
         })();
 
+        const phaseLabel = operation?.state === 'cancelling' ? t('chatFooter.directImportCancelling')
+            : operation?.phase === 'reading' ? t('chatFooter.directImportReading')
+            : operation?.phase === 'importing' ? t('chatFooter.directImportImporting')
+            : operation?.phase === 'starting' ? t('chatFooter.directImportStarting')
+            : operation?.phase === 'converting' ? t('chatFooter.directImportConverting')
+            : t('chatFooter.directImportPreparing');
+        const progress = operation?.state === 'completed' && props.directControl.importStatusError
+            ? t('chatFooter.directImportStatusUnavailable') : importing && operation ? `${phaseLabel} ${operation.totalCount == null
+            ? t('chatFooter.directImportCount', { count: operation.importedCount })
+            : t('chatFooter.directImportCountWithTotal', { count: operation.importedCount, total: operation.totalCount })}` : t(textKey);
+        const canStop = importing && operation?.canCancel === true && operation.state !== 'cancelling'
+            && typeof props.directControl.onCancelImport === 'function';
+        const body = [progress, operation?.state === 'failed' ? operation.error : null,
+            props.directControl.importStatusError && operation?.state !== 'completed' ? t('chatFooter.directImportStatusUnavailable') : null].filter(Boolean).join('\n');
+
         return (
             <ComposerAuxiliaryFrame>
                 <SessionWarningActionBanner
                     testID="session-chatFooter-directControl"
                     iconName="info"
-                    body={t(textKey)}
-                    secondaryActions={showPersistAction
-                        ? [{
+                    tone={importing ? 'neutral' : 'warning'}
+                    body={body}
+                    secondaryActions={[
+                        ...(showPersistAction ? [{
                             key: 'takeOverPersist',
                             testID: 'session-chatFooter-takeOverPersist',
-                            label: t('chatFooter.takeOverPersist'),
+                            label: operation?.state === 'failed' || operation?.state === 'cancelled' || props.directControl.importStatusError
+                                ? t('common.retry') : t('chatFooter.takeOverPersist'),
                             accessibilityLabel: t('chatFooter.takeOverPersist'),
                             onPress: props.directControl.onRequestTakeOverPersist!,
-                        }]
-                        : undefined}
-                    actionTestID={showDirectAction ? 'session-chatFooter-takeOverDirect' : undefined}
-                    actionLabel={showDirectAction ? t('chatFooter.takeOverDirect') : undefined}
-                    actionAccessibilityLabel={showDirectAction ? t('chatFooter.takeOverDirect') : undefined}
-                    onActionPress={showDirectAction ? props.directControl.onRequestTakeOverDirect : undefined}
+                        }] : []),
+                        ...(props.directControl.importStatusError && props.directControl.onRefreshImport ? [{
+                            key: 'refreshImport', testID: 'session-chatFooter-refreshImport', label: t('common.refresh'),
+                            accessibilityLabel: t('common.refresh'), onPress: props.directControl.onRefreshImport,
+                        }] : []),
+                    ]}
+                    actionTestID={canStop ? 'session-chatFooter-stopImport' : showDirectAction ? 'session-chatFooter-takeOverDirect' : undefined}
+                    actionLabel={canStop ? t('chatFooter.directImportStop') : showDirectAction ? t('chatFooter.takeOverDirect') : undefined}
+                    actionAccessibilityLabel={canStop ? t('chatFooter.directImportStop') : showDirectAction ? t('chatFooter.takeOverDirect') : undefined}
+                    onActionPress={canStop ? props.directControl.onCancelImport : showDirectAction ? props.directControl.onRequestTakeOverDirect : undefined}
                 />
             </ComposerAuxiliaryFrame>
         );

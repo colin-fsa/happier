@@ -483,3 +483,31 @@ export const DirectSessionTakeoverPersistResponseSchema = z.union([
     .passthrough(),
 ]);
 export type DirectSessionTakeoverPersistResponse = z.infer<typeof DirectSessionTakeoverPersistResponseSchema>;
+
+// Import work outlives an individual RPC; the daemon owns its lifecycle.
+export const DirectSessionImportOperationSchema = z.object({
+  sessionId: z.string().min(1),
+  state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
+  phase: z.enum(['preparing', 'reading', 'importing', 'starting', 'converting']),
+  importedCount: z.number().int().nonnegative(),
+  totalCount: z.number().int().nonnegative().optional(),
+  canCancel: z.boolean(),
+  error: z.string().optional(),
+});
+export type DirectSessionImportOperation = z.infer<typeof DirectSessionImportOperationSchema>;
+
+export const DirectSessionImportOperationRequestSchema = z.object({
+  machineId: z.string().min(1),
+  sessionId: z.string().min(1),
+});
+export type DirectSessionImportOperationRequest = z.infer<typeof DirectSessionImportOperationRequestSchema>;
+
+export const DirectSessionImportOperationResponseSchema = z.union([
+  z.object({ ok: z.literal(true), operation: DirectSessionImportOperationSchema.nullable() }),
+  z.object({
+    ok: z.literal(false),
+    errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
+    error: z.string().min(1),
+  }),
+]);
+export type DirectSessionImportOperationResponse = z.infer<typeof DirectSessionImportOperationResponseSchema>;

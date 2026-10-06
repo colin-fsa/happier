@@ -73,6 +73,72 @@ describe('ChatFooter (local control)', () => {
         standardCleanup();
     });
 
+    it('shows daemon progress and Stop while import cancellation is available', async () => {
+        const onCancelImport = vi.fn();
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: 'persisted',
+            importOperation: { sessionId: 's1', state: 'running', phase: 'importing', importedCount: 42, canCancel: true },
+            onCancelImport,
+        } });
+        expect(screen.getTextContent()).toContain('chatFooter.directImportImporting');
+        expect(screen.getTextContent()).toContain('chatFooter.directImportCount');
+        const stop = screen.findByTestId('session-chatFooter-stopImport');
+        expect(stop).not.toBeNull();
+        await act(async () => { stop!.props.onPress(); });
+        expect(onCancelImport).toHaveBeenCalled();
+        expect(screen.findByTestId('session-chatFooter-takeOverPersist')).toBeNull();
+    });
+
+    it.each(['cancelling', 'starting'] as const)('does not offer Stop once daemon reports %s', async (phase) => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: 'persisted',
+            importOperation: { sessionId: 's1', state: phase === 'cancelling' ? 'cancelling' : 'running',
+                phase: phase === 'cancelling' ? 'importing' : 'starting', importedCount: 42, canCancel: false },
+            onCancelImport: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-stopImport')).toBeNull();
+        expect(screen.getTextContent()).toContain(phase === 'cancelling' ? 'chatFooter.directImportCancelling' : 'chatFooter.directImportStarting');
+    });
+
+    it('keeps a conversion failure visible after the runner has started', async () => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: true, activity: 'running', canTakeOverDirect: false,
+            canTakeOverPersist: true, takeoverInFlight: null,
+            importOperation: { sessionId: 's1', state: 'failed', phase: 'converting', importedCount: 42,
+                canCancel: false, error: 'metadata update failed' },
+            onRequestTakeOverPersist: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-directControl')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('chatFooter.directImportFailed');
+        expect(screen.getTextContent()).toContain('metadata update failed');
+    });
+
+    it('keeps a status recovery action visible after the runner has started', async () => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: true, activity: 'running', canTakeOverDirect: false,
+            canTakeOverPersist: false, takeoverInFlight: null, importStatusError: 'refresh disconnected',
+            onRefreshImport: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-refreshImport')).not.toBeNull();
+    });
+
+    it('offers retry after cancellation with retained history', async () => {
+        const onRequestTakeOverPersist = vi.fn();
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: null,
+            importOperation: { sessionId: 's1', state: 'cancelled', phase: 'importing', importedCount: 42, canCancel: false },
+            onRequestTakeOverPersist,
+        } });
+        expect(screen.getTextContent()).toContain('chatFooter.directImportCancelled');
+        const retry = screen.findByTestId('session-chatFooter-takeOverPersist');
+        expect(retry).not.toBeNull();
+        await act(async () => { retry!.props.onPress(); });
+        expect(onRequestTakeOverPersist).toHaveBeenCalled();
+    });
+
     it('renders a switch-to-remote button when controlled by user', async () => {
         const screen = await renderFooter({
             controlledByUser: true,

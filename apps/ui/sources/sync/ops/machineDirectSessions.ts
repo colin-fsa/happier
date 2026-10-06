@@ -5,8 +5,9 @@ import {
     DirectSessionCandidateDeleteResponseSchema,
     DirectSessionStatusGetRequestSchema,
     DirectSessionStatusGetResponseSchema,
+    DirectSessionImportOperationRequestSchema,
+    DirectSessionImportOperationResponseSchema,
     DirectSessionTakeoverPersistRequestSchema,
-    DirectSessionTakeoverPersistResponseSchema,
     DirectSessionTakeoverRequestSchema,
     DirectSessionTakeoverResponseSchema,
     DirectSessionsCandidatesListRequestSchema,
@@ -23,8 +24,9 @@ import {
     type DirectSessionCandidateDeleteResponse,
     type DirectSessionStatusGetRequest,
     type DirectSessionStatusGetResponse,
+    type DirectSessionImportOperationRequest,
+    type DirectSessionImportOperationResponse,
     type DirectSessionTakeoverPersistRequest,
-    type DirectSessionTakeoverPersistResponse,
     type DirectSessionTakeoverRequest,
     type DirectSessionTakeoverResponse,
     type DirectSessionsCandidatesListRequest,
@@ -206,16 +208,49 @@ export async function machineDirectSessionTakeover(
     });
 }
 
-export async function machineDirectSessionTakeoverPersist(
+export async function machineDirectSessionTakeoverPersistStart(
     input: DirectSessionTakeoverPersistRequest,
     opts?: MachineDirectSessionsOpts,
-): Promise<DirectSessionTakeoverPersistResponse> {
+): Promise<DirectSessionImportOperationResponse> {
+    try {
+        return await callDirectSessionMachineRpc({
+            machineId: input.machineId,
+            method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START,
+            input: withTakeoverTerminalSettings(input),
+            requestSchema: DirectSessionTakeoverPersistRequestSchema,
+            responseSchema: DirectSessionImportOperationResponseSchema,
+            opts,
+        });
+    } catch (error) {
+        if (!isRpcMethodNotAvailableError(error) && !isRpcMethodNotFoundError(error)) throw error;
+        return { ok: false, errorCode: 'provider_unavailable', error: 'direct_session_import_requires_daemon_upgrade' };
+    }
+}
+
+export async function machineDirectSessionImportStatus(
+    input: DirectSessionImportOperationRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionImportOperationResponse> {
     return callDirectSessionMachineRpc({
         machineId: input.machineId,
-        method: RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
-        input: withTakeoverTerminalSettings(input),
-        requestSchema: DirectSessionTakeoverPersistRequestSchema,
-        responseSchema: DirectSessionTakeoverPersistResponseSchema,
+        method: RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS,
+        input,
+        requestSchema: DirectSessionImportOperationRequestSchema,
+        responseSchema: DirectSessionImportOperationResponseSchema,
+        opts,
+    });
+}
+
+export async function machineDirectSessionImportCancel(
+    input: DirectSessionImportOperationRequest,
+    opts?: MachineDirectSessionsOpts,
+): Promise<DirectSessionImportOperationResponse> {
+    return callDirectSessionMachineRpc({
+        machineId: input.machineId,
+        method: RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL,
+        input,
+        requestSchema: DirectSessionImportOperationRequestSchema,
+        responseSchema: DirectSessionImportOperationResponseSchema,
         opts,
     });
 }

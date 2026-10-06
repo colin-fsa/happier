@@ -2565,6 +2565,9 @@ export {
   DirectSessionTakeoverResponseSchema,
   DirectSessionTakeoverPersistRequestSchema,
   DirectSessionTakeoverPersistResponseSchema,
+  DirectSessionImportOperationSchema,
+  DirectSessionImportOperationRequestSchema,
+  DirectSessionImportOperationResponseSchema,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
   type DirectSessionsAcpSessionListCapabilityRequest,
@@ -2595,6 +2598,9 @@ export {
   type DirectSessionTakeoverResponse,
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
+  type DirectSessionImportOperation,
+  type DirectSessionImportOperationRequest,
+  type DirectSessionImportOperationResponse,
 } from './directSessions/daemonRpcV1.js';
 
 export {
