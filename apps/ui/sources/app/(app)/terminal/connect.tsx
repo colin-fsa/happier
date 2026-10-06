@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Platform } from 'react-native';
 import { Text } from '@/components/ui/text/Text';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
@@ -28,6 +28,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 
 export default function TerminalConnectScreen() {
     const router = useRouter();
+    const routeHash = useLocalSearchParams<{ '#': string }>()['#'];
+    const processedRouteHashRef = React.useRef<string | undefined>(undefined);
     const { theme } = useUnistyles();
     const [publicKey, setPublicKey] = useState<string | null>(null);
     const [serverUrlFromHash, setServerUrlFromHash] = useState<string | null>(null);
@@ -67,9 +69,15 @@ export default function TerminalConnectScreen() {
 
     // Extract key from hash on web platform
     useEffect(() => {
-        if (Platform.OS === 'web' && typeof window !== 'undefined' && !hashProcessed) {
-            const parsed = parseTerminalConnectUrl(window.location.href);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            if (hashProcessed && (!routeHash || processedRouteHashRef.current === routeHash)) return;
+            processedRouteHashRef.current = routeHash;
+            const sourceUrl = routeHash
+                ? `${window.location.href.split('#')[0]}#${routeHash}`
+                : window.location.href;
+            const parsed = parseTerminalConnectUrl(sourceUrl);
             if (parsed?.publicKeyB64Url) {
+                authRedirectTriggeredRef.current = false;
                 setPublicKey(parsed.publicKeyB64Url);
                 setPairing(parsed.pairing);
 
@@ -110,7 +118,7 @@ export default function TerminalConnectScreen() {
             }
             setHashProcessed(true);
         }
-    }, [hashProcessed]);
+    }, [hashProcessed, routeHash]);
 
     useEffect(() => {
         if (auth.isAuthenticated) return;

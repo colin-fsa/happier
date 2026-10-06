@@ -42,6 +42,7 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             menu_bar::on_second_launch(app, args);
         }));
+        builder = builder.plugin(tauri_plugin_deep_link::init());
     }
 
     builder = builder
@@ -112,6 +113,15 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             {
+                // Windows/Linux already present the window through the single-instance callback.
+                #[cfg(target_os = "macos")]
+                {
+                    use tauri_plugin_deep_link::DeepLinkExt;
+                    let handle = app.handle().clone();
+                    app.deep_link().on_open_url(move |_event| {
+                        window_chrome::request_show_main_window(&handle);
+                    });
+                }
                 system_tasks::set_desktop_bundle_id(&app.config().identifier);
                 autostart::register(app)?;
                 menu_bar::prepare_launch(app.handle());

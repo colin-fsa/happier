@@ -79,6 +79,19 @@ flowchart TD
 ## Desktop-driven setup
 
 The desktop app never asks the user to open a terminal to connect the computer it is running on.
+
+In current development source, the desktop shell registers each release channel's custom URL
+scheme (`happier`, `happier-preview`, or `happier-dev`) through Tauri's deep-link plugin.
+The existing single-instance plugin forwards running-app links on Windows and Linux; macOS
+receives Opened events. The main-window presentation owner handles revealing or recreating the
+window. `installDesktopDeepLinks` subscribes before reading the plugin's startup URL snapshot
+and delegates URL interpretation to the existing system-path and terminal-connect owners.
+Terminal links reach `/terminal/connect` with pairing material in the fragment, where the
+existing confirmation, sign-in recovery, and URL clearing apply. This adds no automatic pairing
+approval. Channel-specific schemes allow installed channels to coexist; the CLI's default
+`happier://` link targets stable. Registration and cold/running/tray-only launches require live
+OS validation; macOS registration must be checked in the installed application bundle.
+
 It drives the same CLI subcommands the human flow uses, through the bundled `hsetup` sidecar
 (`apps/bootstrap`), which the Tauri shell launches (`apps/ui/src-tauri/src/system_tasks/`). `hsetup`
 is bundled inside the desktop app, not a separately released component.
