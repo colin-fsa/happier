@@ -6346,9 +6346,8 @@ export class ApiSessionClient extends EventEmitter {
             didMaterialize: materializeResult.didMaterialize,
             authoritativeState: materializeResult.pendingQueueState ?? null,
         });
-        this.pendingQueueState = pendingStateUpdate.state;
-        if (pendingStateUpdate.changed) {
-            this.pendingWakeSeq += 1;
+        if (pendingStateUpdate.state.known) {
+            this.applyPendingQueueState(pendingStateUpdate.state);
         }
         if (this.closed || this.runtimeTerminationStarted) {
             return { didMaterialize: false, result: { type: 'retryable_transport' } };
