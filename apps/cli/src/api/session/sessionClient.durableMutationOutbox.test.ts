@@ -203,6 +203,7 @@ const reusableUnknownTurnId = ['primary', 'runtime'].join('-') + ':s1:unknown';
 describe('ApiSessionClient durable mutation outbox', () => {
   beforeEach(async () => {
     vi.resetModules();
+    vi.mocked(axios.get).mockReset();
     vi.mocked(axios.post).mockReset();
     supervisorConnect = null;
     supervisorControl = null;
