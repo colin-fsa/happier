@@ -637,12 +637,12 @@ describe('connectedServiceSchemas', () => {
             .appendConnectedServiceAuthGroupReaderCapabilities;
         expect(typeof appendReaderCapabilities).toBe('function');
         expect((appendReaderCapabilities as (path: string) => string)('/v3/connect/openai-codex/groups')).toBe(
-            '/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1',
+            '/v3/connect/openai-codex/groups?happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1',
         );
         expect((appendReaderCapabilities as (path: string) => string)(
             '/v3/connect/openai-codex/groups/main/members/work?expectedGeneration=4',
         )).toBe(
-            '/v3/connect/openai-codex/groups/main/members/work?expectedGeneration=4&happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1',
+            '/v3/connect/openai-codex/groups/main/members/work?expectedGeneration=4&happierAutoDisablePlanInvalidAccounts=1&happierPoolQuotaLimitSelection=1&happierPoolExpiryFirst=1',
         );
     });
 
@@ -650,7 +650,7 @@ describe('connectedServiceSchemas', () => {
         const ConnectedServiceAuthGroupPolicyV1Schema = expectSchema('ConnectedServiceAuthGroupPolicyV1Schema');
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1 })).toEqual({
             v: 1,
-            strategy: 'least_limited',
+            strategy: 'expiry_first',
             autoSwitch: false,
             switchOn: {
                 usageLimit: true,
@@ -680,6 +680,7 @@ describe('connectedServiceSchemas', () => {
         expect(ConnectedServiceAuthGroupPolicyV1Schema.safeParse({ v: 1, strategy: 'round_robin' }).success).toBe(false);
         // Existing pools that persisted an explicit `priority` strategy must NOT be silently migrated.
         expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'priority' }).strategy).toBe('priority');
+        expect(ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1, strategy: 'least_limited' }).strategy).toBe('least_limited');
         // Removed no-op fields are dropped, not carried, on the parsed policy.
         const parsedPolicy = ConnectedServiceAuthGroupPolicyV1Schema.parse({ v: 1 });
         expect(parsedPolicy).not.toHaveProperty('recoveryPromptMode');

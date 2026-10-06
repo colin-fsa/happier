@@ -1,3 +1,4 @@
+import { ProviderUsageGaugeSettingsGroup } from './ProviderUsageGaugeSettingsGroup';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useNavigation, useRouter } from 'expo-router';
@@ -329,6 +330,7 @@ export const ConnectedServicesSettingsView = React.memo(function ConnectedServic
           );
         })}
       </ItemGroup>
+      <ProviderUsageGaugeSettingsGroup />
       <ConnectedServicesProviderStateSharingDefaultsGroup
         settings={normalizedProviderStateSharingSettings}
         setSettings={setProviderStateSharingSettings}

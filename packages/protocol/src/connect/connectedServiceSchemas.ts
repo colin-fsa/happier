@@ -506,9 +506,13 @@ export const CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER = 'accept';
 export const CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE = 'application/json; happier-connected-service-auto-quota-reset=1';
 export const CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY = 'happierAutoDisablePlanInvalidAccounts';
 export const CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY = 'happierPoolQuotaLimitSelection';
+export const CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY = 'happierPoolExpiryFirst';
 export const CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE = '1';
 
 export const ConnectedServiceAuthGroupReaderCapabilitiesQueryV1Schema = z.object({
+    [CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY]: z
+        .literal(CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE)
+        .optional(),
     [CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY]: z
         .literal(CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE)
         .optional(),
@@ -523,7 +527,7 @@ export type ConnectedServiceAuthGroupReaderCapabilitiesQueryV1 = z.infer<
 
 export function appendConnectedServiceAuthGroupReaderCapabilities(path: string): string {
     const separator = path.includes('?') ? '&' : '?';
-    return `${path}${separator}${CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}`;
+    return `${path}${separator}${CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}&${CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY}=${CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE}`;
 }
 
 const ConnectedServiceSelectedProviderLimitIdsSchema = z
@@ -538,10 +542,12 @@ export const ConnectedServiceAuthGroupQuotaLimitSelectionV1Schema = z.discrimina
 
 export type ConnectedServiceAuthGroupQuotaLimitSelectionV1 = z.infer<typeof ConnectedServiceAuthGroupQuotaLimitSelectionV1Schema>;
 
+export const ConnectedServiceAuthGroupStrategyV1Schema = z.enum(['expiry_first', 'priority', 'least_limited', 'manual']);
+
 export const ConnectedServiceAuthGroupPolicyV1Schema = z
     .object({
         v: z.literal(1).default(1),
-        strategy: z.enum(['priority', 'least_limited', 'manual']).default('least_limited'),
+        strategy: ConnectedServiceAuthGroupStrategyV1Schema.default('expiry_first'),
         autoSwitch: z.boolean().default(false),
         // Absence means false. Do not materialize a default in older-reader responses.
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
@@ -586,7 +592,7 @@ export type ConnectedServiceAuthGroupPolicyV1 = z.infer<typeof ConnectedServiceA
 export const ConnectedServiceAuthGroupPolicyPatchV1Schema = z
     .object({
         v: z.literal(1).optional(),
-        strategy: z.enum(['priority', 'least_limited', 'manual']).optional(),
+        strategy: ConnectedServiceAuthGroupStrategyV1Schema.optional(),
         autoSwitch: z.boolean().optional(),
         autoUseQuotaResetsWhenExhausted: z.boolean().optional(),
         autoDisablePlanInvalidAccounts: z.boolean().optional(),

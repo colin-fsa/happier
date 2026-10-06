@@ -97,35 +97,35 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter:reached')).toBeTruthy();
         expect(screen.findByTestId('agent-input-provider-usage-meter-bar:reached')).toBeNull();
     });
-    it('renders a pinned extra as its own remaining-first ring with its own accessible name', async () => {
+    it('renders each selected global window with its own remaining-first ring and accessible name', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: {
                 v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
                 planLabel: null, accountLabel: null, meters: [
                     { meterId: 'weekly', label: 'Weekly', used: 82, limit: 100, unit: 'count', utilizationPct: null,
                         resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
-                    { meterId: 'requests', label: 'Requests', used: 30, limit: 100, unit: 'requests', utilizationPct: null,
-                        resetsAt: null, status: 'ok', details: { limitCategory: 'rate_limit' } },
+                    { meterId: 'daily', label: 'Daily', used: 30, limit: 100, unit: 'count', utilizationPct: null,
+                        resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
                 ],
             },
-            windowMode: 'most_constrained', additionalMeterIds: ['requests'], nowMs: 2_000,
+            windowMode: 'most_constrained', windowModes: ['weekly', 'daily'], nowMs: 2_000,
             formatter: fixtureFormatter,
         });
         if (!vm) throw new Error('Expected a reported quota gauge');
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
 
         expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('18');
-        expect(screen.findByTestId('agent-input-provider-usage-value:requests')?.props.children).toBe('70');
+        expect(screen.findByTestId('agent-input-provider-usage-value:daily')?.props.children).toBe('70');
         const imageLabels = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'image')
             .map((node) => node.props.accessibilityLabel);
-        expect(imageLabels).toEqual(['Weekly 18% left', 'Requests 70% left']);
+        expect(imageLabels).toEqual(['Weekly 18% left', 'Daily 70% left']);
         const aggregate = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
         expect(aggregate).toContain('Weekly 18% left');
-        expect(aggregate).toContain('Requests 70% left');
+        expect(aggregate).toContain('Daily 70% left');
         expect(screen.findByTestId('agent-input-provider-usage-meter-label')?.props.children).toBe('Weekly');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label:requests')?.props.children).toBe('Requests');
+        expect(screen.findByTestId('agent-input-provider-usage-meter-label:daily')?.props.children).toBe('Daily');
         act(() => { screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.(); });
-        expect(screen.findByTestId('agent-input-provider-usage-meter:requests')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-provider-usage-meter:daily')).toBeTruthy();
     });
 
     it('keeps meter labels off by default and shows them when enabled', async () => {

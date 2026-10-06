@@ -335,6 +335,7 @@ describe('createClaudeSubscriptionQuotaFetcher', () => {
 
     const snapshot = await fetcher.fetch({ record, now, signal: new AbortController().signal });
     expect(snapshot?.meters.find((meter) => meter.meterId === 'seven_day_fable')).toMatchObject({
+      windowDurationMs: 604_800_000,
       label: 'Weekly (Fable)',
       utilizationPct: 61,
       resetsAt: Date.parse('2026-02-24T00:00:00Z'),

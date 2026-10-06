@@ -220,6 +220,15 @@ describe('settings', () => {
             expect(settingsParse(invalidSettings)).toEqual(parsedSettingsDefaults);
         });
 
+        it('keeps legacy gauge preferences and defaults an absent or invalid multi-selection', () => {
+            expect(settingsParse({ sessionProviderUsageGaugeWindowMode: 'weekly' })).toMatchObject({
+                sessionProviderUsageGaugeWindowMode: 'weekly', sessionProviderUsageGaugeWindowModes: null,
+            });
+            expect(settingsParse({ sessionProviderUsageGaugeWindowModes: [] }).sessionProviderUsageGaugeWindowModes).toBeNull();
+            expect(settingsParse({ sessionProviderUsageGaugeWindowModes: ['daily', 'weekly'] }).sessionProviderUsageGaugeWindowModes)
+                .toEqual(['daily', 'weekly']);
+        });
+
         it('should preserve unknown fields (loose schema)', () => {
             const settingsWithExtra = {
                 viewInline: true,

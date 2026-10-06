@@ -7,6 +7,7 @@ import {
 } from './resolveConnectedServiceIdentityDisplay';
 import {
     ConnectedServiceAuthGroupPolicyV1Schema,
+    ConnectedServiceAuthGroupStrategyV1Schema,
     type ConnectedServiceCredentialHealthStatusV1,
     type ConnectedServiceAuthGroupPolicyV1,
     type ConnectedServiceAuthGroupV1,
@@ -133,9 +134,16 @@ export function normalizeConnectedServiceGroupPolicy(
     const rawStrategy = readConnectedServiceGroupString(raw.strategy);
     return {
         ...CONNECTED_SERVICE_GROUP_DEFAULT_POLICY,
-        strategy: rawStrategy === 'least_limited' || rawStrategy === 'manual' ? rawStrategy : 'priority',
+        strategy: ConnectedServiceAuthGroupStrategyV1Schema.safeParse(rawStrategy).data ?? CONNECTED_SERVICE_GROUP_DEFAULT_POLICY.strategy,
         autoSwitch: readBoolean(raw.autoSwitch, CONNECTED_SERVICE_GROUP_DEFAULT_POLICY.autoSwitch),
     };
+}
+
+export function resolveConnectedServiceGroupStrategyLabel(strategy: ConnectedServiceAuthGroupPolicyV1['strategy']): string {
+    if (strategy === 'expiry_first') return t('connectedServices.detail.groups.strategyExpiryFirst');
+    if (strategy === 'manual') return t('connectedServices.detail.groups.strategyManual');
+    if (strategy === 'least_limited') return t('connectedServices.detail.groups.strategyLeastLimited');
+    return t('connectedServices.detail.groups.strategyPriority');
 }
 
 export function normalizeConnectedServiceGroupMember(value: unknown): ConnectedServiceGroupMemberViewModel | null {
@@ -354,11 +362,7 @@ export function formatConnectedServiceGroupSubtitle(
         group.policy.autoSwitch
             ? t('connectedServices.detail.groups.autoFallbackEnabled')
             : t('connectedServices.detail.groups.autoFallbackDisabled'),
-        group.policy.strategy === 'manual'
-            ? t('connectedServices.detail.groups.strategyManual')
-            : group.policy.strategy === 'least_limited'
-                ? t('connectedServices.detail.groups.strategyLeastLimited')
-                : t('connectedServices.detail.groups.strategyPriority'),
+        resolveConnectedServiceGroupStrategyLabel(group.policy.strategy),
         prioritySummary
             ? t('connectedServices.detail.groups.priority', { priority: prioritySummary })
             : null,

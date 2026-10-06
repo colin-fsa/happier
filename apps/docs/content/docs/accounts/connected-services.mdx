@@ -311,9 +311,17 @@ dead account.
 
 | Strategy | What it does |
 | --- | --- |
-| **Least limited** *(default)* | Picks whichever member has the most quota left. |
+| **Expiring quota first** *(development default)* | Prefers usable quota whose allowance resets or non-renewing subscription ends soonest, with enough headroom. |
+| **Least limited** | Picks whichever member has the most quota left. |
 | **Priority** | Uses your ordering, falling back down the list. |
 | **Manual** | Never chooses for you; you pick. |
+
+The expiry-first choice requires a server advertising `connectedServices.poolExpiryFirst`.
+It is the default for new pools in development builds; existing saved strategies
+are preserved. It prefers accounts above the pool's low-quota threshold before
+comparing dates, using the longest selected usage window rather than an incidental
+short reset. Missing or stale dates are neutral. It chooses on the next needed
+switch, without adding scheduled swaps or restarting the agent.
 
 Reorder members to set the fallback order, and enable or disable individual
 accounts without removing them.
@@ -412,6 +420,25 @@ Each profile detail view lets you:
 - refresh the snapshot
 - inspect the provider plan label when available
 - pin specific meters so the same meters appear as summary badges elsewhere in the UI
+
+### Composer gauges in development builds
+
+Choose **Gauge windows** under **Settings → Connected services → Provider usage**
+or **Settings → Session → Provider limits and usage → Provider usage**. Both
+locations edit the same preference for all accounts. The default is one
+**Most constrained** gauge; select several windows, such as **Daily** and
+**Weekly**, to display one gauge for each available window.
+
+For pooled sessions, gauges use only the allowances selected in that pool. A
+pool that tracks only Fable allowances shows Fable's selected windows, even if
+the account reports other allowances. Missing windows do not produce extra
+gauges. **Short window** includes allowances such as a five-hour window;
+**Daily** means a daily allowance.
+
+Account favorites select summary meters in account views and add extra composer
+gauges for the account currently used by the session, alongside the global windows.
+Favorites respect the pool’s selected limits and need a reliable percentage to produce a ring. **Show usage labels** and the
+provider-gauge visibility toggle are available in both locations too.
 
 ## When you hit a usage limit
 

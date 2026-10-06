@@ -10,6 +10,7 @@ import {
     defineSettingDefinitions,
 } from '@happier-dev/protocol';
 import { z } from 'zod';
+import { QUOTA_GAUGE_WINDOW_MODES } from '@/sync/domains/connectedServices/quotaGaugeWindows';
 import { AvatarStyleIdSchema, DEFAULT_AVATAR_STYLE_ID } from './avatarStyleSetting';
 import { SessionFolderViewModeV1Schema } from '@/sync/domains/session/folders';
 import {
@@ -401,11 +402,17 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
     sessionProviderUsageGaugeWindowMode: {
-        schema: z.enum(['most_constrained', 'daily', 'weekly', 'primary', 'secondary', 'session']),
+        schema: z.enum(QUOTA_GAUGE_WINDOW_MODES),
         default: 'most_constrained',
         description: 'Which provider usage quota window the session composer gauge should prefer',
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
+    },
+    sessionProviderUsageGaugeWindowModes: {
+        schema: z.array(z.enum(QUOTA_GAUGE_WINDOW_MODES)).min(1).nullable(),
+        default: null,
+        description: 'Composer quota windows for every account. Null preserves the predecessor single-window preference; most_constrained selects one gauge.',
+        storageScope: 'account',
     },
     usageLimitRecoverySettingsV1: {
         schema: UsageLimitRecoverySettingsV1Schema,

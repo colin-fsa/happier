@@ -97,6 +97,7 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 autoQuotaReset: { enabled: false },
                 autoDisablePlanInvalid: { enabled: false },
                 poolQuotaLimitSelection: { enabled: false },
+                poolExpiryFirst: { enabled: false },
             },
             channelBridges: {
                 enabled: false,

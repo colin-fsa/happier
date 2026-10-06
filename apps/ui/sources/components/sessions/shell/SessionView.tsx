@@ -243,7 +243,6 @@ import {
     resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
-import { projectConnectedServiceQuotaSnapshotForLimitSelection } from '@/sync/domains/connectedServices/projectConnectedServiceQuotaSnapshotForLimitSelection';
 import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { usePathname, useRouter } from 'expo-router';
@@ -3833,17 +3832,13 @@ function SessionViewLoaded({
     const voiceEnabled = useFeatureEnabled('voice');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
-    const poolQuotaLimitSelectionEnabled = useFeatureEnabled('connectedServices.poolQuotaLimitSelection', {
-        scopeKind: 'spawn',
-        serverId: capabilityServerId,
-    });
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads', {
         scopeKind: 'spawn',
         serverId: capabilityServerId,
     });
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
-    // An account's pinned meters double as its extra composer gauges.
+    const sessionProviderUsageGaugeWindowModesSetting = useSetting('sessionProviderUsageGaugeWindowModes');
     const pinnedQuotaMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
@@ -3870,10 +3865,10 @@ function SessionViewLoaded({
             : null
     ), [accountProfile?.connectedServicesV2, connectedServiceQuotaProfileRef]);
     const connectedServiceQuotaGroupServiceId = React.useMemo(() => {
-        if (!poolQuotaLimitSelectionEnabled || !connectedServiceQuotaProfileRef?.groupId) return null;
+        if (!connectedServiceQuotaProfileRef?.groupId) return null;
         const parsed = ConnectedServiceIdSchema.safeParse(connectedServiceQuotaProfileRef.serviceId);
         return parsed.success ? parsed.data : null;
-    }, [connectedServiceQuotaProfileRef, poolQuotaLimitSelectionEnabled]);
+    }, [connectedServiceQuotaProfileRef]);
     const connectedServiceQuotaAuthGroups = useConnectedServiceAuthGroupsQuery({
         serviceId: connectedServiceQuotaGroupServiceId,
         enabled: connectedServiceQuotaGroupServiceId !== null,
@@ -3881,9 +3876,10 @@ function SessionViewLoaded({
     });
     const connectedServiceQuotaLimitSelection = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef?.groupId) return undefined;
-        return connectedServiceQuotaAuthGroups.groups.find((group) => (
+        const group = connectedServiceQuotaAuthGroups.groups.find((group) => (
             group.groupId === connectedServiceQuotaProfileRef.groupId
-        ))?.policy.quotaLimitSelection;
+        ));
+        return group ? group.policy.quotaLimitSelection : null;
     }, [connectedServiceQuotaAuthGroups.groups, connectedServiceQuotaProfileRef?.groupId]);
     const sessionAgentCatalogEntries = React.useMemo(() => getResolvedBackendCatalogEntries({
         enabledAgentIds,
@@ -4088,13 +4084,7 @@ function SessionViewLoaded({
     const connectedServiceQuotaSnapshot = connectedServiceQuotaProfileKey
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
-    const connectedServiceQuotaDisplaySnapshot = React.useMemo(
-        () => projectConnectedServiceQuotaSnapshotForLimitSelection(
-            connectedServiceQuotaSnapshot,
-            connectedServiceQuotaLimitSelection,
-        ),
-        [connectedServiceQuotaLimitSelection, connectedServiceQuotaSnapshot],
-    );
+    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
@@ -4154,10 +4144,12 @@ function SessionViewLoaded({
         return computeConnectedServiceQuotaGaugeViewModel({
             snapshot: gaugeSource.snapshot,
             windowMode: sessionProviderUsageGaugeWindowMode,
+            windowModes: sessionProviderUsageGaugeWindowModesSetting,
             additionalMeterIds: connectedServiceQuotaProfileRef
-                && isConnectedServiceBoundProviderUsageDisplaySource(providerUsageDisplaySnapshotSource)
-                ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(connectedServiceQuotaProfileRef)] ?? []
+                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
+                ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
                 : [],
+            quotaLimitSelection: connectedServiceQuotaLimitSelection,
             nowMs: nowServerMs(),
             formatter: connectedServiceQuotaGaugeFormatter,
             providerDisplayName: resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId),
@@ -4173,6 +4165,8 @@ function SessionViewLoaded({
         providerUsageGaugeSource,
         connectedServiceQuotaProfileRef,
         pinnedQuotaMeterIdsByKey,
+        connectedServiceQuotaLimitSelection,
+        sessionProviderUsageGaugeWindowModesSetting,
         sessionProviderUsageGaugeWindowMode,
     ]);
     const providerUsageGaugeConnectedServiceProfileRef =

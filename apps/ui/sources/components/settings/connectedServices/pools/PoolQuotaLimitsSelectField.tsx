@@ -9,9 +9,9 @@ import {
     type ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 
-import { PoolMultiSelectField, type PoolMultiSelectCandidate } from './PoolMultiSelectField';
+import { MultiSelectField, type MultiSelectCandidate } from '@/components/ui/forms/dropdown/MultiSelectField';
 
-export type PoolQuotaLimitCandidate = PoolMultiSelectCandidate & Readonly<{
+export type PoolQuotaLimitCandidate = MultiSelectCandidate & Readonly<{
     reported: boolean;
     modelLabel?: string;
     windowCount: number;
@@ -193,7 +193,7 @@ export const PoolQuotaLimitsSelectField = React.memo(function PoolQuotaLimitsSel
             : t('connectedServices.pools.detail.quotaLimitsAllDescription'),
     }, ...candidates], [candidates, props.loadingProfileCount]);
     return (
-        <PoolMultiSelectField
+        <MultiSelectField
             testID="connected-services-pool-detail:quota-limits"
             candidates={menuCandidates}
             selectedIds={selectedIds}

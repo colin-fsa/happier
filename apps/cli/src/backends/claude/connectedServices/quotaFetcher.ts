@@ -543,6 +543,8 @@ function buildUsageWindowMeter(
   return {
     meterId,
     label: resolveUsageWindowLabel(meterId),
+    ...(meterId === 'seven_day' || meterId.startsWith('seven_day_') ? { windowDurationMs: 604_800_000 }
+      : meterId === 'five_hour' || meterId.startsWith('five_hour_') ? { windowDurationMs: 18_000_000 } : {}),
     used,
     limit,
     unit: resolveUsageWindowUnit(window),

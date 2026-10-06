@@ -274,9 +274,31 @@ When the field is absent in storage, a negotiated reader receives the explicit
 stored selection.
 
 `windowDurationMs` is an optional additive quota-meter fact. Updated readers use
-it only for presentation; absence preserves the existing meter semantics and older
+it for presentation and expiry-first ranking; absence preserves eligibility semantics and older
 readers safely ignore it. Pool-selected usage projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
+
+### Account-pool expiry-first strategy (development)
+
+The canonical V1 policy defaults to `expiry_first` for newly created or absent
+policies. Explicitly persisted `least_limited`, `priority`, and `manual` choices
+remain unchanged. The daemon's existing candidate selector first prefers fresh
+headroom above the pool's soft-switch threshold, then the earliest future reset
+of its longest selected usage allowance or independently fresh, non-renewing
+subscription end. Ties and candidates without adequate headroom use the existing
+least-limited ranking and priority tie-break. Missing, stale, renewing, and passed
+subscription dates provide no urgency; eligibility, current-account stickiness,
+switch budgets, and hot-auth application are unchanged.
+
+Updated group readers negotiate `happierPoolExpiryFirst=1`. The existing response
+projection represents this strategy as `least_limited` for older strict readers;
+it does not rewrite storage. Unrelated older-client patches preserve the stored
+strategy, while an explicit strategy patch remains an intentional choice. Updated
+UI clients offer the new choice only when `connectedServices.poolExpiryFirst` is
+advertised; this bit controls authoring, not runtime selection. Older daemons
+continue their supported least-limited behavior. As with the other development
+policy extensions above, rollback to a server whose persisted-policy parser
+rejects this enum is not a preservation guarantee.
 
 ### Session draft rollout
 

@@ -254,6 +254,7 @@ function buildMemberState(
   return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
     capturedAtMs: snapshot.fetchedAt,
     meters: snapshot.meters,
+    subscription: snapshot.subscription,
     selection: quotaLimitSelection,
   });
 }

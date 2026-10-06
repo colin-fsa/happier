@@ -60,6 +60,43 @@ const formatter: ConnectedServiceQuotaGaugeLabelFormatter = {
 };
 
 describe('computeConnectedServiceQuotaGaugeViewModel', () => {
+    it('selects global windows from the pool allowances across raw usage sources', () => {
+        const usage = snapshot([
+            meter({ meterId: 'daily-other', label: 'Daily other', providerLimitId: 'other', windowDurationMs: 86_400_000, utilizationPct: 99 }),
+            meter({ meterId: 'weekly-other', label: 'Weekly other', providerLimitId: 'other', windowDurationMs: 604_800_000, utilizationPct: 98 }),
+            meter({ meterId: 'daily-fable', label: 'Daily Fable', providerLimitId: 'fable', windowDurationMs: 86_400_000, utilizationPct: 40 }),
+            meter({ meterId: 'weekly-fable', label: 'Weekly Fable', providerLimitId: 'fable', windowDurationMs: 604_800_000, utilizationPct: 60 }),
+            meter({ meterId: 'short-fable', label: 'Short Fable', providerLimitId: 'fable', windowDurationMs: 18_000_000, utilizationPct: 20 }),
+            meter({ meterId: 'unknown-fable', label: 'Unknown Fable', providerLimitId: 'fable', status: 'unavailable' }),
+        ]);
+        const params = {
+            snapshot: usage, windowMode: 'most_constrained' as const,
+            windowModes: ['daily', 'weekly'] as const,
+            additionalMeterIds: ['weekly-fable', 'short-fable', 'daily-other', 'unknown-fable'],
+            quotaLimitSelection: { mode: 'selected' as const, providerLimitIds: ['fable'] },
+            nowMs: 2_000, formatter,
+        };
+        const vm = computeConnectedServiceQuotaGaugeViewModel(params);
+        expect(vm?.usageRings.map((ring) => [ring.meterId, ring.ringValueLabel]))
+            .toEqual([['daily-fable', '60'], ['weekly-fable', '40'], ['short-fable', '80']]);
+        expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['daily-fable', 'weekly-fable', 'short-fable', 'unknown-fable']);
+        expect(computeConnectedServiceQuotaGaugeViewModel({
+            ...params, quotaLimitSelection: { mode: 'selected', providerLimitIds: ['unreported'] },
+        })).toBeNull();
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, windowModes: ['secondary'] })?.usageRings.map((ring) => ring.meterId)).toEqual(['weekly-fable', 'short-fable']);
+        expect(usage.meters).toHaveLength(6);
+        expect(computeConnectedServiceQuotaGaugeViewModel({ ...params, quotaLimitSelection: null })).toBeNull();
+    });
+
+    it('omits an unavailable globally selected period instead of showing another period', () => {
+        const params = {
+            snapshot: snapshot([meter({ meterId: 'weekly', label: 'Weekly', utilizationPct: 70 })]),
+            windowMode: 'most_constrained' as const, windowModes: ['daily'] as const,
+            nowMs: 2_000, formatter,
+        };
+        expect(computeConnectedServiceQuotaGaugeViewModel(params)).toBeNull();
+    });
+
     it('hides empty placeholders while retaining measured, reset-only, and pinned windows', () => {
         const meters = [
             meter({ meterId: 'full', label: 'Full', utilizationPct: 0 }),
@@ -78,9 +115,9 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
 
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: snapshot(meters), windowMode: 'most_constrained', nowMs: 2_000,
-            formatter: displayFormatter, additionalMeterIds: ['pinned'],
+            formatter: displayFormatter,
         });
-        expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset', 'pinned']);
+        expect(vm?.allMeterRows.map((row) => row.meterId)).toEqual(['full', 'empty', 'reset']);
         expect(vm?.remainingPct).toBe(0);
         expect(vm?.usageRings.map((ring) => ring.meterId)).toEqual(['empty']);
         expect(buildConnectedServiceQuotaGaugeMeterRows([meters[2]!], 2_000, displayFormatter)).toEqual([]);
@@ -173,7 +210,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         });
     });
 
-    it('shows one most-constrained ring by default and appends pinned extras, remaining-first', () => {
+    it('shows one most-constrained ring by default and selected global windows, remaining-first', () => {
         const usageSnapshot = snapshot([
             meter({ meterId: 'five_hour', label: '5-hour', utilizationPct: 10, unit: 'unknown' }),
             meter({ meterId: 'seven_day', label: 'Weekly', utilizationPct: 25, unit: 'unknown' }),
@@ -183,7 +220,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(computeConnectedServiceQuotaGaugeViewModel(params)?.usageRings.map((ring) => ring.meterId))
             .toEqual(['seven_day_fable']);
         const rings = computeConnectedServiceQuotaGaugeViewModel({
-            ...params, additionalMeterIds: ['seven_day_fable', 'five_hour', 'five_hour', 'missing'],
+            ...params, windowModes: ['weekly', 'session', 'session'],
         })?.usageRings;
         expect(rings?.map((ring) => [ring.meterId, ring.ringValueLabel, ring.valueLabel])).toEqual([
             ['seven_day_fable', '39', '39% left'],
@@ -197,25 +234,11 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
                 meter({ meterId: 'five_hour', label: '5-hour', utilizationPct: 90, unit: 'unknown' }),
                 meter({ meterId: 'seven_day', label: 'Weekly', utilizationPct: 25, unit: 'unknown' }),
             ]),
-            windowMode: 'weekly', additionalMeterIds: ['five_hour'], nowMs: 2_000, formatter,
+            windowMode: 'weekly', windowModes: ['weekly', 'session'], nowMs: 2_000, formatter,
         });
         expect(viewModel?.effectiveMeter.meterId).toBe('seven_day');
         expect(viewModel?.scopePrefix).toBe('w.');
         expect(viewModel?.usageRings.map((ring) => ring.meterId)).toEqual(['seven_day', 'five_hour']);
-    });
-
-    it('allows a selected reliable extra without changing the main comparable family', () => {
-        const viewModel = computeConnectedServiceQuotaGaugeViewModel({
-            snapshot: snapshot([
-                meter({ meterId: 'weekly', label: 'Weekly', used: 82, limit: 100, unit: 'count', details: { limitCategory: 'usage_limit' } }),
-                meter({ meterId: 'requests', label: 'Requests', used: 99, limit: 100, unit: 'requests', details: { limitCategory: 'rate_limit' } }),
-                meter({ meterId: 'capacity', label: 'Capacity', used: 100, limit: 100, unit: 'requests', details: { limitCategory: 'capacity' } }),
-            ]),
-            windowMode: 'most_constrained', additionalMeterIds: ['requests', 'capacity'], nowMs: 2_000, formatter,
-        });
-        expect(viewModel?.effectiveMeter.meterId).toBe('weekly');
-        expect(viewModel?.allMeterRows.map((row) => row.meterId)).toEqual(['weekly', 'requests']);
-        expect(viewModel?.usageRings.map((ring) => ring.meterId)).toEqual(['weekly', 'requests']);
     });
 
     it('does not compare quota windows against rate or capacity families in most-constrained mode', () => {

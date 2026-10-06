@@ -65,8 +65,8 @@ function member(profileId: string, priority: number, createdAtMs: number) {
 describe('DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1', () => {
   it('is derived from the protocol schema default and stays in lockstep with it', () => {
     // Split-brain hygiene: the daemon default must not diverge from the protocol schema default.
-    // The protocol default strategy is `least_limited`; a hardcoded `priority` literal is drift.
-    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1.strategy).toBe('least_limited');
+    // The strategy comes from the canonical protocol default.
+    expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1.strategy).toBe('expiry_first');
     expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1).toEqual(
       ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
     );

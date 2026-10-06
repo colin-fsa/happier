@@ -10,19 +10,16 @@ import { TextInput } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { ProviderUsageGaugeSettingsGroup } from '@/components/settings/connectedServices/ProviderUsageGaugeSettingsGroup';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export const SessionProviderLimitsSettingsView = React.memo(function SessionProviderLimitsSettingsView() {
     const { theme } = useUnistyles();
     const popoverBoundaryRef = React.useRef<any>(null);
     const usageLimitRecoveryEnabled = useFeatureEnabled('sessions.usageLimitRecovery');
-    const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
     const [usageLimitRecoverySettingsV1, setUsageLimitRecoverySettingsV1] = useSettingMutable('usageLimitRecoverySettingsV1');
-    const [sessionProviderUsageGaugeMode, setSessionProviderUsageGaugeMode] = useSettingMutable('sessionProviderUsageGaugeMode');
-    const [sessionProviderUsageGaugeWindowMode, setSessionProviderUsageGaugeWindowMode] = useSettingMutable('sessionProviderUsageGaugeWindowMode');
     const [openUsageLimitRecoveryMenu, setOpenUsageLimitRecoveryMenu] = React.useState(false);
     const [openUsageLimitRecoveryResumePromptMenu, setOpenUsageLimitRecoveryResumePromptMenu] = React.useState(false);
-    const [openProviderUsageGaugeWindowMenu, setOpenProviderUsageGaugeWindowMenu] = React.useState(false);
     const usageLimitRecoveryMode = usageLimitRecoverySettingsV1?.mode === 'auto_wait' ? 'auto_wait' : 'ask';
     const usageLimitRecoveryResumePromptMode =
         usageLimitRecoverySettingsV1?.resumePromptMode === 'off' || usageLimitRecoverySettingsV1?.resumePromptMode === 'custom'
@@ -60,15 +57,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
             customResumePrompt: draft,
         });
     }, [writeUsageLimitRecoverySettings]);
-    const providerUsageGaugeVisible = sessionProviderUsageGaugeMode !== 'hidden';
-    const providerUsageGaugeWindowMode =
-        sessionProviderUsageGaugeWindowMode === 'daily'
-        || sessionProviderUsageGaugeWindowMode === 'weekly'
-        || sessionProviderUsageGaugeWindowMode === 'session'
-        || sessionProviderUsageGaugeWindowMode === 'primary'
-        || sessionProviderUsageGaugeWindowMode === 'secondary'
-            ? sessionProviderUsageGaugeWindowMode
-            : 'most_constrained';
     const usageLimitRecoveryOptions = [
         { id: 'ask', title: t('settingsSession.usageLimitRecovery.askTitle'), subtitle: t('settingsSession.usageLimitRecovery.askSubtitle') },
         { id: 'auto_wait', title: t('settingsSession.usageLimitRecovery.autoWaitTitle'), subtitle: t('settingsSession.usageLimitRecovery.autoWaitSubtitle') },
@@ -78,15 +66,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
         { id: 'custom', title: t('settingsSession.usageLimitRecovery.resumePromptCustomTitle'), subtitle: t('settingsSession.usageLimitRecovery.resumePromptCustomSubtitle') },
         { id: 'off', title: t('settingsSession.usageLimitRecovery.resumePromptOffTitle'), subtitle: t('settingsSession.usageLimitRecovery.resumePromptOffSubtitle') },
     ];
-    const providerUsageGaugeWindowOptions = [
-        { id: 'most_constrained', title: t('settingsSession.providerUsageGauge.windowMostConstrainedTitle'), subtitle: t('settingsSession.providerUsageGauge.windowMostConstrainedSubtitle') },
-        { id: 'daily', title: t('settingsSession.providerUsageGauge.windowDailyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowDailySubtitle') },
-        { id: 'weekly', title: t('settingsSession.providerUsageGauge.windowWeeklyTitle'), subtitle: t('settingsSession.providerUsageGauge.windowWeeklySubtitle') },
-        { id: 'session', title: t('settingsSession.providerUsageGauge.windowSessionTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSessionSubtitle') },
-        { id: 'primary', title: t('settingsSession.providerUsageGauge.windowPrimaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowPrimarySubtitle') },
-        { id: 'secondary', title: t('settingsSession.providerUsageGauge.windowSecondaryTitle'), subtitle: t('settingsSession.providerUsageGauge.windowSecondarySubtitle') },
-    ] as const;
-
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             {usageLimitRecoveryEnabled ? (
@@ -183,46 +162,7 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                 </ItemGroup>
             ) : null}
 
-            {connectedServiceQuotasEnabled ? (
-                <ItemGroup title={t('settingsSession.providerUsageGauge.title')} footer={t('settingsSession.providerUsageGauge.footer')}>
-                    <Item
-                        testID="settings-session-providerUsageGauge-visibility"
-                        title={t('settingsSession.providerUsageGauge.visibilityTitle')}
-                        subtitle={providerUsageGaugeVisible
-                            ? t('settingsSession.providerUsageGauge.visibilityEnabledSubtitle')
-                            : t('settingsSession.providerUsageGauge.visibilityHiddenSubtitle')}
-                        icon={<Icon name="speedometer" size={29} color={theme.colors.accent.indigo} />}
-                        rightElement={<Switch testID="settings-session-providerUsageGauge-visibility-toggle" value={providerUsageGaugeVisible} onValueChange={(next) => setSessionProviderUsageGaugeMode(next ? 'auto' : 'hidden')} />}
-                        showChevron={false}
-                        onPress={() => setSessionProviderUsageGaugeMode(providerUsageGaugeVisible ? 'hidden' : 'auto')}
-                    />
-                    <DropdownMenu
-                        open={openProviderUsageGaugeWindowMenu}
-                        onOpenChange={setOpenProviderUsageGaugeWindowMenu}
-                        variant="selectable"
-                        search={false}
-                        selectedId={providerUsageGaugeWindowMode}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t('settingsSession.providerUsageGauge.windowTitle'),
-                            subtitle: providerUsageGaugeWindowOptions.find((option) => option.id === providerUsageGaugeWindowMode)?.title ?? t('settingsSession.providerUsageGauge.windowMostConstrainedTitle'),
-                            icon: <Icon name="chart-line" size={29} color={theme.colors.accent.blue} />,
-                            showSelectedSubtitle: false,
-                            itemProps: { testID: 'settings-session-providerUsageGauge-window-trigger' },
-                        }}
-                        items={providerUsageGaugeWindowOptions}
-                        onSelect={(id) => {
-                            if (!providerUsageGaugeWindowOptions.some((option) => option.id === id)) return;
-                            setSessionProviderUsageGaugeWindowMode(id as typeof providerUsageGaugeWindowOptions[number]['id']);
-                            setOpenProviderUsageGaugeWindowMenu(false);
-                        }}
-                    />
-                </ItemGroup>
-            ) : null}
+            <ProviderUsageGaugeSettingsGroup />
         </ItemList>
     );
 });

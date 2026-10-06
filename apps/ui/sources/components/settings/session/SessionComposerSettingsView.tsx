@@ -1,3 +1,4 @@
+import { UsageGaugeLabelsSettingsItem } from './UsageGaugeLabelsSettingsItem';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -35,7 +36,6 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
     const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
     const [alwaysShowContextSize, setAlwaysShowContextSize] = useSettingMutable('alwaysShowContextSize');
-    const [sessionUsageGaugeLabels, setSessionUsageGaugeLabels] = useSettingMutable('sessionUsageGaugeLabels');
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
     const [newSessionDraftEntryMode, setNewSessionDraftEntryMode] = useSettingMutable('newSessionDraftEntryMode');
@@ -378,13 +378,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                     rightElement={<Switch value={alwaysShowContextSize} onValueChange={setAlwaysShowContextSize} />}
                     showChevron={false}
                 />
-                <Item
-                    testID="settings-session-usage-gauge-labels"
-                    title={t('settingsSession.providerUsageGauge.labelsTitle')}
-                    subtitle={t('settingsSession.providerUsageGauge.labelsSubtitle')}
-                    rightElement={<Switch testID="settings-session-usage-gauge-labels-toggle" value={sessionUsageGaugeLabels === true} onValueChange={setSessionUsageGaugeLabels} />}
-                    showChevron={false}
-                />
+                <UsageGaugeLabelsSettingsItem />
                 <Item
                     title={t('settingsAppearance.glass.composer')}
                     subtitle={t('settingsAppearance.glass.composerHint')}

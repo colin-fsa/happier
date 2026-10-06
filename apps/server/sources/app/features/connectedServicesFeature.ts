@@ -21,6 +21,7 @@ export function resolveConnectedServicesFeature(
                 autoQuotaReset: { enabled: true },
                 autoDisablePlanInvalid: { enabled: true },
                 poolQuotaLimitSelection: { enabled: true },
+                poolExpiryFirst: { enabled: true },
             },
         },
         capabilities: {
