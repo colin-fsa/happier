@@ -1009,6 +1009,13 @@ provider configuration, transcript ingestion, permissions, and recovery. The hos
 owns the terminal process and screen. `terminal/attachment` persists their association
 and dispatches attach, stop, and host disposition.
 
+Zellij command panes inherit the native server's environment. The Zellij adapter
+therefore passes the same launch environment when creating the server and submitting
+the command, including foreground creation where supported. Launch-only passthrough
+values remain in the process environment rather than the one-shot launch-spec file.
+Claude's existing spawn owner disables prompt suggestions through that environment;
+the readiness parser continues to protect genuine user drafts.
+
 Terminal-host setup failures keep the released `SPAWN_FAILED` result and attach optional,
 protocol-owned `terminal_host_unavailable` detail. Missing supported Herdr/Zellij
 installations and an unsupported running Herdr server are setup failures, not provider
