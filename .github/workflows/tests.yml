@@ -321,6 +321,7 @@ jobs:
               - 'apps/ui/src-tauri/**'
               - 'scripts/install/**'
               - 'scripts/release/installers/**'
+              - 'scripts/release/installers_windows_payload_promotion.contract.test.mjs'
               - 'scripts/pipeline/release/lib/minisign*'
               - 'scripts/pipeline/tauri/**'
             binary_smoke:

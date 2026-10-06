@@ -12,6 +12,16 @@ import YAML from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
+test('installer smoke selects the Windows-only payload promotion contract on test-only changes', async () => {
+  const workflow = YAML.parse(await readFile(join(repoRoot, '.github/workflows/tests.yml'), 'utf8'));
+  const classifier = workflow.jobs.ci_plan.steps.find((step) => step.id === 'changes');
+  const filters = YAML.parse(classifier.with.filters);
+  assert.ok(
+    filters.installers_smoke.includes('scripts/release/installers_windows_payload_promotion.contract.test.mjs'),
+    'the native Windows contract must select its installer-smoke execution owner',
+  );
+});
+
 test('shared CLI restoration handles a Windows drive path and preserves executable payloads', async (t) => {
   const action = YAML.parse(await readFile(join(repoRoot, '.github', 'actions', 'download-ci-cli-build', 'action.yml'), 'utf8'));
   const restore = action.runs.steps.find((step) => step.run);
