@@ -110,8 +110,9 @@ test('install.ps1 payload promotion uses the local PowerShell executable instead
   );
 });
 
-for (const runnerTempName of ['runner-temp', 'runner temp']) {
-test(`install.ps1 atomically promotes from an unlocked runner in ${runnerTempName} and cleans it up`, {
+for (const runnerTempName of ['runner-temp', 'runner temp', 'Reporter long profile.HEC']) {
+for (const powerShell of ['powershell.exe', 'pwsh']) {
+test(`install.ps1 runs lock hygiene and promotes from ${runnerTempName} under ${powerShell}`, {
   skip: process.platform !== 'win32' && 'Requires real Windows executable locking and PowerShell',
 }, async (t) => {
   const path = join(repoRoot, 'scripts', 'release', 'installers', 'install.ps1');
@@ -120,6 +121,7 @@ test(`install.ps1 atomically promotes from an unlocked runner in ${runnerTempNam
     'Resolve-InstallerPayloadPromotionTimeoutMs',
     'Resolve-InstallerPowerShellExecutablePath',
     'Stop-InstallerProcessTree',
+    'Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout',
     'Invoke-InstallerPayloadPromotionWithTimeout',
   ].map((name) => {
     const source = raw.match(new RegExp(`function ${name}\\s*\\{[\\s\\S]*?\\n\\}(?=\\n\\nfunction )`));
@@ -143,6 +145,11 @@ using System;
 using System.IO;
 class Fixture {
   static int Main(string[] args) {
+    if (args.Length > 0 && (args[0] == "service" || args[0] == "daemon")) {
+      Console.WriteLine(String.Join(" ", args));
+      Console.WriteLine(Environment.GetEnvironmentVariable("HAPPIER_HOME_DIR"));
+      return 0;
+    }
     if (args.Length < 2 || args[0] != "self" || args[1] != "__install-payload") return 3;
     Console.WriteLine("promotion-ready");
     int payloadIndex = Array.IndexOf(args, "--payload-root");
@@ -162,17 +169,27 @@ class Fixture {
   await writeFile(script, [
     "$ErrorActionPreference = 'Stop'",
     ...functions,
-    `$env:TEMP = ${quote(runnerTemp)}`,
+    "$Channel = 'stable'",
+    runnerTempName.endsWith('.HEC')
+      ? `$env:TEMP = (New-Object -ComObject Scripting.FileSystemObject).GetFolder(${quote(runnerTemp)}).ShortPath`
+      : `$env:TEMP = ${quote(runnerTemp)}`,
+    '$env:HAPPIER_HOME_DIR = "prior-home"',
+    `foreach ($command in @(@('service', 'stop', '--json'), @('daemon', 'stop', '--all', '--kill-sessions', '--json'))) {
+      $stopped = Invoke-InstallerCommandWithDaemonServiceContextCapturingOutputWithTimeout -CliPath ${quote(binary)} -CommandArgs $command -HomeDir ${quote(join(scratch, 'home'))} -TimeoutMs 30000
+      if ($stopped.ExitCode -ne 0 -or $stopped.TimedOut -or -not $stopped.Output.Contains(($command -join ' ')) -or -not $stopped.Output.Contains(${quote(join(scratch, 'home'))})) { throw ('Lock hygiene failed: ' + ($stopped | ConvertTo-Json -Compress)) }
+      if ($env:HAPPIER_HOME_DIR -ne 'prior-home') { throw 'Lock hygiene did not restore the caller home' }
+    }`,
     `$result = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
     '$result | ConvertTo-Json -Compress',
   ].join('\n'));
-  const result = JSON.parse(execFileSync('pwsh', ['-NoProfile', '-File', script], { encoding: 'utf8' }).trim());
+  const result = JSON.parse(execFileSync(powerShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { encoding: 'utf8' }).trim());
   assert.equal(result.TimedOut, false);
   assert.equal(result.ExitCode, 0, result.Output);
   assert.match(result.Output, /promotion-ready[\s\S]*promoted/);
   assert.equal(await readFile(join(`${payload}.promoted`, 'payload-marker'), 'utf8'), 'payload contents');
   assert.deepEqual(await readdir(runnerTemp), ['sentinel']);
 });
+}
 }
 
 test('install.ps1 fails closed on payload promotion timeout instead of accepting fallback success', async () => {
