@@ -19,6 +19,7 @@ import { clearPendingTerminalConnect, getPendingTerminalConnect, setPendingTermi
 import {
     buildTerminalConnectDeepLink,
     parseTerminalConnectUrl,
+    TERMINAL_CONNECT_WEB_PATH,
     type ParsedTerminalConnectUrl,
 } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -72,8 +73,9 @@ export default function TerminalConnectScreen() {
         if (Platform.OS === 'web' && typeof window !== 'undefined') {
             if (hashProcessed && (!routeHash || processedRouteHashRef.current === routeHash)) return;
             processedRouteHashRef.current = routeHash;
+            // Router state can arrive before browser history moves to this route.
             const sourceUrl = routeHash
-                ? `${window.location.href.split('#')[0]}#${routeHash}`
+                ? new URL(`${TERMINAL_CONNECT_WEB_PATH}#${routeHash}`, window.location.href).href
                 : window.location.href;
             const parsed = parseTerminalConnectUrl(sourceUrl);
             if (parsed?.publicKeyB64Url) {

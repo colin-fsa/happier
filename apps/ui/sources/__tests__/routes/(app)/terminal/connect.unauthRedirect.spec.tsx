@@ -101,6 +101,23 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         expect(replaceMock).toHaveBeenCalledWith('/');
     });
 
+    it('retains router pairing parameters before browser history reaches the terminal route', async () => {
+        routeHash = 'key=abc123&server=https%3A%2F%2Fcompany.example.test&pairingSecret=pairing&createdAt=1000&expiresAt=61000';
+        Object.assign((globalThis as typeof globalThis & { window: Window }).window.location, {
+            href: 'tauri://localhost/',
+            pathname: '/',
+            hash: '',
+        });
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        await renderScreen(<Screen />);
+        await act(async () => {});
+
+        expect(readReactNativeMmkvStubValues()).toContainEqual(expect.stringContaining('abc123'));
+        expect(readReactNativeMmkvStubValues()).toContainEqual(expect.stringContaining('pairing'));
+        expect(replaceMock).toHaveBeenCalledWith('/');
+    });
+
     it('does not redirect while stored credentials are available but auth context is still hydrating', async () => {
         getCredentialsMock.mockResolvedValue({ token: 'token', secret: 'secret' });
         const Screen = (await import('@/app/(app)/terminal/connect')).default;
