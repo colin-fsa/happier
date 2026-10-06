@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderSettingsView, standardCleanup } from '@/dev/testkit';
@@ -278,23 +279,29 @@ describe('Session settings (Permissions entry)', () => {
         )).toBe(false);
     });
 
-    it('renders provider usage gauge settings and updates gauge visibility and preferred window on the provider limits page', async () => {
+    it('renders provider usage gauge settings and commits multiple preferred windows on the provider limits page', async () => {
         sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeMode = 'auto';
-        sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowMode = 'most_constrained';
+        sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowMode = 'session';
+        sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowModes = null;
         sessionSettingsEntryState.options.featureEnabled = (featureId) => featureId === 'connectedServices.quotas';
         const mod = await import('@/app/(app)/settings/session/provider-limits');
         const ProviderLimitsSettingsScreen = mod.default;
         const screen = await renderSettingsView(React.createElement(ProviderLimitsSettingsScreen));
 
         const toggleRow = screen.findRowByTitle('settingsSession.providerUsageGauge.visibilityTitle');
-        const dropdown = screen.findAllByType('DropdownMenu' as any).find((node) =>
-            node.props.itemTrigger?.itemProps?.testID === 'settings-session-providerUsageGauge-window-trigger'
+        const findWindowDropdown = () => screen.findAllByType('DropdownMenu').find((node) =>
+            node.props.items?.some((item: { testID?: string }) =>
+                item.testID === 'settings-session-providerUsageGauge-window:weekly',
+            ),
         );
+        const dropdown = findWindowDropdown();
 
         expect(toggleRow).toBeTruthy();
         expect(dropdown).toBeTruthy();
-        expect(dropdown?.props.selectedId).toBe('most_constrained');
-        expect(dropdown?.props.items?.map((item: any) => item.id)).toEqual([
+        expect(screen.findRow('settings-session-providerUsageGauge-window-trigger')?.props.subtitle).toBe(
+            'settingsSession.providerUsageGauge.windowSessionTitle',
+        );
+        expect(dropdown?.props.items?.map((item: { id: string }) => item.id)).toEqual([
             'most_constrained',
             'daily',
             'weekly',
@@ -304,10 +311,21 @@ describe('Session settings (Permissions entry)', () => {
         ]);
 
         screen.pressRowByTitle('settingsSession.providerUsageGauge.visibilityTitle');
-        dropdown?.props.onSelect('weekly');
+        await screen.pressByTestIdAsync('settings-session-providerUsageGauge-window-trigger');
+        await act(async () => {
+            findWindowDropdown()?.props.onSelect('daily');
+            findWindowDropdown()?.props.onSelect('weekly');
+            findWindowDropdown()?.props.onSelect('session');
+        });
+
+        expect(sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowModes).toBeNull();
+        await act(async () => {
+            findWindowDropdown()?.props.onOpenChange(false);
+        });
 
         expect(sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeMode).toBe('hidden');
-        expect(sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowMode).toBe('weekly');
+        expect(sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowModes).toEqual(['daily', 'weekly']);
+        expect(sessionSettingsEntryState.settingsState.sessionProviderUsageGaugeWindowMode).toBe('session');
     });
 
     it('renders animated working status text as a session list setting', async () => {
