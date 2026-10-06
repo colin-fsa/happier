@@ -163,13 +163,7 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                     </DesktopShellWindowControlsHost>
                     <View testID="desktop-sidebar-chrome-utility-row" style={styles.utilityRow}>
                         {/* The desktop top rail holds window-level utilities; inbox and activity stay
-                            in the sidebar's icon row. Updates leads so nothing shifts when it appears. */}
-                        <UpdatesEntry
-                            variant="icon"
-                            buttonSize={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX}
-                            iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
-                            testID="desktop-sidebar-updates-button"
-                        />
+                            in the sidebar's icon row. Back/forward lead; Updates follows them. */}
                         {props.onPressBack ? (
                             <Pressable
                                 testID="sidebar-back-button"
@@ -206,6 +200,12 @@ export const DesktopSidebarChrome = React.memo((props: DesktopSidebarChromeProps
                                 />
                             </Pressable>
                         ) : null}
+                        <UpdatesEntry
+                            variant="icon"
+                            buttonSize={DESKTOP_SIDEBAR_CHROME_TOP_NAV_ICON_BUTTON_SIZE_PX}
+                            iconSize={DESKTOP_SIDEBAR_CHROME_ICON_GLYPH_SIZE_PX}
+                            testID="desktop-sidebar-updates-button"
+                        />
                         {topUtilityActions.map(renderTopUtilityAction)}
                         {props.onPressCollapse ? (
                             <Pressable
