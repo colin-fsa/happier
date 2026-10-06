@@ -2381,13 +2381,23 @@ function Ensure-Minisign {
   $extractDir = Join-Path $TempRoot "minisign-extract"
   New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
   Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-  $exe = Get-ChildItem -Path $extractDir -Filter "minisign.exe" -Recurse | Select-Object -First 1
-  if (-not $exe) {
-    throw "Failed to locate minisign.exe in bootstrap archive."
+  $osArchitecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+  $archiveArchitecture = switch ($osArchitecture) {
+    "X64" { "x86_64" }
+    "Arm64" { "aarch64" }
+    default { throw "Unsupported Windows architecture for bundled minisign: $osArchitecture" }
   }
+  $exePath = Join-Path (Join-Path (Join-Path $extractDir "minisign-win64") $archiveArchitecture) "minisign.exe"
+  if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+    throw "Failed to locate the $archiveArchitecture minisign.exe in the bootstrap archive."
+  }
+  $exe = Get-Item -LiteralPath $exePath
 
   try {
-    & $exe.FullName --version *> $null
+    & $exe.FullName -v *> $null
+    if ($LASTEXITCODE -ne 0) {
+      throw "Downloaded minisign executable failed its version probe (exit $LASTEXITCODE)."
+    }
   }
   catch {
     Write-Warning "Downloaded minisign binary is not compatible with this system."

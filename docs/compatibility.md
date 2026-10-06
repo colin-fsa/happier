@@ -198,6 +198,37 @@ do not gain Herdr controls. Current readers normalize the development-only neste
 cannot revive it. Remove this development reader once retained nested development
 settings are no longer encountered.
 
+### Direct-session import and takeover operations (development)
+
+The released `cli-v0.2.14` and `cli-v0.2.14-preview.1` daemon at
+`df8241c8b1068aa964ec7723000ff356ba3a00ef` executes
+`daemon.directSessions.takeoverPersist` synchronously. Updated daemons retain that
+method as a completion-waiting adapter to the same takeover operation owner used
+by `takeoverPersist.start`, `import.status`, and `import.cancel`. Direct takeover
+and import admission share writer/auth/source checks and exclude competing
+requests for the same linked session.
+
+Updated UIs start import through the asynchronous method and observe the daemon's
+phase, message counts, cancellation eligibility, and terminal result. A transport
+request deadline does not set an import deadline. The existing transcript footer
+also renders for empty imports and remains available through metadata conversion.
+Observation retains the original daemon address until terminal refresh succeeds,
+so conversion cannot strand a pending send; failed refresh remains recoverable
+through the same Refresh action. If the start acknowledgement is
+lost, the UI checks status without starting a second import. A missing method on
+an older daemon asks the user to update the daemon before starting work; it does
+not fall back to the synchronous import path. Existing relay RPC routing requires
+no server schema or persistence change.
+
+Cancellation is cooperative during transcript reading and uploading. The current
+page/media/upload effect may finish before cancellation settles; no next message
+or runner startup follows. Accepted messages remain stored with the existing
+stable import IDs, so retry deduplicates them. Cancellation becomes unavailable
+when runner startup begins. Completion still requires the existing metadata
+conversion. Operations are daemon-local: reopening the session recovers status,
+while daemon restart loses the operation record. An authoritative missing record
+clears the UI's active state and allows retry without claiming completion.
+
 ### ACP session-list browse source
 
 The released `cli-v0.2.12` and `cli-v0.2.12-preview.1` daemon at

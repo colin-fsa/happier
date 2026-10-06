@@ -8,6 +8,8 @@ import {
   ConnectedServiceQuotaSnapshotV1Schema,
   ProviderAccountUsageSnapshotV1Schema,
   SESSION_RUNNER_RUNTIME_STATE_FIELD_ID,
+  type DirectSessionImportOperation,
+  type DirectSessionImportOperationResponse,
   type ProviderAccountUsageSnapshotV1,
   type SessionRunnerRuntimeStateV1,
 } from '@happier-dev/protocol';
@@ -42,7 +44,9 @@ const TEST_SESSION_DRAFT_ADDRESS = { kind: 'session' as const, sessionId: 's1' }
 
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const machineDirectSessionTakeoverPersistSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true, converted: true })));
+const machineDirectSessionImportStatusSpy = vi.hoisted(() => vi.fn<() => Promise<DirectSessionImportOperationResponse>>(async () => ({ ok: true, operation: null })));
+const machineDirectSessionTakeoverPersistStartSpy = vi.hoisted(() => vi.fn<() => Promise<DirectSessionImportOperationResponse>>(async () => ({ ok: true, operation: { sessionId: 's1', state: 'completed', phase: 'converting', importedCount: 0, canCancel: false } })));
+const syncRefreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncRefreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
 const resumeSessionSpy = vi.hoisted(() => vi.fn(async (_options: unknown) => ({ type: 'success' as const, sessionId: 's1' })));
@@ -131,6 +135,7 @@ const publishSessionAcpConfigOptionOverrideToMetadataSpy = vi.hoisted(() => vi.f
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
+const transcriptIdsState = vi.hoisted(() => ({ ids: ['m1'] as string[] }));
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const chatHeaderHarnessState = vi.hoisted(() => ({ renderRightElement: false }));
 const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
@@ -364,7 +369,7 @@ installSessionShellCommonModuleMocks({
         useIsDataReady: () => true,
         useRealtimeStatus: () => 'connected',
         useSessionMessages: () => ({ messages: sessionMessagesState.current, isLoaded: true }),
-        useSessionTranscriptIds: () => ({ ids: ['m1'], isLoaded: true, hasRetainedContent: false }),
+        useSessionTranscriptIds: () => ({ ids: transcriptIdsState.ids, isLoaded: true, hasRetainedContent: false }),
         useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
         useWorkspaceReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
@@ -623,7 +628,7 @@ vi.mock('@/sync/sync', () => ({
     publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
     publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
     publishSessionModelOverrideToMetadata: async () => {},
-    refreshSessions: async () => {},
+    refreshSessions: syncRefreshSessionsSpy,
     refreshSessionMessages: syncRefreshSessionMessagesSpy,
     refreshSessionForSubmit: async (sessionId: string) =>
       storageState.sessions[sessionId as keyof typeof storageState.sessions] ?? null,
@@ -649,7 +654,9 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 vi.mock('@/sync/ops/machineDirectSessions', () => ({
   machineDirectSessionStatusGet: machineDirectSessionStatusGetSpy,
   machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
-  machineDirectSessionTakeoverPersist: machineDirectSessionTakeoverPersistSpy,
+  machineDirectSessionTakeoverPersistStart: machineDirectSessionTakeoverPersistStartSpy,
+  machineDirectSessionImportStatus: machineDirectSessionImportStatusSpy,
+  machineDirectSessionImportCancel: vi.fn(),
 }));
 vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
   sessionUsageLimitWaitResumeEnable: (sessionId: string, request?: unknown, opts?: unknown) =>
@@ -1073,6 +1080,7 @@ describe('SessionView (direct sessions)', () => {
     __resetConnectedServiceQuotaSnapshotStore();
     sessionRunnerRuntimeStatusRetention.clear();
     chatListPropsSpy.mockReset();
+    transcriptIdsState.ids = ['m1'];
     chatHeaderPropsSpy.mockReset();
     chatHeaderHarnessState.renderRightElement = false;
     voiceSurfacePropsSpy.mockReset();
@@ -1118,7 +1126,9 @@ describe('SessionView (direct sessions)', () => {
     clearWorkspaceReviewCommentDraftsSpy.mockReset();
     setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
     machineDirectSessionTakeoverSpy.mockReset();
-    machineDirectSessionTakeoverPersistSpy.mockReset();
+    machineDirectSessionTakeoverPersistStartSpy.mockReset();
+    machineDirectSessionImportStatusSpy.mockReset();
+    syncRefreshSessionsSpy.mockReset();
     machineDirectSessionStatusGetSpy.mockReset();
     showDirectSessionTakeoverDialogSpy.mockReset();
     sendVoiceSessionComposerTextSpy.mockReset();
@@ -2993,7 +3003,9 @@ describe('SessionView (direct sessions)', () => {
     );
   });
 
-  it('passes direct takeover footer actions to the transcript when a linked direct session is not yet controlled', async () => {
+  it('passes direct takeover footer actions when an uncontrolled linked direct session has an empty transcript', async () => {
+    storageState.sessions.s1.seq = 0;
+    transcriptIdsState.ids = [];
     const screen = await renderSessionView();
 
     const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
@@ -3013,6 +3025,47 @@ describe('SessionView (direct sessions)', () => {
     }, { serverId: 'server-1' });
     expect(modalAlertSpy).not.toHaveBeenCalled();
 
+  });
+
+  it.each([
+    { terminal: 'failed' as const, refreshFails: false },
+    { terminal: 'completed' as const, refreshFails: true },
+    { terminal: 'completed' as const, refreshFails: false },
+  ])('keeps the same footer through empty conversion to $terminal (refresh fails: $refreshFails)', async ({ terminal, refreshFails }) => {
+    storageState.sessions.s1.seq = 0;
+    transcriptIdsState.ids = [];
+    const running = { sessionId: 's1', state: 'running', phase: 'converting', importedCount: 0, canCancel: false } satisfies DirectSessionImportOperation;
+    machineDirectSessionTakeoverPersistStartSpy.mockResolvedValue({ ok: true, operation: running });
+    machineDirectSessionImportStatusSpy.mockResolvedValue({ ok: true, operation: running });
+    const screen = await renderSessionViewAndSettle();
+    await act(async () => { chatListPropsSpy.mock.calls.at(-1)?.[0]?.directControlFooter.onRequestTakeOverPersist(); });
+    await flushHookEffects();
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { directSessionV1: _removed, ...metadata } = storageState.sessions.s1.metadata;
+    storageState.sessions.s1 = { ...storageState.sessions.s1, metadata };
+    chatListPropsSpy.mockClear();
+    await act(async () => { storage.setState({ sessions: { ...storageState.sessions } }); });
+    await updateSessionViewAndSettle(screen);
+    const converting = chatListPropsSpy.mock.calls.at(-1)?.[0]?.directControlFooter;
+    expect(converting?.importOperation?.state).toBe('running');
+    expect(converting?.onRequestTakeOverDirect).toBeUndefined();
+    expect(converting?.onRequestTakeOverPersist).toBeUndefined();
+    machineDirectSessionImportStatusSpy.mockResolvedValue({ ok: true, operation: { ...running, state: terminal,
+      ...(terminal === 'failed' ? { error: 'conversion failed' } : {}) } });
+    if (refreshFails) syncRefreshSessionsSpy.mockRejectedValueOnce(new Error('refresh disconnected'));
+    await act(async () => { await converting.onRefreshImport(); });
+    if (terminal === 'failed' || refreshFails) {
+      const recovered = chatListPropsSpy.mock.calls.at(-1)?.[0]?.directControlFooter;
+      expect(recovered?.importOperation?.state).toBe(terminal);
+      if (refreshFails) {
+        expect(recovered.importStatusError).not.toBeNull();
+        await act(async () => { await recovered.onRefreshImport(); });
+        expect(screen.findAll((node) => String(node.type) === 'ChatList')).toHaveLength(0);
+      }
+    } else {
+      expect(screen.findAll((node) => String(node.type) === 'ChatList')).toHaveLength(0);
+    }
+    await screen.unmount();
   });
 
   it('does not pass pending user action requests to AgentInput', async () => {
@@ -3984,7 +4037,7 @@ describe('SessionView (direct sessions)', () => {
     });
 
     expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
-    expect(machineDirectSessionTakeoverPersistSpy).not.toHaveBeenCalled();
+    expect(machineDirectSessionTakeoverPersistStartSpy).not.toHaveBeenCalled();
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
     agentInput = findAgentInput(screen);
@@ -4036,7 +4089,7 @@ describe('SessionView (direct sessions)', () => {
       await agentInput.props.onSend();
     });
 
-    expect(machineDirectSessionTakeoverPersistSpy).toHaveBeenCalledWith({
+    expect(machineDirectSessionTakeoverPersistStartSpy).toHaveBeenCalledWith({
       machineId: 'machine-1',
       sessionId: 's1',
       forceStop: true,

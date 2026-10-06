@@ -101,8 +101,10 @@ receives Opened events. The main-window presentation owner handles revealing or 
 window. `installDesktopDeepLinks` subscribes before reading the plugin's startup URL snapshot
 and delegates URL interpretation to the existing system-path and terminal-connect owners.
 Terminal links reach `/terminal/connect` with pairing material in the fragment, where the
-existing confirmation, sign-in recovery, and URL clearing apply. This adds no automatic pairing
-approval. Channel-specific schemes allow installed channels to coexist; the CLI's default
+terminal URL reader accepts the bundled webview's `tauri://localhost` route carrier while
+server addresses remain HTTP(S)-only. Existing confirmation, sign-in recovery, and URL clearing
+apply. This adds no automatic pairing approval. Channel-specific schemes allow installed channels
+to coexist; the CLI's default
 `happier://` link targets stable. Registration and cold/running/tray-only launches require live
 OS validation; macOS registration must be checked in the installed application bundle.
 

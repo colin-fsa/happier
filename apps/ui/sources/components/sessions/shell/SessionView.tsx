@@ -2023,6 +2023,7 @@ type SessionTranscriptRenderStateInput = Readonly<{
     isForkedSessionV1: boolean;
     isLocallyAttached: boolean;
     pendingMessagesCount: number;
+    hasDirectControlFooter: boolean;
 }>;
 
 function useSessionTranscriptRenderState({
@@ -2032,6 +2033,7 @@ function useSessionTranscriptRenderState({
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
+    hasDirectControlFooter,
 }: SessionTranscriptRenderStateInput) {
     const { ids: committedMessageIds, isLoaded, hasRetainedContent } = useSessionTranscriptIds(sessionId);
     const shouldRenderChatTimeline = React.useMemo(() => {
@@ -2048,9 +2050,10 @@ function useSessionTranscriptRenderState({
             // Some sessions can have a non-zero committed transcript seq but end up with 0 visible
             // main-timeline messages (e.g. newest page is sidechain-only). In that case, we must
             // still render the transcript so it can page backwards to find visible messages.
-            forceRenderFooter: isForkedSessionV1 || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
+            // Keep the canonical footer visible even when an import has no visible messages.
+            forceRenderFooter: isForkedSessionV1 || hasDirectControlFooter || (isLoaded === true && (session.seq ?? 0) > 0 && committedMessageIds.length === 0),
         });
-    }, [committedMessageIds.length, hasRetainedContent, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.seq]);
+    }, [committedMessageIds.length, hasDirectControlFooter, hasRetainedContent, isEncryptedSessionLocked, isForkedSessionV1, isLoaded, isLocallyAttached, pendingMessagesCount, session.seq]);
 
     return {
         committedMessagesCount: committedMessageIds.length,
@@ -2078,6 +2081,7 @@ const SessionTranscriptAgentContentView = React.memo(function SessionTranscriptA
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
+    hasDirectControlFooter,
 }: SessionTranscriptAgentContentViewProps) {
     const { shouldRenderChatTimeline } = useSessionTranscriptRenderState({
         sessionId,
@@ -2086,6 +2090,7 @@ const SessionTranscriptAgentContentView = React.memo(function SessionTranscriptA
         isForkedSessionV1,
         isLocallyAttached,
         pendingMessagesCount,
+        hasDirectControlFooter,
     });
 
     return (
@@ -2159,6 +2164,7 @@ const SessionTranscriptContent = React.memo(function SessionTranscriptContent({
         isForkedSessionV1,
         isLocallyAttached,
         pendingMessagesCount,
+        hasDirectControlFooter: directControlFooter != null,
     });
 
     React.useEffect(() => {
@@ -2270,6 +2276,7 @@ type SessionTranscriptPlaceholderProps = Readonly<{
     isForkedSessionV1: boolean;
     isLocallyAttached: boolean;
     pendingMessagesCount: number;
+    hasDirectControlFooter: boolean;
     restoreSecretKeyColor: string;
     restoreSecretKeyDescriptionColor: string;
     restoreButtonBackgroundColor: string;
@@ -2285,6 +2292,7 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
     isForkedSessionV1,
     isLocallyAttached,
     pendingMessagesCount,
+    hasDirectControlFooter,
     restoreSecretKeyColor,
     restoreSecretKeyDescriptionColor,
     restoreButtonBackgroundColor,
@@ -2299,6 +2307,7 @@ const SessionTranscriptPlaceholder = React.memo(function SessionTranscriptPlaceh
         isForkedSessionV1,
         isLocallyAttached,
         pendingMessagesCount,
+        hasDirectControlFooter,
     });
 
     if (shouldRenderChatTimeline) return null;
@@ -5046,23 +5055,32 @@ function SessionViewLoaded({
 
     const directControlFooter = React.useMemo(() => {
         if (isHiddenSystemSessionSession) return null;
-        if (!directSessionLink) return null;
+        const operation = directSessionTakeover.importOperation;
+        const hasImportNotice = operation?.state === 'running' || operation?.state === 'cancelling'
+            || operation?.state === 'failed' || Boolean(directSessionTakeover.importStatusError);
+        if (!directSessionLink && !hasImportNotice) return null;
         const status = directSessionRuntime.status;
+        const canTakeOverDirect = Boolean(directSessionLink && status?.canTakeOverDirect);
+        const canTakeOverPersist = Boolean(directSessionLink && status?.canTakeOverPersist);
         return {
             machineOnline: status?.machineOnline ?? true,
             runnerActive: status?.runnerActive ?? false,
             activity: status?.activity ?? 'unknown',
-            canTakeOverDirect: status?.canTakeOverDirect ?? false,
-            canTakeOverPersist: status?.canTakeOverPersist ?? false,
+            canTakeOverDirect,
+            canTakeOverPersist,
             takeoverInFlight: directSessionTakeover.takeoverInFlight,
-            onRequestTakeOverDirect: (status?.canTakeOverDirect ?? false)
+            importOperation: directSessionTakeover.importOperation,
+            importStatusError: directSessionTakeover.importStatusError,
+            onCancelImport: hasWriteAccess ? directSessionTakeover.cancelImport : undefined,
+            onRefreshImport: directSessionTakeover.refreshImport,
+            onRequestTakeOverDirect: canTakeOverDirect
                 ? () => { void directSessionTakeover.requestTakeover('direct'); }
                 : undefined,
-            onRequestTakeOverPersist: (status?.canTakeOverPersist ?? false)
+            onRequestTakeOverPersist: canTakeOverPersist
                 ? () => { void directSessionTakeover.requestTakeover('persisted'); }
                 : undefined,
         } as const;
-    }, [directSessionLink, directSessionRuntime.status, directSessionTakeover, isHiddenSystemSessionSession]);
+    }, [directSessionLink, directSessionRuntime.status, directSessionTakeover, hasWriteAccess, isHiddenSystemSessionSession]);
 
     const [followBottomIntentSeq, setFollowBottomIntentSeq] = React.useState(0);
     const requestMountedTranscriptFollow = React.useCallback(() => {
@@ -5170,6 +5188,7 @@ function SessionViewLoaded({
             isForkedSessionV1={isForkedSessionV1}
             isLocallyAttached={isLocallyAttached}
             pendingMessagesCount={pendingMessages.length}
+            hasDirectControlFooter={directControlFooter != null}
             restoreSecretKeyColor={theme.colors.text.primary}
             restoreSecretKeyDescriptionColor={theme.colors.text.secondary}
             restoreButtonBackgroundColor={theme.colors.surface.inset}
@@ -6555,6 +6574,7 @@ function SessionViewLoaded({
                         isForkedSessionV1={isForkedSessionV1}
                         isLocallyAttached={isLocallyAttached}
                         pendingMessagesCount={pendingMessages.length}
+                        hasDirectControlFooter={directControlFooter != null}
                         content={content}
                         input={inputWithTranscriptSelection}
                         placeholder={placeholder}
