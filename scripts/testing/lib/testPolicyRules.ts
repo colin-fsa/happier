@@ -78,7 +78,7 @@ export function collectPolicyFindings(files: readonly InventoryFile[]): PolicyFi
         ? countDirectDetachedSpawnCalls(file.filePath, file.content)
         : 0;
 
-    if (testFile && hasPattern(codeText, /\b(?:it|test|describe)\.only\s*\(/)) {
+    if (testFile && hasPattern(codeText, /\b(?:it|test|describe)(?:\.(?:concurrent|sequential))?\.only\s*(?:\(|\.each\b)/)) {
       findings.push({
         ruleId: 'no-exclusive-tests',
         mode: 'enforce',
