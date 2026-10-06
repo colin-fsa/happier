@@ -46,6 +46,9 @@ const CODEX_SHARED_STATE_FILE_ENTRIES = Object.freeze([
 
 type CodexStateMode = 'shared' | 'isolated';
 
+// Codex keys local hook decisions by the defining file; plugin keys use stable plugin IDs.
+const CODEX_HOOK_CONFIG_ENTRIES = ['hooks.json', 'config.toml'] as const;
+
 export type CodexConnectedServiceStateSharingDiagnostic = Readonly<{
   code: 'state_symlink_unavailable';
   providerId: 'codex';
@@ -105,7 +108,7 @@ async function readCodexProfileHookState(effectiveCodexHome: string): Promise<To
     const states = asTomlTable(asTomlTable(config.hooks)?.state);
     const ownState: TomlTable = {};
     for (const [key, value] of Object.entries(states ?? {})) {
-      if (!key.startsWith(`${join(effectiveCodexHome, 'hooks.json')}:`)) continue;
+      if (!CODEX_HOOK_CONFIG_ENTRIES.some((entry) => key.startsWith(`${join(effectiveCodexHome, entry)}:`))) continue;
       const state = asTomlTable(value);
       if (!state) continue;
       const fields: TomlTable = {};
@@ -120,10 +123,19 @@ async function readCodexProfileHookState(effectiveCodexHome: string): Promise<To
   }
 }
 
-function mergeCodexHookState(content: string, ownState: TomlTable, configPath: string): string {
-  const config = parseConnectedServiceTomlConfig(content, configPath);
-  const hooks = asTomlTable(config.hooks) ?? {};
-  config.hooks = { ...hooks, state: { ...asTomlTable(hooks.state), ...ownState } };
+function mergeCodexHookState(content: string, ownState: TomlTable, sourceHome: string, effectiveHome: string): string {
+  const config = parseConnectedServiceTomlConfig(content, join(sourceHome, 'config.toml'));
+  const hooks = asTomlTable(config.hooks);
+  const sourceState = asTomlTable(hooks?.state);
+  if (!sourceState && Object.keys(ownState).length === 0) return content;
+  const rebasedState = Object.fromEntries(Object.entries(sourceState ?? {}).map(([key, value]) => {
+    for (const entry of CODEX_HOOK_CONFIG_ENTRIES) {
+      const prefix = `${join(sourceHome, entry)}:`;
+      if (key.startsWith(prefix)) return [`${join(effectiveHome, entry)}:${key.slice(prefix.length)}`, value];
+    }
+    return [key, value];
+  }));
+  config.hooks = { ...hooks, state: { ...rebasedState, ...ownState } };
   // Retain native trust hashes verbatim. Codex remains the authority that
   // compares them with the current hook definition and marks changes untrusted.
   return stringify(config);
@@ -293,9 +305,10 @@ export async function syncCodexConnectedServiceHome(params: Readonly<{
         cwd: process.cwd(),
         existingManifest: manifest,
         configEntryNames,
-        copyTransformByEntry: Object.keys(hookState).length > 0
-          ? { 'config.toml': (content) => mergeCodexHookState(content, hookState, join(sourceCodexHome, 'config.toml')) }
-          : undefined,
+        copyTransformByEntry: {
+          'config.toml': (content) => mergeCodexHookState(content, hookState, sourceCodexHome,
+            resolve(params.previousCodexHome ?? params.destinationCodexHome)),
+        },
         stateEntryNames,
         prepareSharedStateSource: preflightSourceCodexHome ? async () => {
           await backfillPreviousCodexNonSessionState({

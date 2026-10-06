@@ -228,6 +228,20 @@ Credentials and account metadata remain separate from configuration sharing.
 Session-history sharing follows its own setting; changing configuration sharing
 does not opt in to workspace trust or change that history policy.
 
+### Instructions, plugins, and hook trust in development builds
+
+The development correction for missing configuration also includes Claude's
+user-level `CLAUDE.md` and Codex's installed `plugins` directory in linked and
+copied configuration. Existing managed homes receive these entries the next time
+Happier materializes them; isolated configuration does not import them.
+
+Codex hook decisions use the path of the file defining the hook. When copying
+home-level hooks into a managed home, Happier translates those path keys and
+preserves the existing trust hashes and disabled choices. Decisions already made
+in that managed home take precedence. Codex still checks the hook contents: an
+edited hook is not automatically trusted. This applies to hooks in `hooks.json`
+and `config.toml`, without changing project-level trust.
+
 ## Connected services and browsing sessions (Codex)
 
 For some providers, your connected-service choice affects which provider “home” Happier should use for session browsing.
