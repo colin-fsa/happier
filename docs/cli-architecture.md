@@ -1032,6 +1032,12 @@ does not automatically recreate a pane. Terminal supervision retires the exact
 optional attachment without treating its loss as controller death. An explicit
 switch or attach can request a local client again; this is not a claim that every
 cold host-restoration path has completed live validation.
+Detached tmux creation uses the configured session `default-size` when no client
+is attached to that session. The shared tmux command owner reconciles the exact
+created window instead of inheriting dimensions from clients of unrelated sessions
+under tmux's `latest` sizing policy. It preserves inherited or explicit window
+sizing policy so attaching a client still controls its geometry. An unsuccessful
+geometry reconciliation is logged and does not retry a successful creation.
 Terminal creation submission is distinct from confirmed readiness. A tmux creation
 reply that cannot identify the accepted window does not authorize an ordinary-runner
 fallback: only proven non-creation with complete cleanup permits that fallback.
