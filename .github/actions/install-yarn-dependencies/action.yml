@@ -24,7 +24,7 @@ runs:
           packages/*/node_modules
         # Exact keys only: never restore a tree installed for another lockfile,
         # patch set, Node runtime, architecture, or install scope.
-        key: modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.node }}-${{ inputs.args }}-${{ env.HAPPIER_INSTALL_SCOPE }}-${{ hashFiles('yarn.lock', '.yarnrc*', '.node-version', '**/package.json', '**/patches/**', 'scripts/postinstall/**', 'apps/ui/tools/**', 'apps/cli/scripts/postinstall/**') }}
+        key: modules-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.runtime.outputs.node }}-${{ inputs.args }}-${{ env.HAPPIER_INSTALL_SCOPE }}-${{ hashFiles('yarn.lock', '.yarnrc*', '.node-version', 'package.json', 'apps/*/package.json', 'packages/*/package.json', 'apps/*/modules/*/package.json', 'apps/*/patches/**', 'packages/*/patches/**', 'scripts/postinstall/**', 'apps/ui/tools/**', 'apps/cli/scripts/postinstall/**') }}
     - name: Verify restored dependencies and refresh workspace setup
       if: steps.dependencies.outputs.cache-hit == 'true'
       shell: bash
