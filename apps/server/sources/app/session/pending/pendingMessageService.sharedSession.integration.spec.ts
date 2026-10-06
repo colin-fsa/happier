@@ -1854,6 +1854,7 @@ describe("pendingMessageService (shared sessions)", () => {
     it.each([
         ["send_now", "active_unsteerable", "interrupt_and_send"],
         ["steer_now", "active_steerable", "steer"],
+        ["steer_now", "ready", "send"],
         ["steer_if_active", "active_steerable", "steer"],
     ] as const)("claims the exact later %s row while leaving its ordinary FIFO neighbor queued", async (
         urgentKind,

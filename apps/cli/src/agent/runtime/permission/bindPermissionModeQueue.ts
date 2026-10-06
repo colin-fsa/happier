@@ -14,6 +14,8 @@ import type { PendingProviderAction } from '@/agent/runtime/modeMessageQueue';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import type { SessionUserMessageDeliveryInfo } from '@/api/session/sessionClientPort';
 import type { PendingQueueDeliveryBlockedReason } from '@/api/session/pendingQueueV2Transport';
+import { logger } from '@/ui/logger';
+import { isConditionalPendingSteerClaim } from '@happier-dev/protocol';
 
 /**
  * Config change carried by a steered message that the backend must own BEFORE the text joins the
@@ -131,22 +133,27 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     //   `applyConfigDeltaInFlight` capability (lane Q) so it can own the mode change mid-turn.
     //   Without the capability, mode changes keep the queue path (handled by the main loop).
     const steer = opts.inFlightSteer;
-    const pushToQueueBestEffort = (pendingProviderAction?: PendingProviderAction) => {
+    const pushToQueue = (pendingProviderAction?: PendingProviderAction) => {
       if (!isCurrentBinding(session, messageBindingGeneration)) return;
+      pushMessageToQueueWithSpecialCommands({
+        queue: opts.queue,
+        message: { text, localId: deliveryIdentity.localId, ...(message.meta ? { meta: message.meta } : {}) },
+        text,
+        mode: {
+          permissionMode: resolvedMode.queuePermissionMode,
+          ...resolveAppendSystemPromptModeOverride(message.meta),
+        },
+        ...deliveryIdentity.queueOptions,
+        ...(pendingProviderAction ? { pendingProviderAction } : {}),
+      });
+    };
+    const pushToQueueBestEffort = (pendingProviderAction?: PendingProviderAction) => {
       try {
-        pushMessageToQueueWithSpecialCommands({
-          queue: opts.queue,
-          message: { text, localId: deliveryIdentity.localId, ...(message.meta ? { meta: message.meta } : {}) },
-          text,
-          mode: {
-            permissionMode: resolvedMode.queuePermissionMode,
-            ...resolveAppendSystemPromptModeOverride(message.meta),
-          },
-          ...deliveryIdentity.queueOptions,
-          ...(pendingProviderAction ? { pendingProviderAction } : {}),
+        pushToQueue(pendingProviderAction);
+      } catch (error) {
+        logger.infoFile('[permissionMode] Failed to queue non-interrupting provider input', {
+          error, localId: deliveryIdentity.localId,
         });
-      } catch {
-        // Best-effort fallback: queueing should not be able to crash the process if a steer fails.
       }
     };
     const blockPendingDelivery = async (
@@ -186,7 +193,17 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
 
     const isClaimedSteer = claimedProviderAction === 'steer';
-    const canSteerNow = Boolean(
+    const queueUnavailableSteer = async () => {
+      if (isConditionalPendingSteerClaim({
+        requestedAction: deliveryInfo?.pendingRequestedAction,
+        providerAction: claimedProviderAction,
+      })) {
+        await blockPendingDelivery('steering_unavailable', 'none');
+      } else {
+        pushToQueueBestEffort(isClaimedSteer ? 'send' : undefined);
+      }
+    };
+    const canSteerNow = () => Boolean(
       steer
       && steer.supportsInFlightSteer()
       && steer.isTurnInFlight()
@@ -194,18 +211,20 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       && (!didChangePermissionMode || typeof steer.applyConfigDeltaInFlight === 'function'),
     );
 
-    if (isClaimedSteer && !canSteerNow) {
-      steerSequence = steerSequence.then(async () => {
-        await blockPendingDelivery('steering_unavailable', 'none');
-      });
+    if (isClaimedSteer && !canSteerNow()) {
+      steerSequence = steerSequence.then(queueUnavailableSteer);
       return steerSequence;
     }
     if (
-      steer && canSteerNow
+      steer && canSteerNow()
     ) {
       const applyConfigDelta = didChangePermissionMode ? steer.applyConfigDeltaInFlight : undefined;
       steerSequence = steerSequence.then(async () => {
         if (!isCurrentBinding(session, messageBindingGeneration)) return;
+        if (!canSteerNow()) {
+          await queueUnavailableSteer();
+          return;
+        }
         if (applyConfigDelta) {
           let configOutcome: InFlightConfigApplyOutcome;
           try {
@@ -216,14 +235,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           if (configOutcome.status !== 'applied' && configOutcome.status !== 'scheduled_in_turn') {
-            if (isClaimedSteer) {
-              await blockPendingDelivery('steering_unavailable', 'none');
-              return;
-            }
             // The backend cannot own the config mid-turn: legacy queue path (the mode applies when
             // the queue drains). Not a bounce — the steer was never accepted — so no corrective
             // unsafe_window publish (the UI already routes known-refused payloads honestly).
-            pushToQueueBestEffort();
+            await queueUnavailableSteer();
             return;
           }
         }
@@ -282,6 +297,10 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
 
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
+          if (!canSteerNow()) {
+            await queueUnavailableSteer();
+            return;
+          }
           steerReplaySeedRetirement.register(
             deliveryIdentity.localId,
             settleReplaySeedOnProviderAcceptance,
@@ -337,16 +356,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     }
 
     if (!isCurrentBinding(session, messageBindingGeneration)) return;
-    pushMessageToQueueWithSpecialCommands({
-      queue: opts.queue,
-      message: { text, localId: deliveryIdentity.localId, ...(message.meta ? { meta: message.meta } : {}) },
-      text,
-      mode: {
-        permissionMode: resolvedMode.queuePermissionMode,
-        ...resolveAppendSystemPromptModeOverride(message.meta),
-      },
-      ...deliveryIdentity.queueOptions,
-    });
+    pushToQueue();
   };
 
   const bindSession = (session: PermissionModeQueueSessionBinding) => {
@@ -406,6 +416,7 @@ function resolveInFlightSteerDeliveryIdentity(
     userMessageLocalIds: readonly string[] | null;
     providerAcceptancePending?: boolean;
     pendingProviderAction?: PendingProviderAction;
+    pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
   };
   steerOptions: InFlightSteerDeliveryIdentity | undefined;
 }> {
@@ -426,6 +437,7 @@ function resolveInFlightSteerDeliveryIdentity(
       userMessageLocalIds: localIds.length === 0 ? null : localIds,
       ...(deliveryInfo?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
       ...(deliveryInfo?.pendingProviderAction ? { pendingProviderAction: deliveryInfo.pendingProviderAction } : {}),
+      ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
     },
     steerOptions: hasSteerIdentity
       ? {

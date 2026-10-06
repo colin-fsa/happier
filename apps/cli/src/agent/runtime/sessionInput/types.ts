@@ -15,6 +15,7 @@ export type MessageBatch<Mode, Message> = {
   /** Exact current-vs-old custody marker; not a selectable materialization policy. */
   providerAcceptancePending?: boolean;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 };
 
 export type PendingMaterializationReconcileWhenEmpty = PendingQueueReconcileWhenEmpty;

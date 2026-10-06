@@ -3368,7 +3368,7 @@ describe('runCodex CodexACP resume behavior', () => {
     });
   });
 
-  it('marks directly requeued stale app-server steer messages as already echoed', async () => {
+  it.each([undefined, 'steer'] as const)('requeues stale app-server input without interruption (action=%s)', async (pendingProviderAction) => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
@@ -3405,8 +3405,9 @@ describe('runCodex CodexACP resume behavior', () => {
         content: { text: 'recover directly from stale steer' },
         meta: {},
         localId: 'local-direct-stale-steer',
-      });
+      }, { seq: null, pendingProviderAction, providerAcceptancePending: pendingProviderAction === 'steer' });
       await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(opts.messageQueue.size()).toBe(1);
       const batch = await opts.messageQueue.waitForMessagesAndGetAsString();
       observedSuppressUserEcho = batch?.mode?.suppressUserEcho;
       throw new Error('stop-after-direct-requeue');
@@ -3505,7 +3506,7 @@ describe('runCodex CodexACP resume behavior', () => {
     });
   });
 
-  it('blocks exact pending custody when stale steer reports no active turn', async () => {
+  it.each(['steer_now', 'steer_if_active'] as const)('handles queued %s when the provider reports no active turn', async (kind) => {
     resolveRunnerMcpServersSpy.mockImplementationOnce(async () => ({
       happierMcpServer: { url: 'http://127.0.0.1:0', stop: vi.fn() },
       mcpServers: {},
@@ -3560,6 +3561,8 @@ describe('runCodex CodexACP resume behavior', () => {
           },
           isolate: false,
           hash: 'hash-stale-steer',
+          pendingProviderAction: 'steer',
+          pendingRequestedAction: { v: 1, kind },
         };
       }
       return null;
@@ -3584,12 +3587,16 @@ describe('runCodex CodexACP resume behavior', () => {
       localId: 'local-stale-steer',
       userMessageSeq: null,
     });
-    expect(sendPrompt).not.toHaveBeenCalled();
-    expect(lastSessionClient?.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['local-stale-steer'],
-      reason: 'steering_unavailable',
-      providerEffect: 'none',
-    });
+    if (kind === 'steer_if_active') {
+      expect(sendPrompt).not.toHaveBeenCalled();
+      expect(lastSessionClient?.blockPendingMessageDelivery).toHaveBeenCalledWith({
+        localIds: ['local-stale-steer'], reason: 'steering_unavailable', providerEffect: 'none',
+      });
+      return;
+    }
+    expect(sendPrompt).toHaveBeenCalledTimes(1);
+    expect(appServerRuntime.cancel).not.toHaveBeenCalled();
+    expect(lastSessionClient?.blockPendingMessageDelivery).not.toHaveBeenCalled();
     const emittedMessages = (lastSessionClient?.sendSessionEvent as ReturnType<typeof vi.fn> | undefined)?.mock.calls
       .map((call) => call[0]?.message)
       .filter((message): message is string => typeof message === 'string') ?? [];

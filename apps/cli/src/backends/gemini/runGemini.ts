@@ -11,6 +11,7 @@ import os from 'node:os';
 import { resolve } from 'node:path';
 
 import { logger } from '@/ui/logger';
+import { isConditionalPendingSteerClaim } from '@happier-dev/protocol';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { Credentials } from '@/persistence';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
@@ -413,21 +414,21 @@ export async function runGemini(opts: {
         reason,
       }) === true;
     };
-    if (
-      pendingProviderAction === 'steer'
-    ) {
-      if (!rejectPendingQueueInputBeforeProviderEffect('steering_unavailable') && deliveryInfo?.providerAcceptancePending !== true) {
-        const localIds = message.localId ? [message.localId] : [];
+    if (isConditionalPendingSteerClaim({
+      requestedAction: deliveryInfo?.pendingRequestedAction,
+      providerAction: pendingProviderAction,
+    })) {
+      if (!rejectPendingQueueInputBeforeProviderEffect('steering_unavailable')) {
         await session.blockPendingMessageDelivery?.({
-          localIds,
-          reason: 'steering_unavailable',
-          providerEffect: 'none',
+          localIds: message.localId ? [message.localId] : [],
+          reason: 'steering_unavailable', providerEffect: 'none',
         });
       }
       return;
     }
     const queueDeliveryOptions = {
-      ...(pendingProviderAction ? { pendingProviderAction } : {}),
+      ...(pendingProviderAction ? { pendingProviderAction: pendingProviderAction === 'steer' ? 'send' as const : pendingProviderAction } : {}),
+      ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
       userMessageLocalId: message.localId ?? null,
       providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
     };

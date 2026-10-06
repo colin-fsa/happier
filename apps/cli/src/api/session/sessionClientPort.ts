@@ -22,6 +22,7 @@ import type {
 } from './pendingQueueV2Transport';
 import type {
   PendingProviderAction,
+  PendingRequestedActionV1,
   SessionTranscriptObservationProvenanceV1,
   SessionPendingQueueDeliveryTiming,
   SessionSystemRecord,
@@ -76,6 +77,7 @@ export type SessionUserMessageDeliveryInfo = Readonly<{
   seq: number | null;
   providerAcceptancePending?: boolean | undefined;
   pendingProviderAction?: PendingProviderAction | undefined;
+  pendingRequestedAction?: PendingRequestedActionV1 | undefined;
 }>;
 
 export interface SessionClientPort {

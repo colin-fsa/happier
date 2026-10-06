@@ -30,6 +30,7 @@ export type ClaudeUnifiedPromptBatch<Mode = unknown> = Readonly<{
    */
   userMessageLocalIds?: readonly string[];
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
   providerAcceptancePending?: boolean;
 }>;
 

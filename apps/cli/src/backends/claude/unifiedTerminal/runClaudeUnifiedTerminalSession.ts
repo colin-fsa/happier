@@ -182,6 +182,7 @@ type ClaudeUnifiedTerminalQueuedInput<Mode> = Readonly<{
    */
   providerAcceptancePending?: boolean | null;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
 
 type ClaudeUnifiedTerminalAcceptedInput<Mode> =
@@ -785,6 +786,7 @@ function normalizeMessageBatch<Mode>(input: ClaudeUnifiedTerminalQueuedInput<Mod
     userMessageLocalIds: input.userMessageLocalIds ?? [],
     ...(input.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
     ...(input.pendingProviderAction ? { pendingProviderAction: input.pendingProviderAction } : {}),
+    ...(input.pendingRequestedAction ? { pendingRequestedAction: input.pendingRequestedAction } : {}),
   };
 }
 
@@ -2165,6 +2167,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               userMessageLocalIds: batch.userMessageLocalIds ?? [],
               ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
               ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+              ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
             });
           }
         },
@@ -2340,6 +2343,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             userMessageLocalIds: batch.userMessageLocalIds ?? [],
             ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
             ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+            ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
           });
         },
         onProviderAcceptancePendingPrompt: (batch) => {

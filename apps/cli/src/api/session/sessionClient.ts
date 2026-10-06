@@ -3294,20 +3294,16 @@ export class ApiSessionClient extends EventEmitter {
             this.markAgentQueueEchoSuppressedLocalId(localId);
             this.markAgentQueueDeliveredLocalId(localId);
         }
+        const deliveryInfo: SessionUserMessageDeliveryInfo = {
+            seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
+            ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
+            ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
+            ...(message?.requestedAction ? { pendingRequestedAction: message.requestedAction } : {}),
+        };
         if (this.pendingMessageCallback) {
-            await this.pendingMessageCallback(userMessage, {
-                seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
-                ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
-                ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
-            });
+            await this.pendingMessageCallback(userMessage, deliveryInfo);
         } else {
-            if (localId) {
-                this.bufferedPendingMessageDeliveryInfoByLocalId.set(localId, {
-                    seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
-                    ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
-                    ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
-                });
-            }
+            if (localId) this.bufferedPendingMessageDeliveryInfoByLocalId.set(localId, deliveryInfo);
             this.pendingMessages.push(userMessage);
         }
         return true;

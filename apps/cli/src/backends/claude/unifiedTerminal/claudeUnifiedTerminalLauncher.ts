@@ -99,6 +99,7 @@ type ParkedUnifiedTerminalMessage = Readonly<{
   userMessageLocalIds: readonly string[];
   providerAcceptancePending?: boolean;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
 
 type InFlightStartupMessage = Readonly<{
@@ -629,6 +630,7 @@ export async function claudeUnifiedTerminalLauncher(
         userMessageLocalIds: [localId],
         ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
         ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+        ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
       };
     } catch (error) {
       if (error instanceof PendingQueueMaterializationAuthError) {
@@ -856,6 +858,7 @@ export async function claudeUnifiedTerminalLauncher(
         ...(inFlight.batch.pendingProviderAction
           ? { pendingProviderAction: inFlight.batch.pendingProviderAction }
           : {}),
+        ...(inFlight.batch.pendingRequestedAction ? { pendingRequestedAction: inFlight.batch.pendingRequestedAction } : {}),
       });
     } catch (error) {
       logger.debug('[unified]: failed to requeue in-flight unified terminal startup message after startup failure', error);
@@ -1165,6 +1168,7 @@ export async function claudeUnifiedTerminalLauncher(
           userMessageLocalIds: batch.userMessageLocalIds,
           ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
           ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+          ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
         } satisfies ParkedUnifiedTerminalMessage;
         const providerBatch = await resolveQueuedPromptForProvider(rawBatch);
         inFlightStartupMessage = {

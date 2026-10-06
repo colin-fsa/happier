@@ -1451,6 +1451,7 @@ export async function claudeRemoteLauncher(
                         userMessageLocalIds: batch.userMessageLocalIds,
                         providerAcceptancePending: batch.providerAcceptancePending,
                         pendingProviderAction: batch.pendingProviderAction,
+                        pendingRequestedAction: batch.pendingRequestedAction,
                     });
 
                 const resolveQueuedPromptForProvider = async (

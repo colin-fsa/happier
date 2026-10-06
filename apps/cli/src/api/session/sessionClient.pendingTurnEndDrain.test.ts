@@ -1661,7 +1661,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
         return {
           ...result,
           pendingQueueState: { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2 },
-          message: { ...result.message, providerAction: 'steer' as const },
+          message: { ...result.message, providerAction: 'steer' as const, requestedAction: { v: 1 as const, kind: 'steer_now' as const } },
         };
       });
 
@@ -1669,7 +1669,7 @@ describe('ApiSessionClient pending-queue turn-end drain', () => {
         reconcileWhenEmpty: 'force',
         activeTurnSteerability: 'steerable',
       })).resolves.toMatchObject({ type: 'materialized', localId: 'explicit-steer-local' });
-      expect(delivered).toEqual([{ info: expect.objectContaining({ pendingProviderAction: 'steer' }) }]);
+      expect(delivered).toEqual([{ info: expect.objectContaining({ pendingProviderAction: 'steer', pendingRequestedAction: { v: 1, kind: 'steer_now' } }) }]);
     } finally {
       if (previous) setActiveAccountSettingsSnapshot(previous);
     }

@@ -10,6 +10,7 @@ export type SpecialCommandQueue<Mode, Message> = {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ) => void;
   unshift: (
@@ -21,6 +22,7 @@ export type SpecialCommandQueue<Mode, Message> = {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ) => void;
   pushIsolateAndClear: (
@@ -32,6 +34,7 @@ export type SpecialCommandQueue<Mode, Message> = {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ) => void;
 };
@@ -49,6 +52,7 @@ export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: {
   userMessageLocalIds?: readonly string[] | null;
   providerAcceptancePending?: boolean | null;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
   prioritize?: boolean;
 }): void {
   const special = parseSpecialCommand(opts.text);
@@ -58,6 +62,7 @@ export function pushMessageToQueueWithSpecialCommands<Mode, Message>(opts: {
     userMessageLocalIds: opts.userMessageLocalIds ?? null,
     ...(opts.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
     ...(opts.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
+    ...(opts.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
   };
   if (special.type === 'clear') {
     opts.queue.pushIsolateAndClear(opts.message, opts.mode, queueOptions);

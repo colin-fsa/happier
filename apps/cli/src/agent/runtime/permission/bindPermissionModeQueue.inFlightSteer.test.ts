@@ -155,9 +155,10 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
   });
 
-  it('proves no provider effect when a claimed steer is unavailable before invocation', async () => {
+  it.each(['idle', 'unsupported', 'ended_before_dispatch', 'conditional_ended_before_dispatch'] as const)('queues a non-interrupting steer when live steering is unavailable (%s)', async (state) => {
+    let active = state !== 'idle';
     const { session, emitUserMessage } = createSessionHarness();
-    const { queue, spyPush } = createQueue();
+    const { queue } = createQueue();
     const steerText = vi.fn(async () => {});
 
     registerPermissionModeMessageQueueBinding({
@@ -166,25 +167,38 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       getCurrentPermissionMode: () => 'default',
       setCurrentPermissionMode: () => {},
       inFlightSteer: {
-        isTurnInFlight: () => true,
-        supportsInFlightSteer: () => false,
+        isTurnInFlight: () => active,
+        supportsInFlightSteer: () => state !== 'unsupported',
         steerText,
       },
     });
 
     emitUserMessage(
-      { content: { text: 'conditional steer' }, localId: 'pending-conditional-steer', meta: {} },
-      { seq: 12, providerAcceptancePending: true, pendingProviderAction: 'steer' },
+      { content: { text: 'non-interrupting steer' }, localId: 'pending-explicit-steer', meta: {} },
+      { seq: 12, providerAcceptancePending: true, pendingProviderAction: 'steer',
+        pendingRequestedAction: { v: 1, kind: state === 'conditional_ended_before_dispatch' ? 'steer_if_active' : 'steer_now' } },
     );
+    if (state.endsWith('ended_before_dispatch')) active = false;
     await waitForSteerWork();
 
     expect(steerText).not.toHaveBeenCalled();
-    expect(spyPush).not.toHaveBeenCalled();
-    expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['pending-conditional-steer'],
-      reason: 'steering_unavailable',
-      providerEffect: 'none',
+    if (state === 'conditional_ended_before_dispatch') {
+      expect(queue.size()).toBe(0);
+      expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+        localIds: ['pending-explicit-steer'], reason: 'steering_unavailable', providerEffect: 'none',
+      });
+      return;
+    }
+    expect(queue.size()).toBe(1);
+    const next = await queue.waitForMessagesAndGetAsString();
+    expect(next).toMatchObject({
+      message: { text: 'non-interrupting steer', localId: 'pending-explicit-steer' },
+      userMessageLocalIds: ['pending-explicit-steer'],
+      providerAcceptancePending: true,
+      pendingProviderAction: 'send',
+      pendingRequestedAction: { v: 1, kind: 'steer_now' },
     });
+    expect(session.blockPendingMessageDelivery).not.toHaveBeenCalled();
   });
 
   it('executes a claimed interrupt_and_send action by cancelling before queueing the send', async () => {

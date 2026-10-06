@@ -550,7 +550,7 @@ async function materializeNextPendingMessageInTx(
 
             const nextPending = selected.row;
             const requestedAction = selected.action;
-            const providerAction: PendingProviderAction = requestedAction.kind === "steer_now"
+            const providerAction: PendingProviderAction = (requestedAction.kind === "steer_now" && foregroundState !== "ready")
                 || (requestedAction.kind === "steer_if_active" && foregroundState === "active_steerable")
                 ? "steer"
                 : requestedAction.kind === "send_now" && foregroundState !== "ready"

@@ -18,6 +18,7 @@ export type MessageQueueBatch<Mode, Message> = {
   userMessageLocalIds: string[];
   providerAcceptancePending?: boolean;
   pendingProviderAction?: PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 };
 
 type QueueItem<Mode, Message> = {
@@ -29,6 +30,7 @@ type QueueItem<Mode, Message> = {
   userMessageLocalIds: string[];
   providerAcceptancePending: boolean;
   pendingProviderAction?: PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 };
 
 type MessageBatcher<Message> = (messages: Message[]) => Message;
@@ -103,6 +105,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ): void {
     if (this.closed) {
@@ -120,6 +123,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
+      ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
 
     if (this.onMessageHandler) {
@@ -146,6 +150,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ): void {
     if (this.closed) {
@@ -164,6 +169,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
+      ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
 
     if (this.onMessageHandler) {
@@ -186,6 +192,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds?: readonly string[] | null;
       providerAcceptancePending?: boolean | null;
       pendingProviderAction?: PendingProviderAction;
+      pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
     },
   ): void {
     if (this.closed) {
@@ -203,6 +210,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds: normalizeUserMessageLocalIds(opts),
       providerAcceptancePending: opts?.providerAcceptancePending === true,
       ...(opts?.pendingProviderAction ? { pendingProviderAction: opts.pendingProviderAction } : {}),
+      ...(opts?.pendingRequestedAction ? { pendingRequestedAction: opts.pendingRequestedAction } : {}),
     });
 
     if (this.onMessageHandler) {
@@ -331,6 +339,7 @@ export class MessageQueue2<Mode, Message = string> {
       userMessageLocalIds,
       providerAcceptancePending,
       ...(pendingProviderAction ? { pendingProviderAction } : {}),
+      ...(firstItem.pendingRequestedAction ? { pendingRequestedAction: firstItem.pendingRequestedAction } : {}),
     };
   }
 
