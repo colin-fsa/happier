@@ -116,23 +116,28 @@ vi.mock('@happier-dev/connection-supervisor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/connection-supervisor')>();
   return {
     DEFAULT_MANAGED_CONNECTION_POLICY: actual.DEFAULT_MANAGED_CONNECTION_POLICY,
-    createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => {
+    createManagedConnectionSupervisor: (params: Parameters<typeof actual.createManagedConnectionSupervisor>[0]) => {
       if (useRealSupervisor) {
         return actual.createManagedConnectionSupervisor({
           ...params,
-          onConnected: () => {
-            const completion = Promise.resolve(params.onConnected?.());
+          onConnected: (context) => {
+            const completion = Promise.resolve(params.onConnected?.(context));
             realSupervisorConnectedCompletion = completion;
             return completion;
           },
-        } as Parameters<typeof actual.createManagedConnectionSupervisor>[0]);
+        });
       }
       let phase = 'idle';
       supervisorConnect = async () => {
         params.createTransport();
         phase = 'online';
         supervisorConnectedTransitions += 1;
-        await params.onConnected?.();
+        await params.onConnected?.({
+          state: {
+            phase: 'online', reason: null, attempt: supervisorConnectedTransitions,
+            nextRetryAt: null, lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null,
+          },
+        });
       };
       supervisorControl = {
         start: async () => {
@@ -436,6 +441,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
 
       const activityRequest = createDeferred<void>();
       const activityAck = createDeferred<void>();
+      const metadata = { ...createPlainSessionFixture().metadata, machineId: 'machine-1' };
       let pendingClaims = 0;
       sessionSocketStub = createApiSessionSocketStub({
         connected: true,
@@ -492,7 +498,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
       // The optional user-scoped transport stays offline; delivery must use the exact session socket.
       userSocketStub.connect.mockImplementation(() => userSocketStub);
       vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { session: createSessionRecordFixture({
-        id: 's1', encryptionMode: 'plain', metadataVersion: 0, metadata: null,
+        id: 's1', encryptionMode: 'plain', metadataVersion: 0, metadata: JSON.stringify(metadata),
         pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1, latestTurnStatus: null,
       }) } });
 
@@ -501,7 +507,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
       const decisions = vi.spyOn(logger, 'infoFile');
       const client = new ApiSessionClient('tok', createPlainSessionFixture({
         id: 's1', pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0,
-        metadata: { ...createPlainSessionFixture().metadata, machineId: 'machine-1' },
+        metadata,
       }));
       const controller = new AbortController();
       const queue = new MessageQueue2<null>(() => 'mode');
