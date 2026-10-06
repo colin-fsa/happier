@@ -36,6 +36,12 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
 }>) {
   const writerByStreamKey = new Map<string, KeyedStreamWriterEntry<TArgs>>();
 
+  const releaseDrainedWriter = (streamKey: string, entry: KeyedStreamWriterEntry<TArgs>) => {
+    if (writerByStreamKey.get(streamKey) === entry && !entry.writer.hasPendingSegments()) {
+      writerByStreamKey.delete(streamKey);
+    }
+  };
+
   const getOrCreateWriter = (args: TArgs): StreamedTranscriptWriter => {
     const existing = writerByStreamKey.get(args.streamKey);
     if (existing) return existing.writer;
@@ -96,10 +102,11 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
         reason: args.reason,
         ...(args.interruptedReason ? { interruptedReason: args.interruptedReason } : {}),
       };
-      for (const [streamKey] of entries) {
-        writerByStreamKey.delete(streamKey);
-      }
-      const summaries = await Promise.all(entries.map(([, entry]) => entry.writer.flushAll(flushArgs)));
+      const summaries = await Promise.all(entries.map(async ([streamKey, entry]) => {
+        const summary = await entry.writer.flushAll(flushArgs);
+        releaseDrainedWriter(streamKey, entry);
+        return summary;
+      }));
       return summaries;
     },
 
@@ -110,15 +117,18 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
         reason: args.reason,
         ...(args.interruptedReason ? { interruptedReason: args.interruptedReason } : {}),
       };
-      for (const [streamKey] of entries) {
-        writerByStreamKey.delete(streamKey);
-      }
-      await Promise.all(entries.map(([, entry]) => entry.writer.flushAllThroughDurableAdmission(flushArgs)));
+      await Promise.all(entries.map(async ([streamKey, entry]) => {
+        await entry.writer.flushAllThroughDurableAdmission(flushArgs);
+        releaseDrainedWriter(streamKey, entry);
+      }));
     },
 
     async flushAll(args: Readonly<{ reason: FlushReason; interruptedReason?: string }>) {
-      await Promise.all(Array.from(writerByStreamKey.values(), (entry) => entry.writer.flushAll(args)));
-      writerByStreamKey.clear();
+      return await Promise.all(Array.from(writerByStreamKey.entries(), async ([streamKey, entry]) => {
+        const summary = await entry.writer.flushAll(args);
+        releaseDrainedWriter(streamKey, entry);
+        return summary;
+      }));
     },
 
     clear() {

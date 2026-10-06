@@ -45,6 +45,20 @@ graph TB
 - **Persistence/config:** `src/persistence.ts` + `src/configuration.ts` manage local state in `~/.happy`.
 - **Agents:** `src/claude`, `src/codex`, `src/gemini` provide provider-specific runners.
 
+## Streamed transcript recovery (development)
+
+`api/session/streamedTranscriptWriter` owns segment text, identity, and durable
+settlement. Closing a segment freezes its completion or interruption intent and
+separates it from subsequent output. A rejected terminal write retains the full
+snapshot for the next flush with the same local id; unresolved delivery is recorded
+in the default file log. This retention is process-local, and does not promise
+automatic reconnect replay or recovery after process exit.
+
+`createKeyedStreamedTranscriptBridge` keeps writers with active, in-flight, or failed
+segments and releases only drained writers. Codex tool boundaries wait for admission
+into the existing session commit queue, while acknowledgement settles in the writer;
+turn-end flushes await settlement and return the durable delivery summaries.
+
 ## CLI entry flow
 
 ```mermaid
