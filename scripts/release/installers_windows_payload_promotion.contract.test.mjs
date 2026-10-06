@@ -259,7 +259,7 @@ class Fixture {
     }`,
     '$env:HAPPIER_TEST_PROMOTION_FAIL = "1"',
     `$failed = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
-    'if ($failed.ExitCode -ne 17 -or $failed.TimedOut -or -not $failed.Output.Contains("promotion-ready")) { throw "Cleanup hid the failed promotion result" }',
+    'if ($failed.ExitCode -ne 17 -or $failed.TimedOut -or -not $failed.Output.Contains("promotion-ready")) { throw ("Failed promotion result was not preserved: " + ($failed | ConvertTo-Json -Compress)) }',
     '$env:HAPPIER_TEST_PROMOTION_FAIL = "0"',
     `$result = Invoke-InstallerPayloadPromotionWithTimeout -BinaryPath ${quote(binary)} -PayloadRoot ${quote(payload)} -Version '1.2.3' -ChannelValue 'dev' -InstallHomeDir ${quote(join(scratch, 'home'))}`,
     '$result | ConvertTo-Json -Compress',
