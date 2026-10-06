@@ -15,7 +15,7 @@ const enumeration = vi.hoisted(() => ({
 }));
 // Independent OS pipes can deliver the successful ACP response before stderr.
 vi.mock('cross-spawn', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('cross-spawn')>();
+  const actual = await importOriginal<{ default: typeof import('cross-spawn') }>();
   return { default: (...args: Parameters<typeof actual.default>) => {
     const child = actual.default(...args);
     if (enumeration.deferStderr && child.stderr) {
