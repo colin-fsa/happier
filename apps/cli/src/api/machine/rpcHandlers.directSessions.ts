@@ -1,7 +1,7 @@
 import type { DirectSessionTakeoverRequest, DirectSessionTakeoverPersistRequest } from '@happier-dev/protocol';
-import { DirectSessionImportOperationRequestSchema, type DirectSessionImportOperationResponse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
+  DIRECT_SESSION_TAKEOVER_ACTION_IDS,
   DirectSessionAttachRequestSchema,
   DirectSessionCandidateDeleteRequestSchema,
   DirectSessionDetachRequestSchema,
@@ -35,7 +35,9 @@ import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { getDirectSessionProviderOps } from '@/backends/catalog';
 import { DirectSessionsProviderUnavailableError } from '@/backends/directSessions/providerOps';
 
-import { createDirectSessionTakeoverOperations, type DirectSessionImportControl } from '@/api/directSessions/takeover/directSessionTakeoverOperations';
+import type { ActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import type { ActionOperationAccessScope } from '@/daemon/actionOperations/actionOperationTypes';
+
 import { importDirectSessionTranscript } from '@/api/directSessions/import/importDirectSessionTranscript';
 import { createManagedDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createManagedDirectSessionFollowLease';
 import { updateSessionMetadataWithDirectSessionFollowPolicy } from '@/api/directSessions/backgroundFollow/directSessionBackgroundFollowMetadata';
@@ -51,6 +53,11 @@ import { logger } from '@/utils/logger';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+
+type DirectSessionImportControl = Readonly<{
+  signal: AbortSignal;
+  update: (progress: Readonly<{ phase: 'preparing' | 'reading' | 'importing' | 'starting' | 'converting'; importedCount?: number; totalCount?: number }>) => void;
+}>;
 
 type DirectSessionsErrorCode = 'invalid_request' | 'machine_offline' | 'provider_unavailable' | 'internal_error';
 
@@ -135,11 +142,11 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar;
   spawnSession?: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   stopSession?: (sessionId: string) => Promise<boolean>;
+  actionOperations?: Readonly<{ runner: ActionOperationRunner; getScope: () => Promise<ActionOperationAccessScope> }>;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
 }>): void {
   const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
   const followLeaseManager = createDirectSessionFollowLeaseManager();
-  const takeoverOperations = createDirectSessionTakeoverOperations();
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
     const parsed = DirectSessionAttachRequestSchema.safeParse(raw);
@@ -635,13 +642,6 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     const result = await params.spawnSession!(prepared.spawnOptions);
     return result.type === 'success' ? { ok: true } : err('internal_error', result.type === 'error' ? result.errorMessage : 'directory_approval_required');
   };
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, async (raw: unknown) => {
-    const parsed = DirectSessionTakeoverRequestSchema.safeParse(raw);
-    if (!parsed.success) return err('invalid_request');
-    const entry = takeoverOperations.start(parsed.data.machineId, parsed.data.sessionId, 'direct', (control) => executeDirectTakeover(parsed.data, control));
-    return entry ? await entry.completion : err('invalid_request', 'direct_session_import_in_progress');
-  });
-
   const executePersistedTakeover = async (request: DirectSessionTakeoverPersistRequest, control: DirectSessionImportControl): Promise<DirectSessionTakeoverPersistResponse> => {
     const prepared = await prepareTakeover(request, 'persisted', control);
     if (!prepared.ok) return prepared;
@@ -659,8 +659,8 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         onProgress: (progress) => control.update({ phase: 'importing', ...progress }),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'direct_session_import_failed';
-      return err('internal_error', message) satisfies DirectSessionTakeoverPersistResponse;
+      if (control.signal.aborted && error instanceof Error && error.name === 'AbortError') throw error;
+      return err('internal_error', 'direct_session_import_failed') satisfies DirectSessionTakeoverPersistResponse;
     }
 
     control.update({ phase: 'starting' });
@@ -702,30 +702,62 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
     return { ok: true, converted: true } satisfies DirectSessionTakeoverPersistResponse;
   };
 
-  const startPersistedTakeover = (raw: unknown) => {
-    const parsed = DirectSessionTakeoverPersistRequestSchema.safeParse(raw);
+  const startTakeover = async (raw: unknown, mode: 'direct' | 'persisted') => {
+    const parsed = (mode === 'persisted' ? DirectSessionTakeoverPersistRequestSchema : DirectSessionTakeoverRequestSchema).safeParse(raw);
     if (!parsed.success) return err('invalid_request');
-    const entry = takeoverOperations.start(parsed.data.machineId, parsed.data.sessionId, 'persisted', (control) => executePersistedTakeover(parsed.data, control));
-    return entry ? { ok: true as const, entry } : err('invalid_request', 'direct_session_takeover_in_progress');
-  };
-  // Keep released synchronous callers as a thin adapter to the same operation owner.
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST, async (raw: unknown) => {
-    const started = startPersistedTakeover(raw);
-    return started.ok ? await started.entry.completion : started;
-  });
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START, async (raw: unknown) => {
-    const started = startPersistedTakeover(raw);
-    return started.ok ? { ok: true, operation: { ...started.entry.snapshot } } : started;
-  });
-  for (const [method, cancel] of [
-    [RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS, false],
-    [RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL, true],
-  ] as const) {
-    rpcHandlerManager.registerHandler(method, async (raw: unknown): Promise<DirectSessionImportOperationResponse> => {
-      const parsed = DirectSessionImportOperationRequestSchema.safeParse(raw);
-      if (!parsed.success) return err('invalid_request');
-      const { machineId, sessionId } = parsed.data;
-      return { ok: true, operation: cancel ? takeoverOperations.cancel(machineId, sessionId) : takeoverOperations.read(machineId, sessionId) };
+    const runtime = params.actionOperations;
+    if (!runtime) return err('provider_unavailable', 'action_operations_unavailable');
+    const request = parsed.data;
+    const scope = await runtime.getScope();
+    if (scope.machineId !== request.machineId) return err('invalid_request', 'direct_session_machine_mismatch');
+    const started = runtime.runner.startHistorical<DirectSessionTakeoverPersistResponse>({
+      request: {
+        actionId: DIRECT_SESSION_TAKEOVER_ACTION_IDS[mode],
+        input: request, requestId: request.requestId, scope: { sessionId: request.sessionId },
+      },
+      scope, scopeSessionId: request.sessionId,
+      exclusiveKey: JSON.stringify(['direct-session-takeover', request.sessionId]),
+      title: mode === 'persisted' ? 'Import session history' : 'Take over session',
+      cancellation: mode === 'persisted' ? 'supported' : 'unsupported',
+      execute: async ({ signal, update }) => {
+        const control: DirectSessionImportControl = {
+          signal,
+          update: (progress) => {
+            if (progress.phase === 'starting') signal.throwIfAborted();
+            update({
+              ...(progress.phase === 'starting' || progress.phase === 'converting' ? { cancellation: 'unsupported' as const } : {}),
+              progress: progress.phase === 'importing' && progress.totalCount !== undefined && progress.totalCount > 0
+                ? { kind: 'determinate', current: progress.importedCount ?? 0, total: progress.totalCount, label: 'Importing history' }
+                : { kind: 'phase', phase: progress.phase, label: {
+                  preparing: 'Preparing import', reading: 'Reading history', importing: 'Importing history',
+                  starting: 'Starting session', converting: 'Converting session',
+                }[progress.phase] },
+            });
+          },
+        };
+        control.update({ phase: 'preparing' });
+        return await (mode === 'persisted' ? executePersistedTakeover(request, control) : executeDirectTakeover(request, control));
+      },
+      projectResult: (result) => result.ok
+        ? { ok: true, result }
+        : { ok: false, errorCode: result.errorCode, error: result.errorCode === 'internal_error' ? 'direct_session_takeover_failed' : result.error },
     });
-  }
+    return started.kind === 'started' ? { ok: true as const, started } : err('invalid_request', mode === 'persisted' ? 'direct_session_takeover_in_progress' : 'direct_session_import_in_progress');
+  };
+  const completeTakeover = async (raw: unknown, mode: 'direct' | 'persisted') => {
+    const admission = await startTakeover(raw, mode);
+    if (!admission.ok) return admission;
+    try {
+      return await admission.started.completion;
+    } catch (error) {
+      return err('internal_error', error instanceof Error && error.name === 'AbortError' ? 'direct_session_import_cancelled' : 'direct_session_takeover_failed');
+    }
+  };
+  // Released synchronous methods wait on the same owner used by asynchronous start.
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER, async (raw: unknown) => completeTakeover(raw, 'direct'));
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST, async (raw: unknown) => completeTakeover(raw, 'persisted'));
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START, async (raw: unknown) => {
+    const admission = await startTakeover(raw, 'persisted');
+    return admission.ok ? { ok: true, operation: admission.started.operation } : admission;
+  });
 }

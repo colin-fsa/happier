@@ -3,6 +3,7 @@ import { RpcError } from '@/sync/runtime/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
@@ -237,7 +238,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
                 },
             },
         });
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, operation: { sessionId: 'session-1', state: 'running', phase: 'preparing', importedCount: 0, canCancel: true } });
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' } }) });
         const { machineDirectSessionTakeover, machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
         await (mode === 'direct' ? machineDirectSessionTakeover : machineDirectSessionTakeoverPersistStart)({
             machineId: 'old', sessionId: 'session-1',
@@ -273,7 +274,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
     it('routes direct session takeover+persist through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
-            operation: { sessionId: 'happy-session-1', state: 'running', phase: 'preparing', importedCount: 0, canCancel: true },
+            operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }),
         });
         const { machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
 
@@ -283,7 +284,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
             forceStop: true,
         }, { serverId: 'server-a' });
 
-        expect(result).toEqual({ ok: true, operation: { sessionId: 'happy-session-1', state: 'running', phase: 'preparing', importedCount: 0, canCancel: true } });
+        expect(result).toEqual({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }) });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
@@ -313,7 +314,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
         });
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
-            operation: { sessionId: 'happy-session-1', state: 'running', phase: 'preparing', importedCount: 0, canCancel: true },
+            operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }),
         });
         const { machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
 
@@ -323,7 +324,7 @@ describe('machine direct sessions ops server-scoped routing', () => {
             forceStop: true,
         }, { serverId: 'server-a' });
 
-        expect(result).toEqual({ ok: true, operation: { sessionId: 'happy-session-1', state: 'running', phase: 'preparing', importedCount: 0, canCancel: true } });
+        expect(result).toEqual({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }) });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-new',
             serverId: 'server-a',

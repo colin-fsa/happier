@@ -33,6 +33,16 @@ function operation(
 }
 
 describe('action operation presentation', () => {
+    it.each(['running', 'cancelled', 'failed', 'succeeded'] as const)('opens the imported session from Activity when %s', (state) => {
+        const snapshot = operation('import-session', state, {
+            actionId: 'session.direct.takeover_persist',
+            progress: { kind: 'determinate', current: 5, total: 23 },
+        });
+        expect(resolveActionOperationPresentation(snapshot, 'available', NOW).openSessionId).toBe('session-parent');
+        const sections = buildActionOperationLedgerSections([snapshot]);
+        expect([...sections.inProgress, ...sections.needsAttention, ...sections.recent]).toEqual([snapshot]);
+    });
+
     it('groups active, attention, and recent operations without duplicating rows', () => {
         const running = operation('running', 'running');
         const failed = operation('failed', 'failed');

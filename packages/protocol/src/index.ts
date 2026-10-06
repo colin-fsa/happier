@@ -2561,13 +2561,12 @@ export {
   DirectTranscriptReadAfterResponseSchema,
   DirectTranscriptTruncationReasonSchema,
   resolveDirectTranscriptContinuation,
+  DIRECT_SESSION_TAKEOVER_ACTION_IDS,
   DirectSessionTakeoverRequestSchema,
   DirectSessionTakeoverResponseSchema,
   DirectSessionTakeoverPersistRequestSchema,
   DirectSessionTakeoverPersistResponseSchema,
-  DirectSessionImportOperationSchema,
-  DirectSessionImportOperationRequestSchema,
-  DirectSessionImportOperationResponseSchema,
+  DirectSessionTakeoverPersistStartResponseSchema,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
   type DirectSessionsAcpSessionListCapabilityRequest,
@@ -2598,9 +2597,7 @@ export {
   type DirectSessionTakeoverResponse,
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
-  type DirectSessionImportOperation,
-  type DirectSessionImportOperationRequest,
-  type DirectSessionImportOperationResponse,
+  type DirectSessionTakeoverPersistStartResponse,
 } from './directSessions/daemonRpcV1.js';
 
 export {

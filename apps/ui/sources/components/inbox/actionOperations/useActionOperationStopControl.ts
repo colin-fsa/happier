@@ -1,11 +1,13 @@
 import * as React from 'react';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
+import { isActionOperationCancellationRequested } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { requestActionOperationStop } from './requestActionOperationStop';
 
 export function useActionOperationStopControl(operation: ActionOperationSnapshotV1 | null | undefined) {
     const mountedRef = React.useRef(true);
-    const [pending, setPending] = React.useState(false);
+    const [requestPending, setPending] = React.useState(false);
+    const pending = requestPending || isActionOperationCancellationRequested(operation);
     const [failed, setFailed] = React.useState(false);
 
     React.useEffect(() => {

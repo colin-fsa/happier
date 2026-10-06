@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ActionOperationSnapshotV1Schema } from '../actions/operations/actionOperationV1.js';
 import { SpawnSessionTerminalSchema } from '../spawnSession.js';
 
 import { AgentRuntimeDescriptorV1Schema } from '../sessionMetadata/agentRuntimeDescriptorV1.js';
@@ -440,11 +441,17 @@ export const DirectTranscriptReadAfterResponseSchema = z.union([
 ]);
 export type DirectTranscriptReadAfterResponse = z.infer<typeof DirectTranscriptReadAfterResponseSchema>;
 
+export const DIRECT_SESSION_TAKEOVER_ACTION_IDS = Object.freeze({
+  direct: 'session.direct.takeover',
+  persisted: 'session.direct.takeover_persist',
+} as const);
+
 export const DirectSessionTakeoverRequestSchema = z
   .object({
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
+    requestId: z.string().trim().min(1).optional(),
     terminal: SpawnSessionTerminalSchema.optional(),
   })
   .passthrough();
@@ -467,6 +474,7 @@ export const DirectSessionTakeoverPersistRequestSchema = z
     machineId: z.string().min(1),
     sessionId: z.string().min(1),
     forceStop: z.boolean().optional(),
+    requestId: z.string().trim().min(1).optional(),
     terminal: SpawnSessionTerminalSchema.optional(),
   })
   .passthrough();
@@ -484,30 +492,13 @@ export const DirectSessionTakeoverPersistResponseSchema = z.union([
 ]);
 export type DirectSessionTakeoverPersistResponse = z.infer<typeof DirectSessionTakeoverPersistResponseSchema>;
 
-// Import work outlives an individual RPC; the daemon owns its lifecycle.
-export const DirectSessionImportOperationSchema = z.object({
-  sessionId: z.string().min(1),
-  state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
-  phase: z.enum(['preparing', 'reading', 'importing', 'starting', 'converting']),
-  importedCount: z.number().int().nonnegative(),
-  totalCount: z.number().int().nonnegative().optional(),
-  canCancel: z.boolean(),
-  error: z.string().optional(),
-});
-export type DirectSessionImportOperation = z.infer<typeof DirectSessionImportOperationSchema>;
-
-export const DirectSessionImportOperationRequestSchema = z.object({
-  machineId: z.string().min(1),
-  sessionId: z.string().min(1),
-});
-export type DirectSessionImportOperationRequest = z.infer<typeof DirectSessionImportOperationRequestSchema>;
-
-export const DirectSessionImportOperationResponseSchema = z.union([
-  z.object({ ok: z.literal(true), operation: DirectSessionImportOperationSchema.nullable() }),
+// Start acknowledges the same daemon-local Action Operation observed via list/get/cancel.
+export const DirectSessionTakeoverPersistStartResponseSchema = z.union([
+  z.object({ ok: z.literal(true), operation: ActionOperationSnapshotV1Schema }),
   z.object({
     ok: z.literal(false),
     errorCode: z.enum(['invalid_request', 'machine_offline', 'provider_unavailable', 'internal_error']),
     error: z.string().min(1),
   }),
 ]);
-export type DirectSessionImportOperationResponse = z.infer<typeof DirectSessionImportOperationResponseSchema>;
+export type DirectSessionTakeoverPersistStartResponse = z.infer<typeof DirectSessionTakeoverPersistStartResponseSchema>;

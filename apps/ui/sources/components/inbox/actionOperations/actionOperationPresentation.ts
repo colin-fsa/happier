@@ -1,4 +1,4 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { DIRECT_SESSION_TAKEOVER_ACTION_IDS, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
@@ -40,6 +40,7 @@ export type ActionOperationLedgerSections = Readonly<{
 
 type ActionOperationDetailAdapter = Readonly<{
     iconName: IconName;
+    openScopedSession?: boolean;
     readOpenSessionId?: (result: unknown) => string | null;
     readResultSummary?: (result: unknown) => string | null;
     readWarning?: (result: unknown) => string | null;
@@ -76,6 +77,7 @@ function readHandoffWarning(result: unknown): string | null {
 }
 
 const CORE_ACTION_OPERATION_DETAIL_ADAPTERS: Readonly<Record<string, ActionOperationDetailAdapter>> = {
+    [DIRECT_SESSION_TAKEOVER_ACTION_IDS.persisted]: { iconName: 'download', openScopedSession: true },
     'session.fork': {
         iconName: 'git-branch',
         readOpenSessionId: (result) => readStringField(result, 'childSessionId') ?? readStringField(result, 'sessionId'),
@@ -112,9 +114,8 @@ export function resolveActionOperationDetailContent(
     const terminalSuccess = operation.state === 'succeeded';
     return {
         iconName: adapter.iconName,
-        openSessionId: terminalSuccess && adapter.readOpenSessionId
-            ? adapter.readOpenSessionId(operation.result)
-            : null,
+        openSessionId: adapter.openScopedSession ? operation.scope.sessionId ?? null
+            : terminalSuccess && adapter.readOpenSessionId ? adapter.readOpenSessionId(operation.result) : null,
         resultSummary: terminalSuccess
             ? (adapter.readResultSummary?.(operation.result) ?? safeResultSummary(operation.result))
             : null,

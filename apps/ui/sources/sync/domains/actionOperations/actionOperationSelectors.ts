@@ -9,6 +9,7 @@ import {
 
 type ActionOperationSelectorScope = ActionOperationScope & Readonly<{
     sessionId?: string;
+    actionId?: string;
     states?: readonly ActionOperationStateV1[];
 }>;
 
@@ -35,6 +36,10 @@ type ResolveActionOperationLocalPresentation = (
 
 const NO_LOCAL_PRESENTATION: ResolveActionOperationLocalPresentation = () => null;
 
+export function isActionOperationCancellationRequested(operation: ActionOperationSnapshotV1 | null | undefined): boolean {
+    return operation?.state === 'running' && operation.progress?.kind === 'phase' && operation.progress.phase === 'cancelling';
+}
+
 function sameReferences(
     previous: readonly ActionOperationSnapshotV1[],
     next: readonly ActionOperationSnapshotV1[],
@@ -52,6 +57,7 @@ export function createActionOperationSelector(scope: ActionOperationSelectorScop
             && operation.scope.machineId === scope.machineId
             && !state.dismissedOperationIds.has(operation.operationId)
             && (scope.sessionId === undefined || operation.scope.sessionId === scope.sessionId)
+            && (scope.actionId === undefined || operation.actionId === scope.actionId)
             && (states === null || states.has(operation.state))
         ));
         if (sameReferences(previous, next)) return previous;

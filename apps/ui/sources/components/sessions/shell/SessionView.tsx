@@ -5056,7 +5056,7 @@ function SessionViewLoaded({
     const directControlFooter = React.useMemo(() => {
         if (isHiddenSystemSessionSession) return null;
         const operation = directSessionTakeover.importOperation;
-        const hasImportNotice = operation?.state === 'running' || operation?.state === 'cancelling'
+        const hasImportNotice = operation?.state === 'accepted' || operation?.state === 'running'
             || operation?.state === 'failed' || Boolean(directSessionTakeover.importStatusError);
         if (!directSessionLink && !hasImportNotice) return null;
         const status = directSessionRuntime.status;

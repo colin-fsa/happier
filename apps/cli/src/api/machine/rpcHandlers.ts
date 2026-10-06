@@ -136,12 +136,13 @@ import {
   isProviderNativeForkIndeterminateError,
 } from '@/backends/forking/providerNativeForkHandler';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
-import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, normalizeDaemonSpawnSessionEnvelope } from '@/session/services/awaitSpawnedSessionId';
+import { abandonSpawnedSessionBestEffort, awaitSpawnedSessionId, normalizeDaemonSpawnSessionEnvelope, type AwaitSpawnedSessionIdResult } from '@/session/services/awaitSpawnedSessionId';
 import { createPromptAssetAdapterRegistry } from '@/promptAssets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/promptRegistries/createPromptRegistryAdapterRegistry';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { createTrackedSessionHandoffStart } from '@/daemon/actionOperations/trackedSessionHandoffStart';
+import { normalizeSpawnNonce } from '@/daemon/spawn/daemonSpawnAttemptRegistry';
 import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
 import {
   projectCoreActionOperationDomainRef,
@@ -681,7 +682,16 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
   // Both public spawn RPCs delegate to this single nonce/custody owner. Their
   // response projections intentionally differ below for released-client compatibility.
-  const handleSpawnHappySession = async (params: any): Promise<SpawnSessionResult> => {
+  type PreparedSpawnRequest = Readonly<{
+    options: SpawnSessionOptions;
+    sourceContext?: SessionSpawnSourceContextV1;
+    pendingFirstInputRequested: boolean;
+  }>;
+  type SpawnExecutionAdapter = (
+    request: PreparedSpawnRequest,
+    execute: () => Promise<SpawnSessionResult>,
+  ) => Promise<SpawnSessionResult | AwaitSpawnedSessionIdResult>;
+  const handleSpawnHappySession = async (params: any, adaptExecution?: SpawnExecutionAdapter): Promise<SpawnSessionResult | AwaitSpawnedSessionIdResult> => {
     const {
       directory,
       spawnNonce,
@@ -774,7 +784,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       const parsed = PendingFirstInputV1Schema.safeParse(pendingFirstInput);
       return parsed.success ? parsed.data : undefined;
     })();
-    const normalizedSpawnNonce = typeof spawnNonce === 'string' && spawnNonce.trim().length > 0 ? spawnNonce : undefined;
+    const normalizedSpawnNonce = typeof spawnNonce === 'string' && normalizeSpawnNonce(spawnNonce) ? spawnNonce : undefined;
     const normalizedTranscriptStorage =
       transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? transcriptStorage : undefined;
     const normalizedAttachMetadataIdentityPolicy =
@@ -910,6 +920,18 @@ export function registerMachineRpcHandlers(params: Readonly<{
       ...(normalizedCodexBackendMode ? { codexBackendMode: normalizedCodexBackendMode } : {}),
     });
 
+    // Admission receives exactly the options produced by this canonical
+    // normalizer. Private request identity is never part of a public snapshot.
+    const executePrepared = (options: SpawnSessionOptions, execute: () => Promise<SpawnSessionResult>) => (
+      adaptExecution
+        ? adaptExecution({
+          options,
+          ...(normalizedSourceContext ? { sourceContext: normalizedSourceContext } : {}),
+          pendingFirstInputRequested: params?.type !== 'resume-session' && !normalizedSourceContext && pendingFirstInput !== undefined,
+        }, execute)
+        : execute()
+    );
+
     // Handle resume-session type for inactive session resumption
     if (params?.type === 'resume-session') {
       const { sessionId: existingSessionId } = params;
@@ -940,21 +962,14 @@ export function registerMachineRpcHandlers(params: Readonly<{
         };
       }
 
-      const baseSpawnOptions = buildBaseSpawnOptions(resolvedDirectory);
-      const result = await spawnSession({
-        ...baseSpawnOptions,
+      const options: SpawnSessionOptions = {
+        ...buildBaseSpawnOptions(resolvedDirectory),
         existingSessionId,
         approvedNewDirectoryCreation: true,
-      });
-
-      if (result.type === 'error') {
-        return result;
-      }
-
-      // Resume reuses the existing session id, but the caller still needs the exact
-      // accepted identity (and whether a fresh or pre-existing runner accepted it)
-      // before it can release durable pending custody.
-      return result;
+      };
+      // Resume reuses the existing session id, but its caller still needs the
+      // accepted identity before releasing pending custody.
+      return await executePrepared(options, () => spawnSession(options));
     }
 
     if (!resolvedDirectory) {
@@ -964,84 +979,74 @@ export function registerMachineRpcHandlers(params: Readonly<{
     const baseSpawnOptions = buildBaseSpawnOptions(resolvedDirectory);
 
     if (normalizedSourceContext) {
-      return await spawnSourceContextSeededSession({
+      return await executePrepared({ ...baseSpawnOptions, approvedNewDirectoryCreation }, () => spawnSourceContextSeededSession({
         sourceContext: normalizedSourceContext,
         directory: resolvedDirectory,
         backendTarget: normalizedBackendTarget,
         baseSpawnOptions,
         approvedNewDirectoryCreation,
         spawnNonce: normalizedSpawnNonce,
-      });
+      }));
     }
 
-    const rawResult = await spawnSession({
-      ...baseSpawnOptions,
-      sessionId,
-      approvedNewDirectoryCreation,
+    const options: SpawnSessionOptions = { ...baseSpawnOptions, sessionId, approvedNewDirectoryCreation };
+    return await executePrepared(options, async () => {
+      const rawResult = await spawnSession(options);
+      const result = normalizeDaemonSpawnSessionEnvelope(rawResult) ?? rawResult;
+
+      switch (result.type) {
+        case 'success':
+          if (result.sessionId) {
+            logger.debug(`[API MACHINE] Spawned session ${result.sessionId}`);
+          } else {
+            logger.debug('[API MACHINE] Spawn accepted; session identity pending', {
+              spawnNonce: result.spawnNonce,
+            });
+          }
+          return {
+            ...result,
+            ...(pendingFirstInput !== undefined
+              ? {
+                  pendingFirstInputAccepted:
+                    normalizedPendingFirstInput !== undefined
+                    && result.runnerAcceptance !== 'preexisting_or_adopted',
+                }
+              : {}),
+          };
+
+        case 'requestToApproveDirectoryCreation':
+          logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);
+          return { type: 'requestToApproveDirectoryCreation', directory: result.directory };
+
+        case 'error':
+          return result;
+      }
     });
-    const result = normalizeDaemonSpawnSessionEnvelope(rawResult) ?? rawResult;
-
-    switch (result.type) {
-      case 'success':
-        if (result.sessionId) {
-          logger.debug(`[API MACHINE] Spawned session ${result.sessionId}`);
-        } else {
-          logger.debug('[API MACHINE] Spawn accepted; session identity pending', {
-            spawnNonce: result.spawnNonce,
-          });
-        }
-        return {
-          ...result,
-          ...(pendingFirstInput !== undefined
-            ? {
-                pendingFirstInputAccepted:
-                  normalizedPendingFirstInput !== undefined
-                  && result.runnerAcceptance !== 'preexisting_or_adopted',
-              }
-            : {}),
-        };
-
-      case 'requestToApproveDirectoryCreation':
-        logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);
-        return { type: 'requestToApproveDirectoryCreation', directory: result.directory };
-
-      case 'error':
-        return result;
-    }
   };
 
-  const handleTrackedSpawnHappySession = async (raw: unknown) => {
-    const record = raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? raw as Readonly<Record<string, unknown>>
-      : null;
-    const requestId = readNonBlankOpaqueIdentifier(record?.spawnNonce);
-    if (!actionOperationRuntime || !requestId) return await handleSpawnHappySession(raw);
-
-    let receiptSettled = false;
-    let resolveReceipt!: (value: Awaited<ReturnType<typeof handleSpawnHappySession>>) => void;
-    let rejectReceipt!: (error: unknown) => void;
-    const receipt = new Promise<Awaited<ReturnType<typeof handleSpawnHappySession>>>((resolve, reject) => {
-      resolveReceipt = (value) => { receiptSettled = true; resolve(value); };
-      rejectReceipt = (error) => { receiptSettled = true; reject(error); };
-    });
+  const handleTrackedSpawnHappySession = async (raw: unknown) => handleSpawnHappySession(raw, async (prepared, execute) => {
+    const requestId = normalizeSpawnNonce(prepared.options.spawnNonce);
+    if (!actionOperationRuntime || !requestId) return await execute();
     const scope = await actionOperationRuntime.getScope();
-    void actionOperationRuntime.runner.executeHistorical({
-      request: { actionId: 'session.spawn_new', input: {}, requestId, scope: {} },
+    const started = actionOperationRuntime.runner.startHistorical<SpawnSessionResult | AwaitSpawnedSessionIdResult>({
+      request: {
+        actionId: 'session.spawn_new',
+        // Native admission treats nonce padding as one identity. Keep that
+        // equivalence private while forwarding the original accepted bytes.
+        input: { ...prepared, options: { ...prepared.options, spawnNonce: requestId } },
+        requestId, scope: {},
+      },
       scope,
       title: getActionSpec('session.spawn_new').title,
       cancellation: abandonSpawnSessionByNonce ? 'supported' : 'unsupported',
       domainRef: { kind: 'spawnAttempt', id: requestId },
-      execute: async ({ signal, update }) => {
+      execute: async ({ signal, acknowledge, update }) => {
         update({ progress: { kind: 'phase', phase: 'creating', label: 'Creating session' } });
-        const initial = await handleSpawnHappySession(raw);
-        resolveReceipt(initial);
+        const initial = await execute();
+        acknowledge(initial);
         if (initial.type !== 'success' || initial.sessionId) return initial;
         try {
-          const settled = await awaitSpawnedSessionId({
-            result: initial,
-            resolveSpawnSessionByNonce,
-            signal,
-          });
+          const settled = await awaitSpawnedSessionId({ result: initial, resolveSpawnSessionByNonce, signal });
           if (settled.type === 'success') {
             update({ progress: { kind: 'phase', phase: 'custody_confirmed', label: 'Session custody confirmed' } });
           }
@@ -1055,16 +1060,15 @@ export function registerMachineRpcHandlers(params: Readonly<{
       },
       projectResult: (result) => {
         if (result.type === 'success' && result.sessionId) return { ok: true, result };
-        if (result.type === 'error') {
-          return { ok: false, errorCode: result.errorCode, error: result.errorMessage };
-        }
+        if (result.type === 'error') return { ok: false, errorCode: result.errorCode, error: result.errorMessage };
         return { ok: false, errorCode: 'spawn_custody_unresolved', error: 'Spawn custody did not resolve to a session' };
       },
-    }).catch((error) => {
-      if (!receiptSettled) rejectReceipt(error);
     });
-    return await receipt;
-  };
+    if (started.kind === 'conflict') {
+      return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST, errorMessage: 'Conflicting spawn request for this nonce' };
+    }
+    return await started.receipt;
+  });
 
   rpcHandlerManager.registerHandler(
     RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
@@ -1087,10 +1091,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE, async (params: unknown) => {
-    const spawnNonce =
-      params && typeof params === 'object' && typeof (params as { spawnNonce?: unknown }).spawnNonce === 'string'
-        ? (params as { spawnNonce: string }).spawnNonce.trim()
-        : '';
+    const spawnNonce = normalizeSpawnNonce(params && typeof params === 'object' ? (params as { spawnNonce?: unknown }).spawnNonce : undefined);
     if (!spawnNonce) {
       return { status: 'not_found' as const };
     }
@@ -1105,10 +1106,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, async (params: unknown) => {
-    const spawnNonce =
-      params && typeof params === 'object' && typeof (params as { spawnNonce?: unknown }).spawnNonce === 'string'
-        ? (params as { spawnNonce: string }).spawnNonce.trim()
-        : '';
+    const spawnNonce = normalizeSpawnNonce(params && typeof params === 'object' ? (params as { spawnNonce?: unknown }).spawnNonce : undefined);
     if (!spawnNonce) return { status: 'not_found' as const };
     if (!handlers.abandonSpawnSessionByNonce) return { status: 'unsupported' as const };
     try {
@@ -1170,6 +1168,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     spawnSession,
     stopSession: stopSessionConfirmed,
     emitDirectSessionTranscriptUpdate: params.deps?.emitDirectSessionTranscriptUpdate,
+    ...(actionOperationRuntime ? { actionOperations: actionOperationRuntime } : {}),
   });
   registerMachineConnectedServiceQuotaRpcHandlers({
     rpcHandlerManager,
@@ -1610,7 +1609,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       if (!resolveSpawnSessionByNonce) return;
       const normalized = normalizeDaemonSpawnSessionEnvelope(input.spawnResult) ?? input.spawnResult;
       if (normalized.type !== 'success' || normalized.sessionId) return;
-      const spawnNonce = typeof normalized.spawnNonce === 'string' ? normalized.spawnNonce.trim() : '';
+      const spawnNonce = normalizeSpawnNonce(normalized.spawnNonce);
       if (!spawnNonce) return;
       abandonSpawnedSessionBestEffort({
         spawnNonce,
@@ -2083,7 +2082,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
       return await executeSessionForkRpcUntracked(raw);
     }
     const scope = await actionOperationRuntime.getScope();
-    return await actionOperationRuntime.runner.executeHistorical({
+    return await actionOperationRuntime.runner.executeHistorical<SessionForkRpcResult>({
       request: {
         actionId: 'session.fork',
         input: parsed.data,

@@ -3,7 +3,8 @@ import { View, ViewStyle } from 'react-native';
 import { t } from '@/text';
 import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/ComposerAuxiliaryFrame';
 import { SessionWarningActionBanner } from '@/components/sessions/shell/SessionWarningActionBanner';
-import type { DirectSessionImportOperation } from '@happier-dev/protocol';
+import { isActionOperationCancellationRequested } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import type { SessionLocalControlState } from '@/sync/domains/session/control/sessionLocalControl';
 
 export type ChatFooterDirectControlState = Readonly<{
@@ -13,7 +14,7 @@ export type ChatFooterDirectControlState = Readonly<{
     canTakeOverDirect: boolean;
     canTakeOverPersist: boolean;
     takeoverInFlight: 'direct' | 'persisted' | null;
-    importOperation?: DirectSessionImportOperation | null;
+    importOperation?: ActionOperationSnapshotV1 | null;
     importStatusError?: string | null;
     onCancelImport?: () => void | Promise<void>;
     onRefreshImport?: () => void | Promise<void>;
@@ -117,7 +118,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
     const directModeBanner = React.useMemo(() => {
         if (!props.directControl) return null;
         const operation = props.directControl.importOperation;
-        const importing = operation?.state === 'running' || operation?.state === 'cancelling';
+        const importing = operation?.state === 'accepted' || operation?.state === 'running';
         if (props.directControl.runnerActive && !importing && operation?.state !== 'failed' && !props.directControl.importStatusError) return null;
 
         const switchingToDirect = props.directControl.takeoverInFlight === 'direct';
@@ -144,20 +145,21 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             return 'chatFooter.directSessionTakeoverAvailable';
         })();
 
-        const phaseLabel = operation?.state === 'cancelling' ? t('chatFooter.directImportCancelling')
-            : operation?.phase === 'reading' ? t('chatFooter.directImportReading')
-            : operation?.phase === 'importing' ? t('chatFooter.directImportImporting')
-            : operation?.phase === 'starting' ? t('chatFooter.directImportStarting')
-            : operation?.phase === 'converting' ? t('chatFooter.directImportConverting')
+        const phase = operation?.progress?.kind === 'phase' ? operation.progress.phase
+            : operation?.progress?.kind === 'determinate' ? 'importing' : 'preparing';
+        const phaseLabel = isActionOperationCancellationRequested(operation) ? t('chatFooter.directImportCancelling')
+            : phase === 'reading' ? t('chatFooter.directImportReading')
+            : phase === 'importing' ? t('chatFooter.directImportImporting')
+            : phase === 'starting' ? t('chatFooter.directImportStarting')
+            : phase === 'converting' ? t('chatFooter.directImportConverting')
             : t('chatFooter.directImportPreparing');
-        const progress = operation?.state === 'completed' && props.directControl.importStatusError
-            ? t('chatFooter.directImportStatusUnavailable') : importing && operation ? `${phaseLabel} ${operation.totalCount == null
-            ? t('chatFooter.directImportCount', { count: operation.importedCount })
-            : t('chatFooter.directImportCountWithTotal', { count: operation.importedCount, total: operation.totalCount })}` : t(textKey);
-        const canStop = importing && operation?.canCancel === true && operation.state !== 'cancelling'
+        const countLabel = operation?.progress?.kind === 'determinate'
+            ? t('chatFooter.directImportCountWithTotal', { count: operation.progress.current, total: operation.progress.total }) : '';
+        const progress = props.directControl.importStatusError ? t('chatFooter.directImportStatusUnavailable')
+            : importing ? [phaseLabel, countLabel].filter(Boolean).join(' ') : t(textKey);
+        const canStop = importing && operation?.cancellation === 'supported' && !isActionOperationCancellationRequested(operation)
             && typeof props.directControl.onCancelImport === 'function';
-        const body = [progress, operation?.state === 'failed' ? operation.error : null,
-            props.directControl.importStatusError && operation?.state !== 'completed' ? t('chatFooter.directImportStatusUnavailable') : null].filter(Boolean).join('\n');
+        const body = [progress, operation?.state === 'failed' ? operation.error?.error : null].filter(Boolean).join('\n');
 
         return (
             <ComposerAuxiliaryFrame>

@@ -203,19 +203,34 @@ settings are no longer encountered.
 The released `cli-v0.2.14` and `cli-v0.2.14-preview.1` daemon at
 `df8241c8b1068aa964ec7723000ff356ba3a00ef` executes
 `daemon.directSessions.takeoverPersist` synchronously. Updated daemons retain that
-method as a completion-waiting adapter to the same takeover operation owner used
-by `takeoverPersist.start`, `import.status`, and `import.cancel`. Direct takeover
-and import admission share writer/auth/source checks and exclude competing
-requests for the same linked session.
+method as a completion-waiting adapter to the shared daemon Action Operations
+runner used by handoff, fork, and session creation. `takeoverPersist.start`
+acknowledges admission with the shared operation snapshot. Direct takeover and
+import admission share writer/auth/source checks and exclude competing requests
+for the same linked session; repeat delivery joins the existing completion.
+The runner owns both the early admission receipt and final completion for tracked
+spawn, fork, handoff, and takeover requests. Reusing a request identity with changed
+canonical input is rejected. Spawn admission uses the existing native nonce identity
+(including trimmed padding) while preserving the forwarded nonce bytes. Handoff
+does not keep a second admission receipt registry. These private changes add no
+fields to the released operation snapshot.
+The development-only `import.status` and `import.cancel` endpoints and dedicated
+import operation store are removed. Status and Stop use the shared
+`actionOperation.list.v1`, `actionOperation.get.v1`, and
+`actionOperation.cancel.v1` methods.
 
 Updated UIs start import through the asynchronous method and observe the daemon's
-phase, message counts, cancellation eligibility, and terminal result. A transport
-request deadline does not set an import deadline. The existing transcript footer
+phase, message counts, cancellation eligibility, and terminal result through the
+existing account-scoped Action Operations revision stream and connection-time
+reconciliation. The footer and Activity read the same store; the footer does not
+poll a separate import lifecycle. A transport request deadline does not set an
+import deadline. The existing transcript footer
 also renders for empty imports and remains available through metadata conversion.
 Observation retains the original daemon address until terminal refresh succeeds,
 so conversion cannot strand a pending send; failed refresh remains recoverable
 through the same Refresh action. If the start acknowledgement is
-lost, the UI checks status without starting a second import. A missing method on
+lost, the UI reconciles the shared operation by request identity without starting
+a second import. A missing method on
 an older daemon asks the user to update the daemon before starting work; it does
 not fall back to the synchronous import path. Existing relay RPC routing requires
 no server schema or persistence change.
@@ -225,9 +240,11 @@ page/media/upload effect may finish before cancellation settles; no next message
 or runner startup follows. Accepted messages remain stored with the existing
 stable import IDs, so retry deduplicates them. Cancellation becomes unavailable
 when runner startup begins. Completion still requires the existing metadata
-conversion. Operations are daemon-local: reopening the session recovers status,
-while daemon restart loses the operation record. An authoritative missing record
-clears the UI's active state and allows retry without claiming completion.
+conversion. Operations follow the shared daemon-local retention and recovery
+rules: reopening the session recovers status, while daemon restart loses the
+operation record. An authoritative missing record marks status unavailable and
+settles pending UI work without claiming completion. Retry uses a new request
+identity and the existing importer IDs to preserve accepted history.
 
 ### ACP session-list browse source
 

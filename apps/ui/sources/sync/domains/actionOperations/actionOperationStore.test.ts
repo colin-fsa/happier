@@ -92,6 +92,10 @@ describe('actionOperationStore', () => {
 
         expect(selectAll(store.getState())).toBe(allBefore);
         expect(selectSession(store.getState())).toBe(sessionBefore);
+        const selectAction = createActionOperationSelector({ ...primaryScope, sessionId: 'session-a', actionId: 'session.spawn_new' });
+        const actionBefore = selectAction(store.getState());
+        store.merge({ ...snapshot({ operationId: 'other-action', revision: 1, state: 'running', sessionId: 'session-a' }), actionId: 'session.direct.takeover_persist' });
+        expect(selectAction(store.getState())).toBe(actionBefore);
     });
 
     it('projects unavailable observation separately without corrupting the canonical snapshot', () => {

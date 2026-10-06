@@ -98,6 +98,7 @@ export function createUnavailableActionOperationIdsSelector(accountId: string) {
 
 export function useActionOperations(scope: ActionOperationScope & Readonly<{
     sessionId?: string;
+    actionId?: string;
     states?: readonly ActionOperationStateV1[];
 }>): readonly ActionOperationSnapshotV1[] {
     const statesKey = scope.states?.join('\u0001') ?? '';
@@ -105,6 +106,7 @@ export function useActionOperations(scope: ActionOperationScope & Readonly<{
         scope.accountId,
         scope.machineId,
         scope.sessionId,
+        scope.actionId,
         statesKey,
     ]);
     return React.useSyncExternalStore(

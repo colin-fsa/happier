@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 import { ChatFooter } from './ChatFooter';
+import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 
 (
     globalThis as typeof globalThis & {
@@ -78,7 +79,7 @@ describe('ChatFooter (local control)', () => {
         const screen = await renderFooter({ directControl: {
             machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
             canTakeOverPersist: true, takeoverInFlight: 'persisted',
-            importOperation: { sessionId: 's1', state: 'running', phase: 'importing', importedCount: 42, canCancel: true },
+            importOperation: createActionOperationFixture(),
             onCancelImport,
         } });
         expect(screen.getTextContent()).toContain('chatFooter.directImportImporting');
@@ -94,8 +95,7 @@ describe('ChatFooter (local control)', () => {
         const screen = await renderFooter({ directControl: {
             machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
             canTakeOverPersist: true, takeoverInFlight: 'persisted',
-            importOperation: { sessionId: 's1', state: phase === 'cancelling' ? 'cancelling' : 'running',
-                phase: phase === 'cancelling' ? 'importing' : 'starting', importedCount: 42, canCancel: false },
+            importOperation: createActionOperationFixture({ cancellation: 'unsupported', progress: { kind: 'phase', phase, label: phase } }),
             onCancelImport: vi.fn(),
         } });
         expect(screen.findByTestId('session-chatFooter-stopImport')).toBeNull();
@@ -106,8 +106,8 @@ describe('ChatFooter (local control)', () => {
         const screen = await renderFooter({ directControl: {
             machineOnline: true, runnerActive: true, activity: 'running', canTakeOverDirect: false,
             canTakeOverPersist: true, takeoverInFlight: null,
-            importOperation: { sessionId: 's1', state: 'failed', phase: 'converting', importedCount: 42,
-                canCancel: false, error: 'metadata update failed' },
+            importOperation: createActionOperationFixture({ state: 'failed', settledAt: 110, cancellation: 'unsupported',
+                error: { errorCode: 'failed', error: 'metadata update failed' } }),
             onRequestTakeOverPersist: vi.fn(),
         } });
         expect(screen.findByTestId('session-chatFooter-directControl')).not.toBeNull();
@@ -129,7 +129,7 @@ describe('ChatFooter (local control)', () => {
         const screen = await renderFooter({ directControl: {
             machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
             canTakeOverPersist: true, takeoverInFlight: null,
-            importOperation: { sessionId: 's1', state: 'cancelled', phase: 'importing', importedCount: 42, canCancel: false },
+            importOperation: createActionOperationFixture({ state: 'cancelled', settledAt: 110, cancellation: 'unsupported' }),
             onRequestTakeOverPersist,
         } });
         expect(screen.getTextContent()).toContain('chatFooter.directImportCancelled');

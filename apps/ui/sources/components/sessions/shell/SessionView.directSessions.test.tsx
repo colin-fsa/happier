@@ -8,8 +8,7 @@ import {
   ConnectedServiceQuotaSnapshotV1Schema,
   ProviderAccountUsageSnapshotV1Schema,
   SESSION_RUNNER_RUNTIME_STATE_FIELD_ID,
-  type DirectSessionImportOperation,
-  type DirectSessionImportOperationResponse,
+  type ActionOperationSnapshotV1,
   type ProviderAccountUsageSnapshotV1,
   type SessionRunnerRuntimeStateV1,
 } from '@happier-dev/protocol';
@@ -17,6 +16,8 @@ import type { connectedServiceQuotaRecoveryCreditConsume } from '@/sync/ops/conn
 import type { RestartStaleSessionRunnerResult } from '@/sync/ops/sessionRunnerRestart';
 import type { SessionUsageLimitRecoveryOperationResult } from '@/sync/ops/sessionUsageLimitRecovery';
 
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { createDeferred, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
@@ -44,8 +45,9 @@ const TEST_SESSION_DRAFT_ADDRESS = { kind: 'session' as const, sessionId: 's1' }
 
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
-const machineDirectSessionImportStatusSpy = vi.hoisted(() => vi.fn<() => Promise<DirectSessionImportOperationResponse>>(async () => ({ ok: true, operation: null })));
-const machineDirectSessionTakeoverPersistStartSpy = vi.hoisted(() => vi.fn<() => Promise<DirectSessionImportOperationResponse>>(async () => ({ ok: true, operation: { sessionId: 's1', state: 'completed', phase: 'converting', importedCount: 0, canCancel: false } })));
+const actionOperationRpcSpy = vi.hoisted(() => vi.fn());
+let operationAccountId = '';
+let operationTestIndex = 0;
 const syncRefreshSessionsSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncRefreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async () => {}));
 const syncSubmitMessageSpy = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
@@ -375,6 +377,7 @@ installSessionShellCommonModuleMocks({
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionUsage: () => null,
         useProfile: () => storageState.profile,
+        useActiveServerAccountScope: () => ({ ...TEST_SERVER_ACCOUNT_SCOPE, accountId: operationAccountId }),
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
         useSetting: readSetting,
@@ -651,12 +654,13 @@ vi.mock('@/sync/ops', async (importOriginal) => {
     sessionSwitch: vi.fn(async () => true),
   };
 });
-vi.mock('@/sync/ops/machineDirectSessions', () => ({
+vi.mock('@/sync/ops/machineDirectSessions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/machineDirectSessions')>(),
   machineDirectSessionStatusGet: machineDirectSessionStatusGetSpy,
   machineDirectSessionTakeover: machineDirectSessionTakeoverSpy,
-  machineDirectSessionTakeoverPersistStart: machineDirectSessionTakeoverPersistStartSpy,
-  machineDirectSessionImportStatus: machineDirectSessionImportStatusSpy,
-  machineDirectSessionImportCancel: vi.fn(),
+}));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+  machineRpcWithServerScope: actionOperationRpcSpy,
 }));
 vi.mock('@/sync/ops/sessionUsageLimitRecovery', () => ({
   sessionUsageLimitWaitResumeEnable: (sessionId: string, request?: unknown, opts?: unknown) =>
@@ -1126,8 +1130,9 @@ describe('SessionView (direct sessions)', () => {
     clearWorkspaceReviewCommentDraftsSpy.mockReset();
     setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
     machineDirectSessionTakeoverSpy.mockReset();
-    machineDirectSessionTakeoverPersistStartSpy.mockReset();
-    machineDirectSessionImportStatusSpy.mockReset();
+    operationAccountId = `shell-import-${++operationTestIndex}`;
+    actionOperationRpcSpy.mockReset();
+    actionOperationRpcSpy.mockResolvedValue({ items: [], nextCursor: null });
     syncRefreshSessionsSpy.mockReset();
     machineDirectSessionStatusGetSpy.mockReset();
     showDirectSessionTakeoverDialogSpy.mockReset();
@@ -3029,15 +3034,16 @@ describe('SessionView (direct sessions)', () => {
 
   it.each([
     { terminal: 'failed' as const, refreshFails: false },
-    { terminal: 'completed' as const, refreshFails: true },
-    { terminal: 'completed' as const, refreshFails: false },
+    { terminal: 'succeeded' as const, refreshFails: true },
+    { terminal: 'succeeded' as const, refreshFails: false },
   ])('keeps the same footer through empty conversion to $terminal (refresh fails: $refreshFails)', async ({ terminal, refreshFails }) => {
     storageState.sessions.s1.seq = 0;
     transcriptIdsState.ids = [];
-    const running = { sessionId: 's1', state: 'running', phase: 'converting', importedCount: 0, canCancel: false } satisfies DirectSessionImportOperation;
-    machineDirectSessionTakeoverPersistStartSpy.mockResolvedValue({ ok: true, operation: running });
-    machineDirectSessionImportStatusSpy.mockResolvedValue({ ok: true, operation: running });
+    const running = createActionOperationFixture({ operationId: `import-${operationAccountId}`,
+      scope: { accountId: operationAccountId, machineId: 'machine-1', sessionId: 's1' },
+      cancellation: 'unsupported', progress: { kind: 'phase', phase: 'converting', label: 'Converting' } });
     const screen = await renderSessionViewAndSettle();
+    actionOperationRpcSpy.mockResolvedValue({ ok: true, operation: running });
     await act(async () => { chatListPropsSpy.mock.calls.at(-1)?.[0]?.directControlFooter.onRequestTakeOverPersist(); });
     await flushHookEffects();
     const { storage } = await import('@/sync/domains/state/storage');
@@ -3050,10 +3056,11 @@ describe('SessionView (direct sessions)', () => {
     expect(converting?.importOperation?.state).toBe('running');
     expect(converting?.onRequestTakeOverDirect).toBeUndefined();
     expect(converting?.onRequestTakeOverPersist).toBeUndefined();
-    machineDirectSessionImportStatusSpy.mockResolvedValue({ ok: true, operation: { ...running, state: terminal,
-      ...(terminal === 'failed' ? { error: 'conversion failed' } : {}) } });
+    const settled = { ...running, revision: 2, state: terminal, settledAt: 110,
+      ...(terminal === 'failed' ? { error: { errorCode: 'failed', error: 'conversion failed' } } : {}) } satisfies ActionOperationSnapshotV1;
     if (refreshFails) syncRefreshSessionsSpy.mockRejectedValueOnce(new Error('refresh disconnected'));
-    await act(async () => { await converting.onRefreshImport(); });
+    await act(async () => { actionOperationStore.merge(settled); });
+    actionOperationRpcSpy.mockResolvedValue({ kind: 'found', operation: settled });
     if (terminal === 'failed' || refreshFails) {
       const recovered = chatListPropsSpy.mock.calls.at(-1)?.[0]?.directControlFooter;
       expect(recovered?.importOperation?.state).toBe(terminal);
@@ -4037,7 +4044,7 @@ describe('SessionView (direct sessions)', () => {
     });
 
     expect(machineDirectSessionTakeoverSpy).not.toHaveBeenCalled();
-    expect(machineDirectSessionTakeoverPersistStartSpy).not.toHaveBeenCalled();
+    expect(actionOperationRpcSpy.mock.calls.some(([request]) => request.method === 'daemon.directSessions.takeoverPersist.start')).toBe(false);
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
 
     agentInput = findAgentInput(screen);
@@ -4080,6 +4087,11 @@ describe('SessionView (direct sessions)', () => {
     });
     const screen = await renderSessionView();
 
+    actionOperationRpcSpy.mockResolvedValue({ ok: true, operation: createActionOperationFixture({
+      operationId: `send-import-${operationAccountId}`,
+      scope: { accountId: operationAccountId, machineId: 'machine-1', sessionId: 's1' },
+      state: 'succeeded', settledAt: 110, cancellation: 'unsupported', result: { ok: true, converted: true },
+    }) });
     const agentInput = findAgentInput(screen);
     await act(async () => {
       agentInput.props.onChangeText('persist this');
@@ -4089,11 +4101,10 @@ describe('SessionView (direct sessions)', () => {
       await agentInput.props.onSend();
     });
 
-    expect(machineDirectSessionTakeoverPersistStartSpy).toHaveBeenCalledWith({
-      machineId: 'machine-1',
-      sessionId: 's1',
-      forceStop: true,
-    }, { serverId: 'server-1' });
+    expect(actionOperationRpcSpy).toHaveBeenCalledWith(expect.objectContaining({
+      method: 'daemon.directSessions.takeoverPersist.start', serverId: 'server-1',
+      payload: expect.objectContaining({ machineId: 'machine-1', sessionId: 's1', forceStop: true, requestId: expect.any(String) }),
+    }));
     expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
       's1',
       'persist this',

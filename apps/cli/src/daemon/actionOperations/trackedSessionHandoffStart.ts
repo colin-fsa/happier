@@ -33,36 +33,12 @@ export function createTrackedSessionHandoffStart(params: Readonly<{
   ) => Promise<ActionExecuteResult | Readonly<{ kind: 'cancelled' }>>;
 }>) {
   type Result = ActionExecuteResult | Readonly<{ kind: 'cancelled' }>;
-  type Attempt = {
-    receipt: Promise<unknown>;
-    receiptSettled: boolean;
-    resolveReceipt: (value: unknown) => void;
-    rejectReceipt: (error: unknown) => void;
-    coordinate: Promise<Result> | null;
-  };
-  const attempts = new Map<string, Attempt>();
-
   return async (raw: unknown): Promise<unknown> => {
     const parsed = SessionHandoffStartRequestSchema.safeParse(raw);
     if (!parsed.success || !parsed.data.requestId) return await params.startUntracked(raw as SessionHandoffStartRequest);
     const request = parsed.data;
     const scope = await params.getScope();
-    const key = JSON.stringify([scope.accountId, scope.machineId, request.requestId]);
-    let resolveReceipt!: (value: unknown) => void;
-    let rejectReceipt!: (error: unknown) => void;
-    const receipt = new Promise<unknown>((resolve, reject) => {
-      resolveReceipt = resolve;
-      rejectReceipt = reject;
-    });
-    const attempt = attempts.get(key) ?? {
-      receipt,
-      receiptSettled: false,
-      resolveReceipt,
-      rejectReceipt,
-      coordinate: null,
-    };
-    attempts.set(key, attempt);
-    const execution = params.runner.executeHistorical<Result>({
+    const started = params.runner.startHistorical<Result, unknown>({
       request: {
         actionId: 'session.handoff',
         input: request,
@@ -74,31 +50,17 @@ export function createTrackedSessionHandoffStart(params: Readonly<{
       cancellation: 'supported',
       scopeSessionId: request.sessionId,
       execute: async (context) => {
-        if (!attempt.coordinate) {
-          attempt.coordinate = params.coordinate(request, context, async (startRequest) => {
-            const response = await params.startUntracked(startRequest, {
-              onProgress: (progress) => context.update({ progress }),
-            });
-            if (!attempt.receiptSettled) {
-              attempt.receiptSettled = true;
-              attempt.resolveReceipt(response);
-            }
-            return response;
+        return await params.coordinate(request, context, async (startRequest) => {
+          const response = await params.startUntracked(startRequest, {
+            onProgress: (progress) => context.update({ progress }),
           });
-        }
-        return await attempt.coordinate;
+          context.acknowledge(response);
+          return response;
+        });
       },
       projectResult: (result) => result,
     });
-    void execution.then((result) => {
-      if (attempt.receiptSettled) return;
-      attempt.receiptSettled = true;
-      attempt.resolveReceipt(result);
-    }, (error) => {
-      if (attempt.receiptSettled) return;
-      attempt.receiptSettled = true;
-      attempt.rejectReceipt(error);
-    });
-    return await attempt.receipt;
+    if (started.kind === 'conflict') throw new Error('Action operation conflicts with an active action');
+    return await started.receipt;
   };
 }

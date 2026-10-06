@@ -8,7 +8,10 @@ import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { DirectSessionImportOperationResponseSchema } from '@happier-dev/protocol';
+import { ActionOperationSnapshotV1Schema, ACTION_OPERATION_RPC_METHODS_V1, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { registerActionOperationRpcHandlers } from '@/daemon/actionOperations/actionOperationRpcHandlers';
 
 // Credential storage and network are the system boundaries; provider paging, importing,
 // encryption, spawn-option resolution and the operation lifecycle remain real.
@@ -66,14 +69,26 @@ describe('direct-session import operation', () => {
       handlers.set(method, handler as (input: unknown) => Promise<unknown>); } };
     spawnSession.mockReset();
     spawnSession.mockResolvedValue({ type: 'success', sessionId: 's1' });
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession: async () => true });
+    const store = createActionOperationStore();
+    const runner = createActionOperationRunner({ store });
+    const getScope = async () => ({ accountId: 'a1', machineId: 'm1' });
+    registerActionOperationRpcHandlers({ rpcHandlerManager, store, runner, getScope });
+    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession: async () => true, actionOperations: { runner, getScope } });
   });
   afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await removeTempDir(root); });
 
-  async function call(method: string) {
-    const handler = handlers.get(method);
-    expect(handler, `registered ${method}`).toBeDefined();
-    return DirectSessionImportOperationResponseSchema.parse(await handler!(input));
+  let operation: ActionOperationSnapshotV1;
+  async function start() {
+    const result = await handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START)!(input);
+    expect(result).toMatchObject({ ok: true });
+    operation = ActionOperationSnapshotV1Schema.parse((result as { operation: unknown }).operation);
+    return operation;
+  }
+  async function get() {
+    return handlers.get(ACTION_OPERATION_RPC_METHODS_V1.get)!({ operationId: operation.operationId });
+  }
+  async function cancel() {
+    return handlers.get(ACTION_OPERATION_RPC_METHODS_V1.cancel)!({ operationId: operation.operationId });
   }
 
   it('keeps malformed-request errors distinct from takeover conflicts', async () => {
@@ -92,22 +107,22 @@ describe('direct-session import operation', () => {
       if (localIds.length === 1) await firstPending;
       return { status: 200, data: { didWrite: true, message: { id: 'msg1', seq: 1, createdAt: 1, localId } } };
     });
-    await call(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START);
+    await start();
     await waitFor(() => expect(post).toHaveBeenCalled());
-    await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL);
+    await cancel();
     releaseFirst();
-    await waitFor(async () => expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS))
-      .toMatchObject({ ok: true, operation: { state: 'cancelled' } }));
+    await waitFor(async () => expect(await get())
+      .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } }));
     let releaseSpawn!: () => void;
     const spawnPending = new Promise<void>(resolve => { releaseSpawn = resolve; });
     spawnSession.mockImplementationOnce(async () => { await spawnPending; return { type: 'success', sessionId: 's1' }; });
-    await call(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START);
+    await start();
     await waitFor(() => expect(spawnSession).toHaveBeenCalled());
-    expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL))
-      .toMatchObject({ ok: true, operation: { state: 'running', phase: 'starting', canCancel: false, importedCount: 2, totalCount: 2 } });
+    expect(await cancel())
+      .toMatchObject({ kind: 'unsupported' });
     releaseSpawn();
-    await waitFor(async () => expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS))
-      .toMatchObject({ ok: true, operation: { state: 'completed', importedCount: 2 } }));
+    await waitFor(async () => expect(await get())
+      .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } }));
     expect(JSON.parse(session.metadata)).not.toHaveProperty('directSessionV1');
     expect(JSON.parse(session.metadata)).toHaveProperty('externalHistoryImportV1');
     expect(localIds).toHaveLength(3);
@@ -122,17 +137,17 @@ describe('direct-session import operation', () => {
       await pending;
       return { status: 200, data: { didWrite: true, message: { id: 'msg1', seq: 1, createdAt: 1, localId: 'local1' } } };
     });
-    await call(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START);
+    await start();
     await waitFor(() => expect(post).toHaveBeenCalled());
     try {
       const result = await handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER)!(input);
       expect(result).toMatchObject({ ok: false, error: 'direct_session_import_in_progress' });
       expect(spawnSession).not.toHaveBeenCalled();
     } finally {
-      await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL);
+      await cancel();
       releaseWrite();
-      await waitFor(async () => expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS))
-        .toMatchObject({ ok: true, operation: { state: 'cancelled' } }));
+      await waitFor(async () => expect(await get())
+        .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } }));
     }
   });
 
@@ -143,18 +158,53 @@ describe('direct-session import operation', () => {
       await writePending;
       return { status: 200, data: { didWrite: true, message: { id: 'msg1', seq: 1, createdAt: 1, localId: 'local1' } } };
     });
-    const started = await call(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START);
-    expect(started).toMatchObject({ ok: true, operation: { state: 'running', canCancel: true } });
+    const started = await start();
+    expect(started).toMatchObject({ state: 'running', cancellation: 'supported', scope: { sessionId: 's1' } });
     await waitFor(() => expect(post).toHaveBeenCalled());
-    expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START))
-      .toMatchObject({ ok: true, operation: { state: 'running', phase: 'importing', totalCount: 2 } });
-    expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_CANCEL))
-      .toMatchObject({ ok: true, operation: { state: 'cancelling', canCancel: false } });
+    expect(await start())
+      .toMatchObject({ state: 'running', progress: { kind: 'determinate', total: 2 } });
+    expect(await cancel())
+      .toMatchObject({ kind: 'requested' });
     releaseWrite();
-    await waitFor(async () => expect(await call(RPC_METHODS.DAEMON_DIRECT_SESSION_IMPORT_STATUS))
-      .toMatchObject({ ok: true, operation: { state: 'cancelled', importedCount: 1 } }));
+    await waitFor(async () => expect(await get())
+      .toMatchObject({ kind: 'found', operation: { state: 'cancelled' } }));
     expect(post).toHaveBeenCalledTimes(1);
     expect(spawnSession).not.toHaveBeenCalled();
+    expect(await handlers.get(ACTION_OPERATION_RPC_METHODS_V1.list)!({ sessionId: 's1' })).toMatchObject({ items: [{ operationId: operation.operationId, state: 'cancelled' }] });
     expect(JSON.parse(session.metadata)).toHaveProperty('directSessionV1');
   });
+  it('keeps the released synchronous import as a completion adapter to the listed attempt', async () => {
+    let releaseWrite!: () => void;
+    const pending = new Promise<void>(resolve => { releaseWrite = resolve; });
+    const writes = vi.spyOn(axios, 'post').mockImplementation(async () => {
+      await pending;
+      return { status: 200, data: { didWrite: true, message: { id: 'm1', seq: 1, createdAt: 1, localId: 'l1' } } };
+    });
+    const first = await start();
+    await waitFor(() => expect(writes).toHaveBeenCalled());
+    const historical = handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST)!(input);
+    const joined = await start();
+    expect(joined.operationId).toBe(first.operationId);
+    expect(await handlers.get(ACTION_OPERATION_RPC_METHODS_V1.list)!({ sessionId: 's1' })).toMatchObject({ items: [{ operationId: first.operationId }] });
+    releaseWrite();
+    expect(await historical).toEqual({ ok: true, converted: true });
+    expect(await get()).toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { ok: true, converted: true } } });
+    expect(writes).toHaveBeenCalledTimes(2);
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('excludes persisted import while direct takeover owns runner startup', async () => {
+    let releaseSpawn!: () => void;
+    const pending = new Promise<void>(resolve => { releaseSpawn = resolve; });
+    spawnSession.mockImplementationOnce(async () => { await pending; return { type: 'success', sessionId: 's1' }; });
+    const direct = handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER)!(input);
+    await waitFor(() => expect(spawnSession).toHaveBeenCalled());
+    const joined = handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER)!(input);
+    expect(await handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START)!(input)).toMatchObject({ ok: false, error: 'direct_session_takeover_in_progress' });
+    releaseSpawn();
+    expect(await direct).toEqual({ ok: true });
+    expect(await joined).toEqual({ ok: true });
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
 });

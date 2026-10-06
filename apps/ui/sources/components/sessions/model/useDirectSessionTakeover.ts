@@ -1,15 +1,20 @@
 import * as React from 'react';
-import type { DirectSessionImportOperation } from '@happier-dev/protocol';
+import { DIRECT_SESSION_TAKEOVER_ACTION_IDS, type ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 
 import { showDirectSessionTakeoverDialog } from '@/components/sessions/directSessions/takeover/showDirectSessionTakeoverDialog';
 import { Modal } from '@/modal';
 import type { UseDirectSessionRuntimeResult } from '@/components/sessions/model/useDirectSessionRuntime';
-import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersistStart, machineDirectSessionImportStatus, machineDirectSessionImportCancel } from '@/sync/ops/machineDirectSessions';
+import { machineDirectSessionTakeover, machineDirectSessionTakeoverPersistStart } from '@/sync/ops/machineDirectSessions';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@/sync/runtime/rpcErrors';
+import { getActionOperation, cancelActionOperation } from '@/sync/ops/actionOperations';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { isActionOperationCancellationRequested, selectActionOperationObservationForOperation, selectActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { useActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
+import { reconcileActionOperationsOnce } from '@/sync/domains/actionOperations/actionOperationRuntime';
+import { randomUUID } from '@/platform/randomUUID';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
-import { isHostVisible, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 
 type DirectTakeoverMode = 'direct' | 'persisted';
 
@@ -21,7 +26,7 @@ type UseDirectSessionTakeoverParams = Readonly<{
 
 type UseDirectSessionTakeoverResult = Readonly<{
     takeoverInFlight: DirectTakeoverMode | null;
-    importOperation: DirectSessionImportOperation | null;
+    importOperation: ActionOperationSnapshotV1 | null;
     importStatusError: string | null;
     cancelImport: () => Promise<void>;
     refreshImport: () => Promise<void>;
@@ -29,48 +34,43 @@ type UseDirectSessionTakeoverResult = Readonly<{
     ensureReadyForSend: () => Promise<boolean>;
 }>;
 
-function isImportActive(operation: DirectSessionImportOperation | null): boolean {
-    return operation?.state === 'running' || operation?.state === 'cancelling';
-}
+const IMPORT_ACTION_ID = DIRECT_SESSION_TAKEOVER_ACTION_IDS.persisted;
 
-function areOperationsEqual(left: DirectSessionImportOperation | null, right: DirectSessionImportOperation | null): boolean {
-    if (left === right) return true;
-    if (!left || !right) return false;
-    return left.sessionId === right.sessionId && left.state === right.state && left.phase === right.phase
-        && left.importedCount === right.importedCount && left.totalCount === right.totalCount
-        && left.canCancel === right.canCancel && left.error === right.error;
+function isImportActive(operation: ActionOperationSnapshotV1 | null): boolean {
+    return operation?.state === 'accepted' || operation?.state === 'running';
 }
 
 export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams): UseDirectSessionTakeoverResult {
     const [requestInFlight, setRequestInFlight] = React.useState<DirectTakeoverMode | null>(null);
-    const [importOperation, setImportOperation] = React.useState<DirectSessionImportOperation | null>(null);
     const [importStatusError, setImportStatusError] = React.useState<string | null>(null);
-    const operationRef = React.useRef<DirectSessionImportOperation | null>(null);
-    const importAddressRef = React.useRef<{ sessionId: string; machineId: string } | null>(null);
+    const operationRef = React.useRef<ActionOperationSnapshotV1 | null>(null);
+    const importAddressRef = React.useRef<{ owner: string; machineId: string } | null>(null);
+    const accountScope = useActiveServerAccountScope();
+    const accountId = accountScope?.accountId ?? '';
+    const owner = JSON.stringify([accountId, params.sessionId]);
     const requestInFlightRef = React.useRef(false);
     const statusInFlightRef = React.useRef<Promise<void> | null>(null);
-    const terminalHandledRef = React.useRef(false);
+    const terminalHandledRef = React.useRef<string | null>(null);
+    const terminalRefreshPromiseRef = React.useRef<Promise<boolean> | null>(null);
     const terminalRefreshingRef = React.useRef(false);
     const pendingImportRef = React.useRef<((ready: boolean) => void) | null>(null);
     const currentParamsRef = React.useRef(params);
     currentParamsRef.current = params;
     // Conversion removes the direct link before the daemon publishes its terminal snapshot.
-    const machineId = importAddressRef.current?.sessionId === params.sessionId
+    const machineId = importAddressRef.current?.owner === owner
         ? importAddressRef.current.machineId
         : params.directSessionRuntime.directSessionLink?.machineId;
-    const owner = params.sessionId;
     const mountedOwnerRef = React.useRef<string | null>(owner);
 
     React.useEffect(() => {
         mountedOwnerRef.current = owner;
-        operationRef.current = null;
         importAddressRef.current = null;
-        terminalHandledRef.current = false;
+        terminalHandledRef.current = null;
+        terminalRefreshPromiseRef.current = null;
         terminalRefreshingRef.current = false;
         requestInFlightRef.current = false;
         statusInFlightRef.current = null;
         setRequestInFlight(null);
-        setImportOperation(null);
         setImportStatusError(null);
         return () => {
             mountedOwnerRef.current = null;
@@ -79,131 +79,118 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         };
     }, [owner]);
 
-    const acceptOperation = React.useCallback(async (operation: DirectSessionImportOperation | null) => {
-        if (mountedOwnerRef.current !== owner) return;
-        const previous = operationRef.current;
-        if (operation && machineId && importAddressRef.current?.sessionId !== params.sessionId) {
-            importAddressRef.current = { sessionId: params.sessionId, machineId };
-        }
-        if (!areOperationsEqual(previous, operation)) {
-            operationRef.current = operation;
-            setImportOperation(operation);
-        }
-        if (!operation && isImportActive(previous)) {
-            importAddressRef.current = null;
-            setImportStatusError(t('chatFooter.directImportStatusUnavailable'));
-            pendingImportRef.current?.(false);
-            pendingImportRef.current = null;
-        } else if (operation) {
-            setImportStatusError(null);
-        }
-        if (!operation || isImportActive(operation)) {
-            terminalHandledRef.current = false;
-            return;
-        }
-        if (terminalHandledRef.current) return;
-        terminalHandledRef.current = true;
+    const operations = useActionOperations({ accountId, machineId: machineId ?? '', sessionId: params.sessionId, actionId: IMPORT_ACTION_ID });
+    const importOperation = React.useMemo(() => operations.reduce<ActionOperationSnapshotV1 | null>((latest, operation) =>
+        latest && latest.createdAt > operation.createdAt ? latest : operation, null), [operations]);
+    operationRef.current = importOperation;
+    const observation = React.useSyncExternalStore(actionOperationStore.subscribe, () => {
+        const state = actionOperationStore.getState();
+        return importOperation ? selectActionOperationObservationForOperation(state, importOperation)
+            : selectActionOperationObservation(state, { accountId, machineId: machineId ?? '' });
+    });
+    const activeImport = isImportActive(importOperation) && observation === 'available';
+    const observationError = observation === 'available' ? null : t('chatFooter.directImportStatusUnavailable');
+
+    const refreshTerminalProjection = React.useCallback((operation: ActionOperationSnapshotV1): Promise<boolean> => {
+        if (mountedOwnerRef.current !== owner || operationRef.current?.operationId !== operation.operationId
+            || isImportActive(operation)) return Promise.resolve(false);
+        if (terminalHandledRef.current === operation.operationId) return terminalRefreshPromiseRef.current ?? Promise.resolve(false);
+        terminalHandledRef.current = operation.operationId;
         terminalRefreshingRef.current = true;
         const pendingImport = pendingImportRef.current;
         setRequestInFlight('persisted');
-        let refreshed = false;
-        try {
-            await Promise.all([
-                currentParamsRef.current.directSessionRuntime.refreshNow(),
-                sync.refreshSessionMessages(params.sessionId),
-                sync.refreshSessions(),
-            ]);
-            refreshed = true;
-        } catch (error) {
-            if (mountedOwnerRef.current === owner) {
-                terminalHandledRef.current = false;
-                setImportStatusError(error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
-            }
-        } finally {
-            if (mountedOwnerRef.current === owner) {
-                if (pendingImportRef.current === pendingImport) {
-                    pendingImport?.(refreshed && operation.state === 'completed');
-                    pendingImportRef.current = null;
+        const refresh = (async () => {
+            let refreshed = false;
+            try {
+                await Promise.all([
+                    currentParamsRef.current.directSessionRuntime.refreshNow(),
+                    sync.refreshSessionMessages(params.sessionId),
+                    sync.refreshSessions(),
+                ]);
+                refreshed = true;
+                if (mountedOwnerRef.current === owner) setImportStatusError(null);
+            } catch (error) {
+                if (mountedOwnerRef.current === owner) {
+                    terminalHandledRef.current = null;
+                    setImportStatusError(error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
                 }
-                terminalRefreshingRef.current = false;
-                if (refreshed) importAddressRef.current = null;
-                setRequestInFlight(null);
+            } finally {
+                if (mountedOwnerRef.current === owner) {
+                    if (pendingImportRef.current === pendingImport) {
+                        pendingImport?.(refreshed && operation.state === 'succeeded');
+                        pendingImportRef.current = null;
+                    }
+                    terminalRefreshingRef.current = false;
+                    if (refreshed) importAddressRef.current = null;
+                    setRequestInFlight(null);
+                }
             }
+            return mountedOwnerRef.current === owner && refreshed && operation.state === 'succeeded';
+        })();
+        terminalRefreshPromiseRef.current = refresh;
+        return refresh;
+    }, [owner, params.sessionId]);
+
+    React.useEffect(() => {
+        if (!importOperation) return;
+        importAddressRef.current = { owner, machineId: importOperation.scope.machineId };
+        if (observation !== 'available') {
+            pendingImportRef.current?.(false);
+            pendingImportRef.current = null;
+            return;
         }
-    }, [machineId, owner, params.sessionId]);
+        if (!isImportActive(importOperation)) void refreshTerminalProjection(importOperation);
+    }, [importOperation, observation, owner, refreshTerminalProjection]);
 
     const refreshImport = React.useCallback(async () => {
-        if (!machineId || mountedOwnerRef.current !== owner) return;
+        if (!accountId || !machineId || mountedOwnerRef.current !== owner) return;
         if (statusInFlightRef.current) return statusInFlightRef.current;
-        const previous = operationRef.current;
         const refresh = (async () => {
+            const operation = operationRef.current;
             try {
-                const result = await machineDirectSessionImportStatus({ machineId, sessionId: params.sessionId }, {
-                    serverId: resolvePreferredServerIdForSessionId(params.sessionId),
-                });
-                if (mountedOwnerRef.current !== owner || operationRef.current !== previous) return;
-                if (!result.ok) {
-                    setImportStatusError(result.error);
-                    return;
+                const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
+                if (operation) {
+                    const result = await getActionOperation({ machineId: operation.scope.machineId, operationId: operation.operationId, serverId });
+                    if (mountedOwnerRef.current !== owner) return;
+                    if (result.kind === 'not_found') { actionOperationStore.markUnavailable(operation.operationId); return; }
+                    actionOperationStore.mergeFullSnapshot(result.operation);
+                    const latest = actionOperationStore.getState().operationsById.get(result.operation.operationId);
+                    if (!latest || operationRef.current?.operationId !== latest.operationId) return;
+                    actionOperationStore.setObservation(latest.scope, 'available');
+                    if (isImportActive(latest)) setImportStatusError(null);
+                    else await refreshTerminalProjection(latest);
+                } else {
+                    await reconcileActionOperationsOnce({ scope: { accountId, machineId, serverId }, shouldContinue: () => mountedOwnerRef.current === owner });
+                    if (mountedOwnerRef.current === owner) setImportStatusError(null);
                 }
-                await acceptOperation(result.operation);
             } catch (error) {
-                if (mountedOwnerRef.current !== owner) return;
-                // Older daemons have no operation to observe. Starting an import reports the upgrade requirement.
-                if (!operationRef.current && (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error))) return;
-                setImportStatusError(error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
+                if (mountedOwnerRef.current === owner && (!operation || operationRef.current?.operationId === operation.operationId)) {
+                    actionOperationStore.setObservation({ accountId, machineId }, 'status_unavailable');
+                    setImportStatusError(error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
+                }
             }
         })();
         statusInFlightRef.current = refresh;
-        try { await refresh; } finally {
-            if (statusInFlightRef.current === refresh) statusInFlightRef.current = null;
-        }
-    }, [acceptOperation, machineId, owner, params.sessionId]);
+        try { await refresh; } finally { if (statusInFlightRef.current === refresh) statusInFlightRef.current = null; }
+    }, [accountId, machineId, owner, params.sessionId, refreshTerminalProjection]);
 
-    const activeImport = isImportActive(importOperation);
+    // Recover once on entry; the shared runtime owns connection reconciliation and live revisions.
     React.useEffect(() => {
-        if (!machineId) return;
-        let stopped = false;
-        let timer: ReturnType<typeof setTimeout> | null = null;
-        let polling = false;
-        const poll = async () => {
-            if (stopped || polling || !isHostVisible()) return;
-            if (operationRef.current && !isImportActive(operationRef.current)) return;
-            polling = true;
-            await refreshImport();
-            polling = false;
-            if (stopped || !isHostVisible() || !isImportActive(operationRef.current)) return;
-            // Presentation cadence; requests retain the transport's own deadline, with no deadline on the import.
-            timer = setTimeout(() => { timer = null; void poll(); }, 2_000);
-        };
-        const onVisibilityChange = () => {
-            if (timer !== null) { clearTimeout(timer); timer = null; }
-            if (isHostVisible()) void poll();
-        };
-        const unsubscribe = subscribeToRuntimeActiveChange(onVisibilityChange);
-        void poll();
-        return () => {
-            stopped = true;
-            if (timer !== null) clearTimeout(timer);
-            unsubscribe();
-        };
-    }, [activeImport, machineId, refreshImport]);
+        if (!accountId || !machineId || operationRef.current) return;
+        void refreshImport();
+    }, [accountId, machineId, owner, refreshImport]);
 
     const cancelImport = React.useCallback(async () => {
-        if (!params.hasWriteAccess || !machineId || operationRef.current?.canCancel !== true) return;
+        const operation = operationRef.current;
+        if (!params.hasWriteAccess || !operation || !isImportActive(operation) || operation.cancellation !== 'supported' || isActionOperationCancellationRequested(operation)) return;
         try {
-            const result = await machineDirectSessionImportCancel({ machineId, sessionId: params.sessionId }, {
-                serverId: resolvePreferredServerIdForSessionId(params.sessionId),
-            });
-            if (mountedOwnerRef.current !== owner) return;
-            if (!result.ok) { setImportStatusError(result.error); return; }
-            await acceptOperation(result.operation);
+            const result = await cancelActionOperation({ machineId: operation.scope.machineId, operationId: operation.operationId,
+                serverId: resolvePreferredServerIdForSessionId(params.sessionId) });
+            if (result.kind !== 'requested' && result.kind !== 'already_settled') throw new Error(t('inbox.actionOperations.stopFailed'));
         } catch (error) {
-            if (mountedOwnerRef.current === owner) {
-                setImportStatusError(error instanceof Error ? error.message : t('errors.failedToSwitchControl'));
-            }
+            if (mountedOwnerRef.current === owner) setImportStatusError(error instanceof Error ? error.message : t('inbox.actionOperations.stopFailed'));
         }
-    }, [acceptOperation, machineId, owner, params.hasWriteAccess, params.sessionId]);
+    }, [owner, params.hasWriteAccess, params.sessionId]);
 
     const readLatestStatus = React.useCallback(async () => {
         return await currentParamsRef.current.directSessionRuntime.refreshNow();
@@ -217,7 +204,8 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return false;
         }
-        if (!machineId || requestInFlightRef.current || terminalRefreshingRef.current || isImportActive(operationRef.current)) return false;
+        if (!machineId || (mode === 'persisted' && !accountId) || requestInFlightRef.current || terminalRefreshingRef.current
+            || (isImportActive(operationRef.current) && observation === 'available')) return false;
         requestInFlightRef.current = true;
         setRequestInFlight(mode);
         try {
@@ -242,14 +230,20 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
             const request = { machineId, sessionId: params.sessionId, ...(forceStop ? { forceStop: true } : {}) };
             const serverId = resolvePreferredServerIdForSessionId(params.sessionId);
             if (mode === 'persisted') {
-                terminalHandledRef.current = false;
+                terminalHandledRef.current = null;
+                const requestId = randomUUID();
                 let result;
                 try {
-                    result = await machineDirectSessionTakeoverPersistStart(request, { serverId });
+                    result = await machineDirectSessionTakeoverPersistStart({ ...request, requestId }, { serverId });
                 } catch (error) {
                     // A lost start acknowledgement does not prove that the daemon failed to start.
-                    result = await machineDirectSessionImportStatus({ machineId, sessionId: params.sessionId }, { serverId });
-                    if (result.ok && !result.operation) throw error;
+                    await reconcileActionOperationsOnce({ scope: { accountId, machineId, serverId }, shouldContinue: () => mountedOwnerRef.current === owner });
+                    const recovered = Array.from(actionOperationStore.getState().operationsById.values()).find(operation =>
+                        operation.actionId === IMPORT_ACTION_ID && operation.scope.accountId === accountId
+                        && operation.scope.machineId === machineId && operation.scope.sessionId === params.sessionId
+                        && (operation.requestId === requestId || isImportActive(operation)));
+                    if (!recovered) throw error;
+                    result = { ok: true as const, operation: recovered };
                 }
                 if (mountedOwnerRef.current !== owner) return false;
                 if (!result.ok) {
@@ -258,9 +252,12 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
                     return false;
                 }
                 if (!result.operation) throw new Error(t('chatFooter.directImportStatusUnavailable'));
-                const ready = new Promise<boolean>((resolve) => { pendingImportRef.current = resolve; });
-                await acceptOperation(result.operation);
-                return await ready;
+                importAddressRef.current = { owner, machineId: result.operation.scope.machineId };
+                actionOperationStore.mergeFullSnapshot(result.operation);
+                const latest = actionOperationStore.getState().operationsById.get(result.operation.operationId) ?? result.operation;
+                operationRef.current = latest;
+                if (!isImportActive(latest)) return await refreshTerminalProjection(latest);
+                return await new Promise<boolean>((resolve) => { pendingImportRef.current = resolve; });
             }
             const result = await machineDirectSessionTakeover(request, { serverId });
             if (!result.ok) { Modal.alert(t('common.error'), result.error); return false; }
@@ -277,10 +274,10 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
                 if (!terminalRefreshingRef.current) setRequestInFlight(null);
             }
         }
-    }, [acceptOperation, machineId, owner, params.hasWriteAccess, params.sessionId, readLatestStatus]);
+    }, [accountId, machineId, observation, owner, params.hasWriteAccess, params.sessionId, readLatestStatus, refreshTerminalProjection]);
 
     const ensureReadyForSend = React.useCallback(async (): Promise<boolean> => {
-        if (requestInFlightRef.current || terminalRefreshingRef.current || isImportActive(operationRef.current)) return false;
+        if (requestInFlightRef.current || terminalRefreshingRef.current || (isImportActive(operationRef.current) && observation === 'available')) return false;
         if (!currentParamsRef.current.directSessionRuntime.directSessionLink) return true;
         const latestStatus = await readLatestStatus();
         if (!latestStatus || latestStatus.runnerActive) return true;
@@ -295,10 +292,10 @@ export function useDirectSessionTakeover(params: UseDirectSessionTakeoverParams)
         });
         if (!resolution.action) return false;
         return requestTakeover(resolution.action, { forceStop: resolution.forceStop, promptForForceStop: false });
-    }, [readLatestStatus, requestTakeover]);
+    }, [observation, readLatestStatus, requestTakeover]);
 
     return React.useMemo(() => ({
         takeoverInFlight: activeImport ? 'persisted' : requestInFlight,
-        importOperation, importStatusError, cancelImport, refreshImport, requestTakeover, ensureReadyForSend,
-    }), [activeImport, requestInFlight, importOperation, importStatusError, cancelImport, refreshImport, requestTakeover, ensureReadyForSend]);
+        importOperation, importStatusError: importStatusError ?? observationError, cancelImport, refreshImport, requestTakeover, ensureReadyForSend,
+    }), [activeImport, requestInFlight, importOperation, importStatusError, observationError, cancelImport, refreshImport, requestTakeover, ensureReadyForSend]);
 }
