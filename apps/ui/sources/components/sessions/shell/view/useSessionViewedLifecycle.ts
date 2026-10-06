@@ -12,6 +12,7 @@ import {
     shouldSuppressAutomaticMarkViewed,
 } from '@/sync/domains/session/readState/sessionManualUnreadHold';
 import { sync } from '@/sync/sync';
+import { beginSessionReminderViewing } from '@/sync/ops/sessionOrganization/sessionReminderViewing';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 
@@ -84,6 +85,7 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
         const activationId = beginSessionViewingActivation(input.sessionId);
         viewingActivationIdRef.current = activationId;
         setActiveViewingSessionId(input.sessionId, activationId, input.serverId);
+        const endReminderViewing = beginSessionReminderViewing(input.sessionId, { serverId: input.serverId });
 
         const initialVisibleSeq = visibleReadSeqRef.current;
         activeViewingSeqRef.current = {
@@ -100,6 +102,7 @@ export function useSessionViewedLifecycle(input: UseSessionViewedLifecycleInput)
 
         return () => {
             isFocusedRef.current = false;
+            endReminderViewing();
             cancelInitialMark();
             clearDelayedMark();
 

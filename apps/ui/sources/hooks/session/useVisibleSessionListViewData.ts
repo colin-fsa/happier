@@ -289,10 +289,11 @@ function collectRetainedAttentionPlacements(params: Readonly<{
     for (const item of params.previousVisible) {
         if (item.type !== 'session') continue;
         if (item.groupKind !== 'attention' && !item.attentionPromotionReason) continue;
-        // Standing is the user's own instruction, so removing it must take
+        // Lasting standing is the user's own instruction, so removing it must take
         // effect immediately. Retention exists to stop a row the user is
         // READING from sliding away under them; retaining a standing row would
-        // instead pin it in the band until they navigate elsewhere.
+        // instead pin it in the band until they navigate elsewhere. Due reminders
+        // have their own reason and retain placement just like read acknowledgement.
         if (item.attentionPromotionReason === 'standing') continue;
         if (item.session.id !== activeSessionId) continue;
         const key = buildSessionListSessionKey(item);

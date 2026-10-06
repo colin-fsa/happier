@@ -96,6 +96,7 @@ export type SessionOrganizationDomain = {
     reconcileSessionOrganizationTagDelete: (serverId: string, tagId: string) => void;
     rollbackSessionOrganizationOptimistic: (recordId: string) => void;
     commitSessionOrganizationOptimistic: (recordId: string) => void;
+    confirmSessionAttentionStandingOptimistic: (recordId: string, sessionId: string, standing: SessionAttentionStanding | null) => void;
     clearSessionOrganizationForServer: (serverId: string) => void;
     applySessionFolderAssignments: (serverId: string, assignments: readonly SessionFolderAssignment[]) => void;
     setSessionFolderAssignmentsLoading: (serverId: string, loading: boolean) => void;
@@ -394,13 +395,47 @@ function applyRecordDelta<T>(
     return next;
 }
 
+function rebaseAttentionStandingSnapshots(
+    records: Record<string, SessionOrganizationOptimisticRecord>,
+    settled: SessionOrganizationOptimisticRecord,
+    key: string,
+    value: SessionAttentionStanding | undefined,
+): void {
+    const map = 'sessionOrganizationAttentionStandingsBySessionKey';
+    for (const [id, record] of Object.entries(records)) {
+        if (readOptimisticRecordSequence(record) <= readOptimisticRecordSequence(settled)) continue;
+        const before = record.before[map];
+        const after = record.after[map];
+        if (!before || !shallowEqualValue(before[key], settled.after[map]?.[key])) continue;
+        records[id] = {
+            ...record,
+            before: { ...record.before, [map]: setRecordValue(before, key, value) },
+            after: after && shallowEqualValue(after[key], before[key])
+                ? { ...record.after, [map]: setRecordValue(after, key, value) }
+                : record.after,
+        };
+    }
+}
+
 function rebaseRemainingOptimisticRecords<S extends SessionOrganizationDomain>(
     state: S,
     rolledBackRecord: SessionOrganizationOptimisticRecord,
     remainingRecords: Record<string, SessionOrganizationOptimisticRecord>,
 ): Partial<S> {
     let pins = rolledBackRecord.before.sessionOrganizationPinsBySessionKey ?? state.sessionOrganizationPinsBySessionKey;
-    let attentionStandings = rolledBackRecord.before.sessionOrganizationAttentionStandingsBySessionKey ?? state.sessionOrganizationAttentionStandingsBySessionKey;
+    let attentionStandings = state.sessionOrganizationAttentionStandingsBySessionKey;
+    const beforeStandings = rolledBackRecord.before.sessionOrganizationAttentionStandingsBySessionKey;
+    const afterStandings = rolledBackRecord.after.sessionOrganizationAttentionStandingsBySessionKey;
+    if (beforeStandings && afterStandings) {
+        for (const key of new Set([...Object.keys(beforeStandings), ...Object.keys(afterStandings)])) {
+            if (shallowEqualValue(beforeStandings[key], afterStandings[key])) continue;
+            // Roll back only this write's value, preserving newer writes and other Sessions.
+            if (shallowEqualValue(attentionStandings[key], afterStandings[key])) {
+                attentionStandings = setRecordValue(attentionStandings, key, beforeStandings[key]);
+            }
+            rebaseAttentionStandingSnapshots(remainingRecords, rolledBackRecord, key, beforeStandings[key]);
+        }
+    }
     let folders = rolledBackRecord.before.sessionOrganizationFoldersByFolderKey ?? state.sessionOrganizationFoldersByFolderKey;
     let tags = rolledBackRecord.before.sessionOrganizationTagsByTagKey ?? state.sessionOrganizationTagsByTagKey;
     let labels = rolledBackRecord.before.sessionOrganizationLabelsByLabelKey ?? state.sessionOrganizationLabelsByLabelKey;
@@ -411,11 +446,6 @@ function rebaseRemainingOptimisticRecords<S extends SessionOrganizationDomain>(
 
     for (const record of sortOptimisticRecords(Object.values(remainingRecords))) {
         pins = applyRecordDelta(pins, record.before.sessionOrganizationPinsBySessionKey, record.after.sessionOrganizationPinsBySessionKey);
-        attentionStandings = applyRecordDelta(
-            attentionStandings,
-            record.before.sessionOrganizationAttentionStandingsBySessionKey,
-            record.after.sessionOrganizationAttentionStandingsBySessionKey,
-        );
         folders = applyRecordDelta(folders, record.before.sessionOrganizationFoldersByFolderKey, record.after.sessionOrganizationFoldersByFolderKey);
         tags = applyRecordDelta(tags, record.before.sessionOrganizationTagsByTagKey, record.after.sessionOrganizationTagsByTagKey);
         labels = applyRecordDelta(labels, record.before.sessionOrganizationLabelsByLabelKey, record.after.sessionOrganizationLabelsByLabelKey);
@@ -891,6 +921,24 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 const nextRecords = { ...state.sessionOrganizationOptimisticRecords };
                 delete nextRecords[recordId];
                 return { sessionOrganizationOptimisticRecords: nextRecords } as Partial<S>;
+            });
+        },
+        confirmSessionAttentionStandingOptimistic: (recordId, sessionId, standing) => {
+            set((state) => {
+                const record = state.sessionOrganizationOptimisticRecords[recordId];
+                if (!record) return state;
+                const key = buildSessionOrganizationServerKey(record.serverId, sessionId);
+                const nextRecords = { ...state.sessionOrganizationOptimisticRecords };
+                delete nextRecords[recordId];
+                rebaseAttentionStandingSnapshots(nextRecords, record, key, standing ?? undefined);
+                const current = state.sessionOrganizationAttentionStandingsBySessionKey;
+                return {
+                    sessionOrganizationOptimisticRecords: nextRecords,
+                    sessionOrganizationAttentionStandingsBySessionKey:
+                        shallowEqualValue(current[key], record.after.sessionOrganizationAttentionStandingsBySessionKey?.[key])
+                            ? setRecordValue(current, key, standing ?? undefined)
+                            : current,
+                } as Partial<S>;
             });
         },
         clearSessionOrganizationForServer: (serverId) => {

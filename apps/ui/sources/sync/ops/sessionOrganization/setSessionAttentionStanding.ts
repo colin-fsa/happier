@@ -30,9 +30,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
             sessionId: params.sessionId,
             request: params.standing !== undefined ? { standing: params.standing } : { remindAt: params.remindAt ?? null },
         });
-        getStorage().getState().commitSessionOrganizationOptimistic(recordId);
-        const reconcileRecordId = getStorage().getState().setSessionAttentionStandingOptimistic(params.serverId, params.sessionId, response.standing);
-        getStorage().getState().commitSessionOrganizationOptimistic(reconcileRecordId);
+        getStorage().getState().confirmSessionAttentionStandingOptimistic(recordId, params.sessionId, response.standing);
     } catch (error) {
         getStorage().getState().rollbackSessionOrganizationOptimistic(recordId);
         throw error;
