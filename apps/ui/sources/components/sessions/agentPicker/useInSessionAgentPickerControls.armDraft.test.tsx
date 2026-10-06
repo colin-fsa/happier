@@ -143,6 +143,13 @@ async function armTarget(
     });
 }
 
+function readTargetOptionIds(hook: Awaited<ReturnType<typeof renderControls>>): string[] {
+    return hook.getCurrent()
+        .composeAgentPickerOptions([CURRENT_AGENT_ROW])
+        .map((option) => option.id)
+        .filter((id) => id !== CURRENT_AGENT_ROW.id);
+}
+
 function readPersistedArm(): SessionArmedAgentContinuation | undefined {
     return existingSessionDraftSemanticValues.read(SCOPE, 'session-1', 'routing.agentContinuation');
 }
@@ -389,6 +396,81 @@ describe('useInSessionAgentPickerControls arm draft', () => {
             input: { text: 'switch and send this' },
         });
         expect(readPersistedArm()?.submission?.localId).toBe(submittedLocalId);
+    });
+
+    // The retained snapshot is custody for one transition, and it hides the
+    // Agent rail so no second switch can overwrite its localId. Once canonical
+    // custody has consumed that localId the snapshot must go with it: left
+    // behind, the picker offered only models after every successful switch,
+    // across reloads, until an unrelated ordinary send cleared the whole draft.
+    it('offers the other Agents again once canonical custody consumes the submitted switch', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'builtInAgent:codex');
+        const submittedLocalId = hook.getCurrent().armedContinuationLocalId as string;
+        const submission = {
+            localId: submittedLocalId,
+            input: {
+                localId: submittedLocalId,
+                text: 'switch and send this',
+                meta: {},
+            },
+            currentness: {
+                text: 'switch and send this',
+                mentions: [],
+                attachmentDraftIds: [],
+            },
+        };
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
+        });
+
+        // The daemon admitted the switch: Codex now runs the Session.
+        await hook.rerender({
+            currentAgentId: 'codex',
+            source: { ...supportedSource, currentBackendTargetKey: 'builtInAgent:codex' },
+        });
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+        expect(readTargetOptionIds(hook)).toEqual([]);
+
+        await act(async () => {
+            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
+        });
+        await act(async () => { await Promise.resolve(); });
+
+        expect(readPersistedArm()).toBeUndefined();
+        expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
+        expect(readTargetOptionIds(hook)).toEqual(['builtInAgent:claude']);
+    });
+
+    it('leaves a newer arm alone when custody consumes the submission it replaced', async () => {
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex'), entry('gemini')] });
+        await armTarget(hook, 'builtInAgent:codex');
+        const submittedLocalId = hook.getCurrent().armedContinuationLocalId as string;
+        const submission = {
+            localId: submittedLocalId,
+            input: {
+                localId: submittedLocalId,
+                text: 'switch and send this',
+                meta: {},
+            },
+            currentness: {
+                text: 'switch and send this',
+                mentions: [],
+                attachmentDraftIds: [],
+            },
+        };
+        await act(async () => {
+            expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
+        });
+        await armTarget(hook, 'builtInAgent:gemini');
+
+        await act(async () => {
+            expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(false);
+        });
+
+        expect(hook.getCurrent().armedContinuation).toEqual(armedIntentFor('gemini'));
+        expect(readPersistedArm()?.backendTargetKey).toBe('builtInAgent:gemini');
     });
 
     it('leaves a persisted arm alone while the feature decision is unresolved', async () => {
