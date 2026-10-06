@@ -223,8 +223,11 @@ Updated UIs start import through the asynchronous method and observe the daemon'
 phase, message counts, cancellation eligibility, and terminal result through the
 existing account-scoped Action Operations revision stream and connection-time
 reconciliation. The footer and Activity read the same store; the footer does not
-poll a separate import lifecycle. A transport request deadline does not set an
-import deadline. The existing transcript footer
+poll a separate import lifecycle. Reconciliation decisions use the newest shared
+snapshot after merging transport responses: a delayed start acknowledgment or
+status response cannot revive an older revision, hide a terminal refresh error,
+or settle the pending send of a newer retry. A transport request deadline does not
+set an import deadline. The existing transcript footer
 also renders for empty imports and remains available through metadata conversion.
 Observation retains the original daemon address until terminal refresh succeeds,
 so conversion cannot strand a pending send; failed refresh remains recoverable
