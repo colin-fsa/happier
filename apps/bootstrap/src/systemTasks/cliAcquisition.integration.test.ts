@@ -28,7 +28,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function createReleaseFixture() {
+async function createReleaseFixture({ useReleaseSourceOverride = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'hsetup-acquisition-test-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const payload = join(root, 'payload');
@@ -98,13 +98,18 @@ else console.log(JSON.stringify(${JSON.stringify(daemonStatus)}));
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   });
-  // Redirect only the network boundary. GitHub parsing, download, verification and extraction run normally.
-  vi.spyOn(https, 'request').mockImplementation((url, options, callback) => {
-    const parsed = new URL(String(url));
-    if (parsed.hostname !== 'api.github.com') throw new Error(`Unexpected external request: ${parsed.origin}`);
-    return http.request(`${baseUrl}${parsed.pathname}`, options, callback);
-  });
-  syncBuiltinESMExports();
+  if (useReleaseSourceOverride) {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL', baseUrl);
+  } else {
+    // Redirect only the network boundary. GitHub parsing, download, verification and extraction run normally.
+    vi.spyOn(https, 'request').mockImplementation((url, options, callback) => {
+      const parsed = new URL(String(url));
+      if (parsed.hostname !== 'api.github.com') throw new Error(`Unexpected external request: ${parsed.origin}`);
+      return http.request(`${baseUrl}${parsed.pathname}`, options, callback);
+    });
+    syncBuiltinESMExports();
+  }
   const processEnv: NodeJS.ProcessEnv = { ...process.env, HAPPIER_HOME_DIR: join(root, 'home'), HAPPIER_STACK_REPO_DIR: root, PATH: '' };
   delete processEnv.HAPPIER_BOOTSTRAP_CLI_PATH;
   delete processEnv.HAPPIER_BOOTSTRAP_HAPPIER_PATH;
@@ -135,7 +140,7 @@ async function runStatus(events: SystemTaskEvent[]) {
 // The executable fixture and tar producer use POSIX host tools; Windows transport/unit coverage is separate.
 describe.skipIf(process.platform === 'win32')('CLI acquisition through real release and task owners', () => {
   it('reports transfer before completion, installs the signed payload, then inspects the managed CLI without downloading again', async () => {
-    const fixture = await createReleaseFixture();
+    const fixture = await createReleaseFixture({ useReleaseSourceOverride: true });
     fixture.holdArchive();
     const progress: CliAcquisitionProgress[] = [];
     let settled = false;

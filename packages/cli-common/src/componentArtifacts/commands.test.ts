@@ -160,6 +160,7 @@ describe('compileBunBinary', () => {
                 outfile,
                 bunCommand: 'bun',
                 autoloadDotenv: false,
+                defines: { 'process.env.NODE_ENV': '"production"' },
                 runCommand: async (cmd, args) => {
                     calls.push({ cmd, args });
                     writeFileSync(outfile, 'compiled', 'utf8');
@@ -167,6 +168,7 @@ describe('compileBunBinary', () => {
             });
 
             expect(calls[0]?.args).toContain('--no-compile-autoload-dotenv');
+            expect(calls[0]?.args).toContain('--define=process.env.NODE_ENV="production"');
         } finally {
             rmSync(tempRoot, { recursive: true, force: true });
         }
