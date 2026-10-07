@@ -1,3 +1,7 @@
+import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -8,6 +12,8 @@ import {
   ConnectedServiceQuotaSnapshotV1Schema,
   ProviderAccountUsageSnapshotV1Schema,
   SESSION_RUNNER_RUNTIME_STATE_FIELD_ID,
+  SessionAgentTransitionRequestV1Schema,
+  SessionContinuationInspectionBatchRequestV1Schema,
   type ActionOperationSnapshotV1,
   type ProviderAccountUsageSnapshotV1,
   type SessionRunnerRuntimeStateV1,
@@ -19,29 +25,19 @@ import type { SessionUsageLimitRecoveryOperationResult } from '@/sync/ops/sessio
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
-import { createDeferred, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { listOpenApprovalArtifactsForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
-import { __resetConnectedServiceQuotaSnapshotStore } from '@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore';
 import { sessionRunnerRuntimeStatusRetention } from '@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
-import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
-import {
-  captureSessionDraftCurrentness,
-  clearSessionDraftCurrentness,
-  deleteSessionDraft,
-  getSessionDraftSnapshot,
-  subscribeSessionDraft,
-  writeExistingSessionDraft,
-} from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
 const TEST_SERVER_ACCOUNT_SCOPE = { serverId: 'server-1', accountId: 'account-1' } as const;
 const TEST_SESSION_DRAFT_ADDRESS = { kind: 'session' as const, sessionId: 's1' };
+let operationAccountScope: { serverId: string; accountId: string } = TEST_SERVER_ACCOUNT_SCOPE;
 
 const machineDirectSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineDirectSessionTakeoverSpy = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
@@ -169,9 +165,6 @@ const settingByKeyState = vi.hoisted(() => ({ current: {} as Record<string, unkn
 const participantTargetsState = vi.hoisted(() => ({ current: [] as any[] }));
 const reviewCommentDraftsState = vi.hoisted(() => ({ current: [] as any[] }));
 const sessionMessagesState = vi.hoisted(() => ({ current: [] as any[] }));
-const draftHookState = vi.hoisted(() => ({
-  valuesBySessionId: new Map<string, string>(),
-}));
 const quotaSnapshotsState = vi.hoisted(() => ({
   current: {} as Record<string, any>,
   requestedProfiles: [] as ReadonlyArray<Readonly<{ serviceId: string; profileId: string }>>,
@@ -222,10 +215,8 @@ const storageState = vi.hoisted(() => ({
   sessionListViewDataByServerId: {} as Record<string, unknown>,
   sessionPending: {} as Record<string, any>,
   sessionMessages: {} as Record<string, any>,
-  // Stable container references so the storage snapshot built lazily on first
-  // `vi.mock` factory invocation (see createStorageStoreMock) shares identity
-  // with these objects; per-test mutations apply in place via Object.assign/
-  // delete rather than reassignment.
+  // The reactive store publishes immutable slices back into this legacy fixture;
+  // render/update helpers publish fixture edits before exercising the real hooks.
   machines: {} as Record<string, any>,
   sessionListRenderables: {} as Record<string, any>,
 }));
@@ -343,7 +334,7 @@ installSessionShellCommonModuleMocks({
     return modalMock.module;
   },
   storage: async (importOriginal) => {
-    const { createStorageModuleMock, createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const { createStorageModuleMock, createReactiveStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
 
     const readLocalSetting = <K extends keyof LocalSettings>(key: K): LocalSettings[K] => {
       if (key === 'acknowledgedCliVersions') return {} as LocalSettings[K];
@@ -361,10 +352,14 @@ installSessionShellCommonModuleMocks({
       return (override ?? settingsDefaults[key]) as Settings[K];
     };
 
+    const store = createReactiveStorageStoreMock(storageState as any);
+    // Legacy fixture handles must follow slices replaced by real store writers.
+    store.subscribe((snapshot) => { Object.assign(storageState, snapshot); });
     return createStorageModuleMock({
       importOriginal,
       overrides: {
-        storage: createStorageStoreMock(storageState as any),
+        storage: store,
+        getStorage: () => store,
         useSession: (sessionId: string) => (
           (storageState.sessions as Record<string, any>)[sessionId] ?? null
         ),
@@ -377,7 +372,7 @@ installSessionShellCommonModuleMocks({
         useSessionReviewCommentsDrafts: () => reviewCommentDraftsState.current,
         useSessionUsage: () => null,
         useProfile: () => storageState.profile,
-        useActiveServerAccountScope: () => ({ ...TEST_SERVER_ACCOUNT_SCOPE, accountId: operationAccountId }),
+        useActiveServerAccountScope: () => operationAccountScope,
         useLocalSetting: readLocalSetting,
         useLocalSettingMutable: <K extends keyof LocalSettings>(key: K) => [readLocalSetting(key), vi.fn<(value: LocalSettings[K]) => void>()],
         useSetting: readSetting,
@@ -395,7 +390,7 @@ installSessionShellCommonModuleMocks({
           Object.values(storageState.artifacts),
           sessionId,
         ),
-        useMachine: () => null,
+        useMachine: (machineId: string) => storageState.machines[machineId] ?? null,
       },
     });
   },
@@ -506,102 +501,6 @@ vi.mock('@/utils/platform/responsive', () => ({
   useIsLandscape: () => false,
   useIsTablet: () => true,
 }));
-vi.mock('@/hooks/session/useDraft', () => ({
-  useDraft: (_sessionId: string, value: string, onChange: (next: string) => void) => {
-    draftHookState.valuesBySessionId.set(_sessionId, value);
-    const address = { kind: 'session' as const, sessionId: _sessionId };
-    const draftSnapshot = React.useSyncExternalStore(
-      (listener) => subscribeSessionDraft(TEST_SERVER_ACCOUNT_SCOPE, address, listener),
-      () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
-      () => getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address),
-    );
-    return {
-    clearDraft: () => {
-      draftHookState.valuesBySessionId.set(_sessionId, '');
-      onChange('');
-    },
-    setDraftValue: (nextValueOrUpdater: string | ((currentValue: string) => string)) => {
-      const currentValue = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
-      const nextValue = typeof nextValueOrUpdater === 'function'
-        ? nextValueOrUpdater(currentValue)
-        : nextValueOrUpdater;
-      draftHookState.valuesBySessionId.set(_sessionId, nextValue);
-      onChange(nextValue);
-    },
-    clearDraftIfCurrentValueMatches: (expectedValue: string) => {
-      const currentValue = draftHookState.valuesBySessionId.get(_sessionId) ?? value;
-      if (currentValue !== expectedValue) return false;
-      draftHookState.valuesBySessionId.set(_sessionId, '');
-      return true;
-    },
-    clearDraftForSessionIfCurrentValueMatches: (snapshot: Readonly<{ sessionId: string; text: string }>) => {
-      const currentValue = draftHookState.valuesBySessionId.get(snapshot.sessionId) ?? '';
-      if (currentValue !== snapshot.text) return false;
-      draftHookState.valuesBySessionId.set(snapshot.sessionId, '');
-      if (snapshot.sessionId === _sessionId) {
-        onChange('');
-      }
-      return true;
-    },
-    restoreDraft: (draft: string) => {
-      draftHookState.valuesBySessionId.set(_sessionId, draft);
-      onChange(draft);
-    },
-    restoreDraftForSessionIfCurrentValueMatches: (
-      snapshot: Readonly<{ sessionId?: string; text: string }>,
-      expectedCurrentValue: string,
-    ) => {
-      const targetSessionId = snapshot.sessionId ?? _sessionId;
-      const currentValue = draftHookState.valuesBySessionId.get(targetSessionId) ?? '';
-      if (currentValue !== expectedCurrentValue) return false;
-      draftHookState.valuesBySessionId.set(targetSessionId, snapshot.text);
-      if (targetSessionId === _sessionId) {
-        onChange(snapshot.text);
-      }
-      return true;
-    },
-    restoreComposerSnapshot: (snapshot: Readonly<{ sessionId?: string; text: string }>) => {
-      const targetSessionId = snapshot.sessionId ?? _sessionId;
-      draftHookState.valuesBySessionId.set(targetSessionId, snapshot.text);
-      if (targetSessionId === _sessionId) {
-        onChange(snapshot.text);
-      }
-    },
-    captureDraftForOutboundHandoff: () => ({
-      sessionId: _sessionId,
-      text: draftHookState.valuesBySessionId.get(_sessionId) ?? '',
-      scope: TEST_SERVER_ACCOUNT_SCOPE,
-      currentness: captureSessionDraftCurrentness({
-        scope: TEST_SERVER_ACCOUNT_SCOPE,
-        address,
-      }),
-    }),
-    clearDraftCurrentness: (snapshot: Readonly<{ text: string; currentness?: any }>) => {
-      if (!snapshot.currentness) return false;
-      const currentText = draftHookState.valuesBySessionId.get(_sessionId) ?? '';
-      if (currentText !== snapshot.text) {
-        writeExistingSessionDraft({
-          scope: TEST_SERVER_ACCOUNT_SCOPE,
-          sessionId: _sessionId,
-          patch: { text: currentText },
-        });
-      }
-      void clearSessionDraftCurrentness({
-        scope: TEST_SERVER_ACCOUNT_SCOPE,
-        address,
-        currentness: snapshot.currentness,
-      });
-      const remainingText = getSessionDraftSnapshot(TEST_SERVER_ACCOUNT_SCOPE, address)
-        ?.document.composer.text.value ?? '';
-      draftHookState.valuesBySessionId.set(_sessionId, remainingText);
-      onChange(remainingText);
-      return true;
-    },
-    draftSnapshot,
-    draftScope: TEST_SERVER_ACCOUNT_SCOPE,
-  };
-  },
-}));
 vi.mock('@/components/sessions/model/inactiveSessionUi', () => ({
   getInactiveSessionUiState: () => ({ noticeKind: 'none', inactiveStatusTextKey: null, shouldShowInput: true }),
 }));
@@ -612,7 +511,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
   useSessionMachineReachability: () => ({ machineReachable: true, machineOnline: true, machineRpcTargetAvailable: true }),
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
-  getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
+  getActiveServerSnapshot: () => ({ serverId: 'server-1', serverUrl: 'https://server.example', generation: 1 }),
   subscribeActiveServer: (listener: (active: any) => void) => {
     listener({ serverId: 'server-1' });
     return () => {};
@@ -631,6 +530,8 @@ vi.mock('@/sync/sync', () => ({
     publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
     publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
     publishSessionModelOverrideToMetadata: async () => {},
+    materializeExistingSessionDraft: async () => {},
+    ensureSessionVisibleForMessageRoute: async () => ({ kind: 'available' }),
     refreshSessions: syncRefreshSessionsSpy,
     refreshSessionMessages: syncRefreshSessionMessagesSpy,
     refreshSessionForSubmit: async (sessionId: string) =>
@@ -745,7 +646,177 @@ vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOrigin
   };
 });
 
+// Configure native/transport fixtures before importing modules that read storage.
+const { createDeferred, createPendingMessageFixture, pressTestInstanceAsync, renderScreen, resetBrowserSessionDraftPersistenceForTest, standardCleanup } = await import('@/dev/testkit');
+const { existingSessionDraftSemanticValues } = await import('@/sync/domains/input/drafts/existingSessionDraftSemanticValues');
+const { deleteSessionDraft, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+const { __resetConnectedServiceQuotaSnapshotStore } = await import('@/hooks/server/connectedServices/connectedServiceQuotaSnapshotStore');
+const { SessionView } = await import('./SessionView');
+
 describe('SessionView (direct sessions)', () => {
+  describe('persisted Agent continuation custody', () => {
+    let transitionResult: 'accepted' | 'outcome_unknown';
+    const currentAgentRow: AgentInputChipPickerOption = {
+      id: 'engine:current', label: 'Current Agent', renderDetailContent: () => null,
+    };
+
+    function readArm(): SessionArmedAgentContinuation | undefined {
+      return existingSessionDraftSemanticValues.read(
+        { ...TEST_SERVER_ACCOUNT_SCOPE, accountId: operationAccountId }, 's1', 'routing.agentContinuation',
+      );
+    }
+
+    function readOptions(screen: Awaited<ReturnType<typeof renderSessionView>>): AgentInputChipPickerOption[] {
+      return findAgentInput(screen).props.composeAgentPickerOptions([currentAgentRow]);
+    }
+
+    async function selectAgent(screen: Awaited<ReturnType<typeof renderSessionView>>, agentId: string) {
+      await act(async () => { findAgentInput(screen).props.onAgentPickerIntent(); });
+      await settleDirectSessionView();
+      const option = readOptions(screen).find((row) => row.id === `agent:${agentId}`);
+      if (!option?.onSelectImmediate) throw new Error(`Agent option ${agentId} is unavailable`);
+      const select = option.onSelectImmediate;
+      await act(async () => { select(); });
+      expect(readArm()?.intent.selection.agentId).toBe(agentId);
+    }
+
+    async function submitSwitch(screen: Awaited<ReturnType<typeof renderSessionView>>) {
+      await selectAgent(screen, 'claude');
+      await act(async () => { findAgentInput(screen).props.onChangeText('switch and send this'); });
+      await act(async () => { await findAgentInput(screen).props.onSend(); });
+      await settleDirectSessionView();
+      const dispatch = actionOperationRpcSpy.mock.calls.find(([params]) => (
+        params.method === RPC_METHODS.SESSION_AGENT_TRANSITION
+      ));
+      expect(dispatch).toBeDefined();
+      return SessionAgentTransitionRequestV1Schema.parse(dispatch?.[0].payload).input.localId;
+    }
+
+    async function publishCustody(localId: string) {
+      const { storage } = await import('@/sync/domains/state/storage');
+      await act(async () => {
+        storageState.sessionPending.s1 = {
+          messages: [createPendingMessageFixture({
+            localId, text: 'switch and send this', source: 'server_pending',
+            messageRole: 'user', pendingDeliveryStatus: 'server_queued',
+            requestedAction: { v: 1, kind: 'enqueue' },
+          })],
+          discarded: [], isLoaded: true,
+        };
+        storage.setState({ sessionPending: { ...storageState.sessionPending } });
+      });
+      await settleDirectSessionView();
+    }
+
+    beforeEach(async () => {
+      transitionResult = 'accepted';
+      const { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+      resetServerFeaturesClientForTests();
+      const features = buildServerFeaturesResponse();
+      features.features.sessions.enabled = true;
+      features.features.sessions.agentSwitching.enabled = true;
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
+      const { storage } = await import('@/sync/domains/state/storage');
+      storage.setState({ settings: {
+        ...settingsDefaults, experiments: true,
+        featureToggles: { sessions: true, 'sessions.agentSwitching': true },
+      } });
+      const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+      storageState.sessions.s1 = { ...storageState.sessions.s1, metadata };
+      storageState.machines['machine-1'] = {
+        id: 'machine-1', active: true, activeAt: Date.now(), daemonStateVersion: 1,
+        metadata: { host: 'happy-host', homeDir: '/tmp', platform: 'darwin' },
+      };
+      actionOperationRpcSpy.mockImplementation(async (params: { method: string; payload: unknown }) => {
+        if (params.method === RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH) {
+          const request = SessionContinuationInspectionBatchRequestV1Schema.parse(params.payload);
+          return { v: 1, inspections: request.selections.map(() => ({
+            type: 'available', protocolVersion: 1, sameSessionTransition: true,
+          })) };
+        }
+        if (params.method === RPC_METHODS.SESSION_AGENT_TRANSITION) {
+          const request = SessionAgentTransitionRequestV1Schema.parse(params.payload);
+          return { type: transitionResult, localId: request.input.localId };
+        }
+        return { items: [], nextCursor: null };
+      });
+      await getServerFeaturesSnapshot({ serverId: 'server-1', force: true });
+    });
+
+    afterEach(async () => {
+      vi.unstubAllGlobals();
+      const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+      resetServerFeaturesClientForTests();
+    });
+
+    it('removes the accepted submission from the draft and offers Agents again after remount', async () => {
+      const first = await renderSessionViewAndSettle();
+      await submitSwitch(first);
+      expect(readArm()).toBeUndefined();
+      expect(findAgentInput(first).props.value).toBe('');
+      expect(getSessionDraftSnapshot(operationAccountScope, TEST_SESSION_DRAFT_ADDRESS)?.document.composer.text.value ?? '').toBe('');
+      storageState.sessions.s1.metadata = { ...storageState.sessions.s1.metadata, flavor: 'claude' };
+      await act(async () => { first.tree.unmount(); });
+
+      const second = await renderSessionViewAndSettle();
+      await act(async () => { findAgentInput(second).props.onAgentPickerIntent(); });
+      await settleDirectSessionView();
+      expect(readArm()).toBeUndefined();
+      expect(readOptions(second).map((row) => row.id)).toContain('agent:codex');
+      await selectAgent(second, 'codex');
+    });
+
+    it('retains unknown submission identity across remount, then spends delayed custody without clearing newer text', async () => {
+      transitionResult = 'outcome_unknown';
+      const first = await renderSessionViewAndSettle();
+      const localId = await submitSwitch(first);
+      expect(readArm()?.submission?.localId).toBe(localId);
+      storageState.sessions.s1.metadata = { ...storageState.sessions.s1.metadata, flavor: 'claude' };
+      await act(async () => { first.tree.unmount(); });
+
+      const second = await renderSessionViewAndSettle();
+      expect(readArm()?.submission?.localId).toBe(localId);
+      expect(findAgentInput(second).props.value).toBe('switch and send this');
+      expect(readOptions(second).map((row) => row.id)).not.toContain('agent:codex');
+      await act(async () => { findAgentInput(second).props.onChangeText('a newer draft'); });
+      await publishCustody(localId);
+
+      expect(readArm()).toBeUndefined();
+      expect(findAgentInput(second).props.value).toBe('a newer draft');
+      await act(async () => { findAgentInput(second).props.onAgentPickerIntent(); });
+      await settleDirectSessionView();
+      expect(readOptions(second).map((row) => row.id)).toContain('agent:codex');
+      await selectAgent(second, 'codex');
+    });
+
+    it('preserves a newer armed Agent and composer when the previous submission reaches custody', async () => {
+      transitionResult = 'outcome_unknown';
+      const screen = await renderSessionViewAndSettle();
+      const previousLocalId = await submitSwitch(screen);
+      await selectAgent(screen, 'gemini');
+      await act(async () => { findAgentInput(screen).props.onChangeText('send this to Gemini'); });
+      const newerArm = readArm();
+      expect(newerArm?.submission).toBeUndefined();
+
+      await publishCustody(previousLocalId);
+
+      expect(readArm()).toEqual(newerArm);
+      expect(findAgentInput(screen).props.agentPickerSelectedOptionId).toBe('agent:gemini');
+      expect(findAgentInput(screen).props.value).toBe('send this to Gemini');
+    });
+  });
+
+  async function publishStorageFixture() {
+    const { storage } = await import('@/sync/domains/state/storage');
+    storage.setState({
+      ...storageState,
+      settings: storage.getState().settings,
+      sessionListViewDataByServerId: storage.getState().sessionListViewDataByServerId,
+      sessions: { ...storageState.sessions },
+      machines: { ...storageState.machines },
+    });
+  }
+
   async function renderSessionView(props: {
     sessionId?: string;
     routeServerId?: string;
@@ -760,7 +831,7 @@ describe('SessionView (direct sessions)', () => {
         serverId: routeServerId,
       };
     }
-    const { SessionView } = await import('./SessionView');
+    await publishStorageFixture();
     return renderScreen(
       <AppPaneProvider>
         <SessionView
@@ -795,8 +866,8 @@ describe('SessionView (direct sessions)', () => {
         serverId: routeServerId,
       };
     }
-    const { SessionView } = await import('./SessionView');
     await act(async () => {
+      await publishStorageFixture();
       screen.tree.update(
         <AppPaneProvider>
           <SessionView id={sessionId} routeServerId={props.routeServerId} />
@@ -1080,7 +1151,8 @@ describe('SessionView (direct sessions)', () => {
     });
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await resetBrowserSessionDraftPersistenceForTest();
     __resetConnectedServiceQuotaSnapshotStore();
     sessionRunnerRuntimeStatusRetention.clear();
     chatListPropsSpy.mockReset();
@@ -1131,6 +1203,7 @@ describe('SessionView (direct sessions)', () => {
     setWorkspaceReviewCommentDraftIncludedSpy.mockReset();
     machineDirectSessionTakeoverSpy.mockReset();
     operationAccountId = `shell-import-${++operationTestIndex}`;
+    operationAccountScope = { ...TEST_SERVER_ACCOUNT_SCOPE, accountId: operationAccountId };
     actionOperationRpcSpy.mockReset();
     actionOperationRpcSpy.mockResolvedValue({ items: [], nextCursor: null });
     syncRefreshSessionsSpy.mockReset();
@@ -1143,7 +1216,6 @@ describe('SessionView (direct sessions)', () => {
     participantTargetsState.current = [];
     reviewCommentDraftsState.current = [];
     sessionMessagesState.current = [];
-    draftHookState.valuesBySessionId.clear();
     quotaSnapshotsState.current = {};
     quotaSnapshotsState.requestedProfiles = [];
     connectedServiceAuthGroupsState.groups = [];
@@ -1221,6 +1293,9 @@ describe('SessionView (direct sessions)', () => {
       canTakeOverPersist: true,
       canForceStop: false,
     });
+    const { storage } = await import('@/sync/domains/state/storage');
+    // These legacy send cases exercise immediate agent delivery, not the pending queue.
+    storage.setState({ settings: { ...settingsDefaults, sessionMessageSendMode: 'agent_queue' }, sessionPending: storageState.sessionPending });
   });
 
   afterEach(() => {
@@ -1941,7 +2016,6 @@ describe('SessionView (direct sessions)', () => {
       lastRuntimeIssue: null,
       serverId: 'server-route-1-cleared',
     };
-    const { SessionView } = await import('./SessionView');
     await screen.update(
       <AppPaneProvider>
         <SessionView id="s1" routeServerId="server-route-1-cleared" />
@@ -2246,7 +2320,6 @@ describe('SessionView (direct sessions)', () => {
       thinkingAt: 1_000_000,
       latestTurnStatusObservedAt: 1_000_000,
     };
-    const { SessionView } = await import('./SessionView');
     await screen.update(
       <AppPaneProvider>
         <SessionView id="s1" routeServerId="server-runtime-refresh" />
@@ -2277,7 +2350,6 @@ describe('SessionView (direct sessions)', () => {
       runtimeActivityObservedAt: Date.now(),
       runtimeActivityRevision: 1,
     };
-    const { SessionView } = await import('./SessionView');
     await screen.update(
       <AppPaneProvider>
         <SessionView id="s1" routeServerId="server-runtime-activity-refresh" />
@@ -3593,6 +3665,7 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('does not restore an old semantic snapshot over newer semantic choices after direct-session handoff failure', async () => {
+    const scope = { ...TEST_SERVER_ACCOUNT_SCOPE, accountId: operationAccountId };
     const oldRecipient = { kind: 'execution_run' as const, runId: 'run-old' };
     const newRecipient = { kind: 'execution_run' as const, runId: 'run-new' };
     const oldMention = {
@@ -3607,10 +3680,10 @@ describe('SessionView (direct sessions)', () => {
     };
     let rejectSubmit!: (error: Error) => void;
 
-    void deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
-    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient', oldRecipient);
-    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery', 'interrupt');
-    existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions', [oldMention]);
+    void deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
+    existingSessionDraftSemanticValues.write(scope, 's1', 'routing.recipient', oldRecipient);
+    existingSessionDraftSemanticValues.write(scope, 's1', 'routing.executionRunDelivery', 'interrupt');
+    existingSessionDraftSemanticValues.write(scope, 's1', 'structuredInput.mentions', [oldMention]);
 
     try {
       syncSubmitMessageSpy.mockImplementationOnce(async (...args: unknown[]) => {
@@ -3627,7 +3700,7 @@ describe('SessionView (direct sessions)', () => {
       const screen = await renderSessionView();
       let agentInput = findAgentInput(screen);
       await act(async () => {
-        agentInput.props.onChangeText('send to old target');
+        agentInput.props.onChangeText('send $old to old target');
       });
 
       let sendPromise: Promise<void> | undefined;
@@ -3636,13 +3709,16 @@ describe('SessionView (direct sessions)', () => {
       });
       await flushHookEffects({ cycles: 1, turns: 1 });
 
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient')).toBeUndefined();
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery')).toBeUndefined();
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'routing.recipient')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'routing.executionRunDelivery')).toBeUndefined();
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'structuredInput.mentions') ?? []).toEqual([]);
 
-      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient', newRecipient);
-      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery', 'prompt');
-      existingSessionDraftSemanticValues.write(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions', [newMention]);
+      await act(async () => {
+        findAgentInput(screen).props.onChangeText('send $new to newer target');
+        existingSessionDraftSemanticValues.write(scope, 's1', 'routing.recipient', newRecipient);
+        existingSessionDraftSemanticValues.write(scope, 's1', 'routing.executionRunDelivery', 'prompt');
+        existingSessionDraftSemanticValues.write(scope, 's1', 'structuredInput.mentions', [newMention]);
+      });
 
       await act(async () => {
         rejectSubmit(new Error('direct send rejected'));
@@ -3651,13 +3727,13 @@ describe('SessionView (direct sessions)', () => {
       await settleDirectSessionView();
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('');
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.recipient')).toEqual(newRecipient);
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'routing.executionRunDelivery')).toBe('prompt');
-      expect(existingSessionDraftSemanticValues.read(TEST_SERVER_ACCOUNT_SCOPE, 's1', 'structuredInput.mentions')).toEqual([newMention]);
+      expect(agentInput.props.value).toBe('send $new to newer target');
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'routing.recipient')).toEqual(newRecipient);
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'routing.executionRunDelivery')).toBe('prompt');
+      expect(existingSessionDraftSemanticValues.read(scope, 's1', 'structuredInput.mentions')).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      void deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
+      void deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
     }
   });
 

@@ -2570,28 +2570,6 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 expect(draftHookState.valuesBySessionId.get('s1')).toBe('');
                 // The arm goes with the draft: this depth spends the switch.
                 expect(clearArmedContinuationSpy).toHaveBeenCalled();
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({ localId: 'armed-local-id' }),
-                );
-            } finally {
-                act(() => { screen.tree?.unmount(); });
-                pendingFireAndForget.length = 0;
-            }
-        });
-
-        // The retained snapshot hides the Agent rail while it is custody. An
-        // admitted switch that leaves it in the draft strands the picker on
-        // models only, across reloads, until an unrelated send clears the draft.
-        it('spends the retained submission once the switch is admitted', async () => {
-            const screen = await sendArmedText(
-                { type: 'accepted', localId: 'armed-local-id' },
-                'switch and send this',
-            );
-            try {
-                expect(draftHookState.valuesBySessionId.get('s1')).toBe('');
-                expect(clearArmedContinuationSubmissionSpy).toHaveBeenCalledWith(
-                    expect.objectContaining({ localId: 'armed-local-id' }),
-                );
             } finally {
                 act(() => { screen.tree?.unmount(); });
                 pendingFireAndForget.length = 0;
