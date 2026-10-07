@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 type MockLogcatProcess = EventEmitter & {
+    pid: number | undefined;
     stdout: PassThrough;
     stderr: PassThrough;
     killed?: boolean;
@@ -13,6 +14,7 @@ let logcatProcess = createLogcatProcess();
 
 function createLogcatProcess(): MockLogcatProcess {
     const process = new EventEmitter() as MockLogcatProcess;
+    process.pid = 12345;
     process.setMaxListeners(0);
     process.stdout = new PassThrough();
     process.stderr = new PassThrough();
@@ -52,6 +54,34 @@ describe('mobileMaestroRunner sync performance log capture', () => {
         writeCapturedLogDiagnostic({ destroyed: false, writableEnded: false, write }, 'before end');
 
         expect(write).toHaveBeenCalledExactlyOnceWith('before end');
+    });
+
+    it.each(['android', 'ios'] as const)('does not signal a failed %s log spawn before its error arrives', async (platform) => {
+        const { runMobileMaestro } = await import('./mobileMaestroRunner');
+        const failedChild = logcatProcess;
+        failedChild.pid = undefined;
+        const spawnError = Object.assign(new Error('capture executable unavailable'), { code: 'ENOENT' });
+
+        const result = await runMobileMaestro({
+            argv: ['node', 'script', '--platform', platform, '--flows', 'suites/mobile-e2e/flows',
+                '--appId', 'dev.happier.app.internaldev', '--serverUrl', 'http://127.0.0.1:52753',
+                '--skip-app-install-check'],
+            cwd: process.cwd(),
+            env: { ...process.env, HAPPIER_E2E_MOBILE_MANAGE_METRO: '0' },
+        }, {
+            runMaestro: async () => {
+                // Node reports failed spawn asynchronously; an immediate flow can enter cleanup first.
+                setImmediate(() => failedChild.emit('error', spawnError));
+                return { exitCode: 0 };
+            },
+            adbReversePorts: () => ({ enabled: false, reversedPorts: [] }),
+            primeAppLaunch: async () => {},
+        });
+
+        expect(failedChild.kill).not.toHaveBeenCalled();
+        expect(result.exitCode).toBe(0);
+        const logName = platform === 'android' ? 'android-logcat.log' : 'ios-simulator.log';
+        expect(readFileSync(`${result.runDir}/${logName}`, 'utf8')).toContain(spawnError.message);
     });
 
     it('captures Android logcat into the run manifest for sync-perf parser discovery', async () => {
