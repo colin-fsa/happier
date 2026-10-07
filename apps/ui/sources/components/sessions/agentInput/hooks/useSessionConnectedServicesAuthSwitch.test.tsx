@@ -135,6 +135,8 @@ function renderChipPopover(
     });
 }
 
+const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+
 describe('useSessionConnectedServicesAuthSwitch', () => {
     beforeEach(() => {
         profileState.current = {
@@ -235,6 +237,43 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(renderedChip.props.testID).toBe('session-connected-services-auth-chip');
         expect(renderedChip.props.dataSet?.authSource).toBe('connected');
+        await hook.unmount();
+    });
+
+    it.each(['work', 'missing-profile', null])('previews the armed Agent literal default without offering source auth changes (%s)', async (profileId) => {
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1',
+            agentId: 'codex',
+            agentCore: AGENTS_CORE.codex,
+            machineId: 'machine-1',
+            sessionMetadata: { connectedServices: { v: 1, bindingsByServiceId: {
+                'openai-codex': { source: 'connected', selection: 'profile', profileId: 'happier' },
+            } } },
+            armedContinuationAgent: { agentId: 'claude', agentCore: {
+                ...AGENTS_CORE.claude,
+                connectedServices: { supportedServiceIds: ['anthropic'] },
+            } },
+            settings: {
+                connectedServicesProfileLabelByKey: { 'anthropic/work': 'Work' },
+                connectedServicesDefaultProfileByServiceId: {},
+                connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+                    claude: { v: 1, bindingsByServiceId: {
+                        anthropic: profileId === null ? { source: 'native' } : { source: 'connected', selection: 'profile', profileId },
+                    } },
+                } },
+            },
+            switchingDisabledReason: null,
+        }));
+        const chip = hook.getCurrent().connectedServicesAuthChip;
+        expect(chip?.collapsedContentPopover?.label).toBe(profileId === null
+            ? 'connectedServices.authChip.nativeLabel'
+            : `Anthropic: ${profileId === 'work' ? 'Work' : profileId}`);
+        const content = renderChipPopover(chip?.collapsedContentPopover?.renderContent) as React.ReactElement<{
+            actions: readonly { disabled?: boolean; onPress?: () => void }[];
+        }>;
+        expect(content.props.actions).toEqual([expect.objectContaining({ disabled: true })]);
+        expect(content.props.actions[0].onPress).toBeUndefined();
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
         await hook.unmount();
     });
 
