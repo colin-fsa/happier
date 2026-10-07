@@ -2,9 +2,9 @@ import { ensureAgyAcpServerForLaunch } from '@/backends/agy/acp/ensureAgyAcpServ
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 
 export const agyDaemonSpawnHooks: DaemonSpawnHooks = {
-  validateSpawn: async ({ environmentVariables }) => {
+  validateSpawn: async ({ environmentVariables, readinessOnly }) => {
     try {
-      await ensureAgyAcpServerForLaunch({ env: environmentVariables });
+      await ensureAgyAcpServerForLaunch({ env: environmentVariables, ...(readinessOnly ? { readinessOnly: true } : {}) });
     } catch (error) {
       return {
         ok: false,

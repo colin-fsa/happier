@@ -9,6 +9,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { buildCodexAppServerTurnInput } from '@/backends/codex/appServer/turnInput';
+import { buildOpenCodePromptParts } from '@/backends/opencode/server/promptParts';
 import {
     StructuredInputMentionResolutionError,
     resolveStructuredInputProviderContextInMeta,
@@ -86,6 +87,44 @@ const LEGACY_META = {
 };
 
 describe('resolveStructuredInputProviderContextInMeta', () => {
+    it('keeps generated catalog identity provenance through native semantic projection', async () => {
+        const resolved = await resolveStructuredInputProviderContextInMeta({
+            meta: metaWithMentions([{
+                ...SKILL_MENTION,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'vendor:opencode:review'),
+            }]),
+            catalogs: { listSkills: async () => ({ skills: [{
+                id: 'vendor:opencode:review', idSource: 'generated', name: 'review',
+                path: '/repo/.opencode/skills/review/SKILL.md', origin: 'vendor', backendId: 'opencode',
+            }] }) },
+        });
+        expect(await buildOpenCodePromptParts({ cwd: '/repo', text: 'Review', metadata: resolved })).toEqual([
+            { type: 'text', text: 'Review' },
+            { type: 'skill', name: 'review', path: '/repo/.opencode/skills/review/SKILL.md', text: 'Use the review skill for this request.' },
+        ]);
+    });
+
+    it('preserves the authoritative native skill id when resolving a composer reference', async () => {
+        const resolved = await resolveStructuredInputProviderContextInMeta({
+            meta: metaWithMentions([{
+                ...SKILL_MENTION,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.skill, 'review-directory'),
+            }]),
+            catalogs: catalogs({ listSkills: async () => ({ supported: true, skills: [{
+                id: 'review-directory',
+                name: 'security-review',
+                path: '/repo/.opencode/skills/review-directory/SKILL.md',
+                origin: 'opencode_native',
+            }] }) }),
+        });
+        expect(resolved).toMatchObject({
+            happierStructuredInputV1: { skillMentions: [{
+                id: 'review-directory',
+                name: 'security-review',
+                path: '/repo/.opencode/skills/review-directory/SKILL.md',
+            }] },
+        });
+    });
     it('produces the same Codex turn input from mentions[] alone as the legacy arrays do (R-10)', async () => {
         const resolved = await resolveStructuredInputProviderContextInMeta({
             meta: metaWithMentions([SKILL_MENTION, VENDOR_MENTION]),

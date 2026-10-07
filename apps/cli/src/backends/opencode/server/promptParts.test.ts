@@ -9,6 +9,44 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { buildOpenCodePromptParts } from './promptParts';
 
 describe('buildOpenCodePromptParts', () => {
+  it('projects resolved native skills and agents using the canonical metadata reader', async () => {
+    expect(await buildOpenCodePromptParts({
+      cwd: '/repo',
+      text: 'Use $review with @planner',
+      metadata: {
+        happierStructuredInputV1: {
+          v: 1,
+          skillMentions: [
+            { id: 'review-directory', name: 'review', path: '/skills/review/SKILL.md' },
+            { id: 'vendor:opencode:legacy', idSource: 'generated', name: 'legacy', path: '/skills/legacy/SKILL.md' },
+          ],
+          vendorPluginMentions: [{ vendorPluginRef: 'planner' }],
+        },
+        // Older clients dual-write these aliases. They must not invoke the skill twice.
+        happierSkillMentions: [{ id: 'review-directory', name: 'review', path: '/skills/review/SKILL.md' }],
+      },
+    })).toEqual([
+      { type: 'text', text: 'Use $review with @planner' },
+      { type: 'agent', name: 'planner' },
+      { type: 'skill', id: 'review-directory', name: 'review', path: '/skills/review/SKILL.md', text: 'Use the review skill for this request.' },
+      { type: 'skill', name: 'legacy', path: '/skills/legacy/SKILL.md', text: 'Use the legacy skill for this request.' },
+    ]);
+  });
+
+  it('does not project stale legacy skill selections beside unresolved canonical references', async () => {
+    expect(await buildOpenCodePromptParts({
+      cwd: '/repo',
+      text: 'Use $review',
+      metadata: {
+        happierStructuredInputV1: {
+          v: 1,
+          mentions: [{ kind: 'happier.skill', ref: 'skill:review', token: '$review', start: 4, end: 11 }],
+          skillMentions: [{ name: 'stale', path: '/skills/stale/SKILL.md' }],
+        },
+      },
+    })).toEqual([{ type: 'text', text: 'Use $review' }]);
+  });
+
   it('maps a hash-verified uploaded image to the exact OpenCode file-part contract', async () => {
     await withTempDir('opencode-prompt-image-', async (cwd) => {
       const bytes = Buffer.from([

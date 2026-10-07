@@ -2,6 +2,7 @@ import {
   AcpBackend,
   type AcpBackendOptions,
   type AcpPermissionHandler,
+  type AcpInFlightSteerAdapter,
 } from '@/agent/acp/AcpBackend';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
@@ -15,22 +16,16 @@ import { buildGrokPromptCompletionRequestMeta } from './promptCompletion';
 import { grokPromptUsageAdapter } from './usage';
 import type { GrokSessionNotificationObserver } from './sessionNotifications';
 
-const GROK_IN_FLIGHT_STEER = Object.freeze({
+const GROK_IN_FLIGHT_STEER: AcpInFlightSteerAdapter = Object.freeze({
   method: 'x.ai/interject',
-  buildParams(input: Readonly<{
-    sessionId: string;
-    prompt: string;
-    deliveryIdentity?: Readonly<{
-      localId?: string | null;
-      localIds?: readonly string[];
-    }>;
-  }>) {
+  buildParams(input: Parameters<AcpInFlightSteerAdapter['buildParams']>[0]) {
     const interjectionId = input.deliveryIdentity?.localId
       ?? input.deliveryIdentity?.localIds?.[0]
       ?? null;
     return {
       sessionId: input.sessionId,
       text: input.prompt,
+      content: [...input.content],
       ...(typeof interjectionId === 'string' && interjectionId.length > 0
         ? { interjectionId }
         : {}),

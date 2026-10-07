@@ -22,6 +22,8 @@ export async function ensureRuntimeInstallablesForLaunch(
     settings: AccountSettings | null | undefined;
     machineId: string;
     env?: NodeJS.ProcessEnv;
+    /** Capability queries only inspect existing prerequisites; session launch retains installation policy. */
+    readinessOnly?: boolean;
   }>,
   depsOverrides: Partial<Deps> = {},
 ): Promise<EnsureRuntimeInstallablesForLaunchResult> {
@@ -50,7 +52,7 @@ export async function ensureRuntimeInstallablesForLaunch(
     let resolution = await adapter.detectLaunchResolution({ env: params.env });
     let installedThisLaunch = false;
 
-    if (!resolution.availability.ok && resolution.canAutoInstall && policy.autoInstallWhenNeeded) {
+    if (!params.readinessOnly && !resolution.availability.ok && resolution.canAutoInstall && policy.autoInstallWhenNeeded) {
       const installResult = await adapter.installOrUpgrade();
       if (!installResult.ok) {
         return {
@@ -75,7 +77,7 @@ export async function ensureRuntimeInstallablesForLaunch(
       };
     }
 
-    if (!installedThisLaunch && resolution.availability.ok && resolution.canBackgroundAutoUpdate && policy.autoUpdateMode === 'auto') {
+    if (!params.readinessOnly && !installedThisLaunch && resolution.availability.ok && resolution.canBackgroundAutoUpdate && policy.autoUpdateMode === 'auto') {
       void deps.startBackgroundRuntimeInstallableUpdate({
         installableKey,
         adapter,

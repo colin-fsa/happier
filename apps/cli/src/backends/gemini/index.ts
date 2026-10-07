@@ -28,6 +28,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/gemini/cli/command')).handleGeminiCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/gemini/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/gemini/cli/detect')).cliDetect,
+  getPreflightSessionControlsProbeAdapter: async () => ({ connectedServiceAuth: 'materialized-env-for-catalogs' as const }),
   getCliAuthSpec: async () => (await import('@/backends/gemini/cli/auth/geminiCliAuthSpec')).geminiCliAuthSpec,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
   getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,

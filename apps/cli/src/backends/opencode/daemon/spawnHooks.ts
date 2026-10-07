@@ -7,9 +7,9 @@ export const opencodeDaemonSpawnHooks: DaemonSpawnHooks = {
     if (resolveOpenCodeBackendModeFromEnv(processEnv) === 'acp') return { kind: 'none' };
     return { kind: 'provider_attach', startingMode: 'local' };
   },
-  validateSpawn: async () => {
+  validateSpawn: async ({ environmentVariables }) => {
     try {
-      resolveOpenCodeCliLaunchSpec();
+      resolveOpenCodeCliLaunchSpec(environmentVariables);
       return { ok: true };
     } catch (error) {
       return {

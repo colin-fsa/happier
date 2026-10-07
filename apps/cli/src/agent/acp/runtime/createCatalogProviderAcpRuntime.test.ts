@@ -55,8 +55,8 @@ describe('createCatalogProviderAcpRuntime session identity ownership', () => {
     });
     const runtime = createCatalogProviderAcpRuntime({
       ...createParams(),
-      provider: 'grok',
-      loggerLabel: 'GrokACP',
+      provider: 'qwen',
+      loggerLabel: 'QwenACP',
       providerInputConsumer: {
         ...createParams().providerInputConsumer,
         pumpPendingWhileActive,
@@ -71,6 +71,26 @@ describe('createCatalogProviderAcpRuntime session identity ownership', () => {
     });
 
     await runtime.reset();
+  });
+
+  it('activates manifest-declared steering in a catalog runtime and publishes its active-turn availability', async () => {
+    const session = createApiSessionClientFixture();
+    let agentState = {};
+    session.updateAgentState = vi.fn(async (updater) => {
+      agentState = updater(agentState);
+    });
+    const runtime = createCatalogProviderAcpRuntime({
+      ...createParams(),
+      provider: 'grok',
+      session,
+      sessionIdentity: { kind: 'manifest-metadata' },
+    });
+    expect(runtime.supportsInFlightSteer()).toBe(true);
+    expect(agentState).toMatchObject({ capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: false } });
+    runtime.beginTurn();
+    expect(agentState).toMatchObject({ capabilities: { inFlightSteerSupported: true, inFlightSteerAvailable: true } });
+    await runtime.flushTurn();
+    expect(agentState).toMatchObject({ capabilities: { inFlightSteerAvailable: false } });
   });
 
   it('runs the shared active-turn pending pump for a steer-capable catalog provider', async () => {

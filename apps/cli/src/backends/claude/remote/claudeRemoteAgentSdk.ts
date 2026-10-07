@@ -18,7 +18,9 @@ import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
 import { mapToClaudeMode, resolveClaudeSdkPermissionModeFromEnhancedMode } from '@/backends/claude/utils/permissionMode';
+import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
+import { normalizeAvailableCommands } from '@/agent/acp/commands/publishSlashCommands';
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
@@ -437,40 +439,7 @@ export async function claudeRemoteAgentSdk(opts: {
         }
         return out;
     })();
-    const settingSources = (() => {
-        type SettingSource = 'user' | 'project' | 'local';
-
-        const rawV2 = (mode as any).claudeRemoteSettingSourcesV2 as unknown;
-        if (Array.isArray(rawV2)) {
-            const set = new Set<string>();
-            for (const value of rawV2) {
-                if (typeof value === 'string') set.add(value);
-            }
-            const normalized: SettingSource[] = [];
-            for (const key of ['user', 'project', 'local'] as const) {
-                if (set.has(key)) normalized.push(key);
-            }
-
-            // Preserve fail-closed behavior: an explicit empty array means "no sources".
-            // Do not widen to defaults; respect the user's explicit choice.
-            if (normalized.length === 0) return [];
-
-            // NOTE: Claude Agent SDK currently defaults `settingSources` to `[]` and will still pass
-            // `--setting-sources ""` (empty string) when we omit the option.
-            // To avoid that footgun we always pass the full default list explicitly.
-            if (normalized.length === 3) return ['user', 'project', 'local'] as const;
-            return normalized;
-        }
-
-        // Legacy v1 mapping (back-compat).
-        const value = mode.claudeRemoteSettingSources;
-        if (value === 'user_project') return ['user', 'project'] as const;
-        if (value === 'project') return ['project'] as const;
-        if (value === 'none') return [];
-
-        // Default to all sources when not explicitly configured.
-        return ['user', 'project', 'local'] as const;
-    })();
+    const settingSources = resolveClaudeSettingSources(mode);
     const advancedOptionsJsonRaw = typeof mode.claudeRemoteAdvancedOptionsJson === 'string'
         ? mode.claudeRemoteAdvancedOptionsJson.trim()
         : '';
@@ -1730,19 +1699,12 @@ export async function claudeRemoteAgentSdk(opts: {
                     const commandsRaw = commandsResult.status === 'fulfilled' ? commandsResult.value : null;
                     const modelsRaw = modelsResult.status === 'fulfilled' ? modelsResult.value : null;
 
-                    const commandDetails = Array.isArray(commandsRaw)
-                        ? commandsRaw
-                            .map((cmd: any) => ({
-                                command: typeof cmd?.command === 'string' ? cmd.command : null,
-                                description: typeof cmd?.description === 'string' ? cmd.description : undefined,
-                            }))
-                            .filter((cmd: any) => typeof cmd.command === 'string' && cmd.command.length > 0)
-                        : [];
+                    const commandDetails = normalizeAvailableCommands(commandsRaw);
 
                     onCapabilities({
-                        ...(commandDetails.length > 0
+                        ...(Array.isArray(commandsRaw)
                             ? {
-                                slashCommands: commandDetails.map((c: any) => c.command),
+                                slashCommands: commandDetails.map((command) => command.command),
                                 slashCommandDetails: commandDetails,
                             }
                             : {}),

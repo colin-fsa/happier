@@ -717,6 +717,7 @@ export class PiRpcBackend implements AgentBackend {
   private usageStatsPublishChain: Promise<void> = Promise.resolve();
   private readonly connectedServiceRuntimeAuthAdapter = createPiConnectedServiceRuntimeAuthAdapter();
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   /**
    * Memoized once-per-session broker preflight (fail-closed). Broker readiness is a launch-time fact
    * (extension asset on disk + daemon bridge reachable + extension actually loaded), so verify once and
@@ -751,6 +752,17 @@ export class PiRpcBackend implements AgentBackend {
 
   offMessage(handler: AgentMessageHandler): void {
     this.messageHandlers.delete(handler);
+  }
+
+  /** Read Pi's native command catalog without opening a persisted session or sending a turn. */
+  async discoverCommands(params: Readonly<{ timeoutMs: number; deadlineAt?: number; signal?: AbortSignal }>): Promise<unknown[] | null> {
+    const lifecycle: PiRpcSessionOpenLifecycle = { deadlineMs: params.deadlineAt ?? Date.now() + params.timeoutMs, signal: params.signal };
+    await this.ensureProcess(lifecycle);
+    const catalog = await this.getCommands(
+      this.createSessionOpenCommandOptions(lifecycle),
+      this.resolveSessionOpenRemainingMs(lifecycle, 'command discovery'),
+    );
+    return Array.isArray(catalog.commands) ? [...catalog.commands] : null;
   }
 
   async startSession(
@@ -1413,8 +1425,13 @@ export class PiRpcBackend implements AgentBackend {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
+    if (this.disposePromise) return await this.disposePromise;
     this.disposed = true;
+    this.disposePromise = Promise.resolve().then(() => this.disposeResources());
+    return await this.disposePromise;
+  }
+
+  private async disposeResources(): Promise<void> {
 
     await abortPendingAcpPermissionRequests(this.permissionHandler, 'Pi backend disposed');
 
@@ -3221,8 +3238,8 @@ export class PiRpcBackend implements AgentBackend {
     return (asRecord(response.data) ?? {}) as PiRpcSessionStatsData;
   }
 
-  private async getCommands(options: PiRpcCommandOptions = {}): Promise<PiRpcCommandsData> {
-    const response = await this.sendCommand({ type: 'get_commands' }, 30_000, options);
+  private async getCommands(options: PiRpcCommandOptions = {}, timeoutMs = 30_000): Promise<PiRpcCommandsData> {
+    const response = await this.sendCommand({ type: 'get_commands' }, timeoutMs, options);
     return (asRecord(response.data) ?? {}) as PiRpcCommandsData;
   }
 

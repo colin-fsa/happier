@@ -632,7 +632,7 @@ export async function probeAgentModelsBestEffort(params: {
       return failedResult();
     }
 
-    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
+    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId, { processEnv: params.processEnv, cwd });
     if (!spawnValidation.ok) {
       return failedResult();
     }
@@ -655,6 +655,7 @@ export async function probeAgentModelsBestEffort(params: {
         permissionHandler,
         permissionMode: 'default',
         ...probeBackendOptions,
+        readinessOnly: true,
       });
       backend = created.backend;
 

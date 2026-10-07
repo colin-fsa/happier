@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import type { AgentBackend, AgentMessage, McpServerConfig } from '@/agent';
 import type { AgentPromptPayload } from '@/agent/core/AgentPromptPayload';
+import type { InFlightSteerPromptOptions } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { CatalogAgentId } from '@/backends/types';
 import {
   AcpPromptSubmissionPhaseError,
@@ -295,11 +296,7 @@ export type AcpRuntime = Readonly<{
   flushTurn: () => Promise<void>;
 }>;
 
-export type AcpRuntimeSteerPromptOptions = Readonly<{
-  localId?: string | null;
-  localIds?: readonly string[];
-  userMessageSeq?: number | null;
-  userMessageSeqs?: readonly number[];
+export type AcpRuntimeSteerPromptOptions = InFlightSteerPromptOptions & Readonly<{
   onProviderPromptAccepted?: () => void;
 }>;
 
@@ -2474,39 +2471,42 @@ export function createAcpRuntime(params: {
     },
 
     async flushTurn(): Promise<void> {
-      await waitForPendingTurnBoundaryStreamFlush();
-      await drainPendingSessionMediaPersistence();
-      const unavailableSessionMedia = [...unavailableSessionMediaByDedupeKey.values()].flat();
-      const sessionMediaMeta = persistedSessionMediaItems.length > 0 || unavailableSessionMedia.length > 0
-        ? buildSessionMediaMeta(persistedSessionMediaItems, undefined, unavailableSessionMedia)
-        : null;
-      const attachedSessionMediaToAssistantRow = sessionMediaMeta
-        ? streamedTranscriptWriter.mergeAssistantMeta(sessionMediaMeta)
-        : false;
-      await streamedTranscriptWriter.flushAll(
-        turnAborted
-          ? { reason: 'abort', interruptedReason: 'turn-aborted' }
-          : { reason: 'turn-end' },
-      );
-      await abortPendingAcpPermissionRequests(
-        params.permissionHandler,
-        turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
-        (error) => {
-          logger.debug(`[${params.provider}] Failed to abort pending permission requests at turn boundary`, error);
-        },
-      );
-      if (sessionMediaMeta && !attachedSessionMediaToAssistantRow && !turnAborted) {
-        await params.session.sendAgentMessageCommitted(
-          params.provider,
-          { type: 'message', message: '' },
-          { localId: randomUUID(), meta: sessionMediaMeta },
+      try {
+        await waitForPendingTurnBoundaryStreamFlush();
+        await drainPendingSessionMediaPersistence();
+        const unavailableSessionMedia = [...unavailableSessionMediaByDedupeKey.values()].flat();
+        const sessionMediaMeta = persistedSessionMediaItems.length > 0 || unavailableSessionMedia.length > 0
+          ? buildSessionMediaMeta(persistedSessionMediaItems, undefined, unavailableSessionMedia)
+          : null;
+        const attachedSessionMediaToAssistantRow = sessionMediaMeta
+          ? streamedTranscriptWriter.mergeAssistantMeta(sessionMediaMeta)
+          : false;
+        await streamedTranscriptWriter.flushAll(
+          turnAborted
+            ? { reason: 'abort', interruptedReason: 'turn-aborted' }
+            : { reason: 'turn-end' },
         );
+        await abortPendingAcpPermissionRequests(
+          params.permissionHandler,
+          turnAborted ? 'ACP runtime turn aborted' : 'ACP runtime turn ended',
+          (error) => {
+            logger.debug(`[${params.provider}] Failed to abort pending permission requests at turn boundary`, error);
+          },
+        );
+        if (sessionMediaMeta && !attachedSessionMediaToAssistantRow && !turnAborted) {
+          await params.session.sendAgentMessageCommitted(
+            params.provider,
+            { type: 'message', message: '' },
+            { localId: randomUUID(), meta: sessionMediaMeta },
+          );
+        }
+      } finally {
+        turnInFlight = false;
+        publishInFlightSteerCapabilities(false);
+        stopPendingPump();
+        params.onThinkingChange(false);
+        params.session.keepAlive(false, 'remote');
       }
-      turnInFlight = false;
-      publishInFlightSteerCapabilities(false);
-      stopPendingPump();
-      params.onThinkingChange(false);
-      params.session.keepAlive(false, 'remote');
       if (pendingTurnOutcome && pendingTurnOutcome.kind !== 'completed') {
         const providerTurnId = ensureCurrentTurnId();
         if (!taskStartedSent && params.session.sessionTurnLifecycle) {

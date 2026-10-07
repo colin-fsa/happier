@@ -30,6 +30,16 @@ function writeExecutable(filePath: string): void {
 }
 
 describe('validateProviderCliSpawn', () => {
+  it('validates the selected child environment instead of an invalid ambient override', async () => {
+    const root = createTempDirSync('happier-provider-spawn-');
+    TEMP_DIRS.add(root);
+    const selectedPath = join(root, process.platform === 'win32' ? 'selected-gemini.cmd' : 'selected-gemini');
+    writeExecutable(selectedPath);
+    process.env.HAPPIER_GEMINI_PATH = join(root, 'ambient-missing-gemini');
+    const processEnv = { ...process.env, HAPPIER_GEMINI_PATH: selectedPath };
+    await expect(validateProviderCliSpawn({ agentId: 'gemini', processEnv })).resolves.toEqual({ ok: true });
+    expect(process.env.HAPPIER_GEMINI_PATH).toContain('ambient-missing');
+  });
   it('accepts managed provider CLIs when PATH is missing the system install', async () => {
     const root = createTempDirSync('happier-provider-spawn-', tmpdir());
     TEMP_DIRS.add(root);

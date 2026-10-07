@@ -2,6 +2,9 @@ import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes
 import { withCodexAppServerControlClient } from '@/backends/codex/appServer/control/withCodexAppServerControlClient';
 import { readCodexAppServerSessionControls } from '@/backends/codex/appServer/sessionControlsMetadata';
 import { readCodexEnvironmentAuthState } from '@/backends/codex/cli/auth/readCodexEnvironmentAuthState';
+import { listCodexAppServerSkills } from '@/backends/codex/appServer/pluginAndSkillCatalog';
+import { resolveCodexSessionBackendMode } from '@happier-dev/agents';
+import { probeAcpCatalogs } from '@/capabilities/probes/probeAcpCatalogs';
 
 async function readControls(params: Readonly<{
     cwd: string;
@@ -32,6 +35,30 @@ async function readControls(params: Readonly<{
 export const codexPreflightSessionControlsProbeAdapter: PreflightSessionControlsProbeAdapter = {
     connectedServiceAuth: 'materialized-env',
     failureCacheStrategy: 'retry',
+    probeCatalogsRaw: async (params) => {
+        const backendMode = resolveCodexSessionBackendMode({ metadata: null, accountSettings: params.accountSettings ?? null });
+        if (backendMode === 'acp') return await probeAcpCatalogs({ ...params, agentId: 'codex' });
+        const result = await withCodexAppServerControlClient({
+            cwd: params.cwd,
+            accountSettings: params.accountSettings ?? null,
+            processEnv: params.processEnv,
+            timeoutMs: params.timeoutMs,
+            signal: params.signal,
+            onCleanup: params.onNativeCleanup,
+            run: (client) => listCodexAppServerSkills({ client, cwd: params.cwd }),
+        });
+        if (!result.ok) {
+            if (result.errorCode === 'unsupported_codex_app_server_control') {
+                return { commands: null, skills: null, diagnostic: result.error };
+            }
+            throw new Error(result.error);
+        }
+        return {
+            commands: null,
+            skills: result.value.supported ? result.value.skills : null,
+            ...(result.value.diagnostic ? { diagnostic: result.value.diagnostic } : {}),
+        };
+    },
     probeModelsRaw: async (params) => {
         const controls = await readControls({
             cwd: params.cwd,

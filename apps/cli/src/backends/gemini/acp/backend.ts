@@ -97,6 +97,9 @@ function resolveGeminiAuthConfig(env: Readonly<Record<string, string | undefined
  * Options for creating a Gemini ACP backend
  */
 export interface GeminiBackendOptions extends AgentFactoryOptions {
+  /** Discover controls with existing authentication without opening an OAuth browser. */
+  readinessOnly?: boolean;
+
   /** API key for Gemini (defaults to GEMINI_API_KEY or GOOGLE_API_KEY env var) */
   apiKey?: string;
   
@@ -293,6 +296,8 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       DEBUG: '',
       // Prevent gemini-cli from relaunching itself (relaunch can break ACP stdio wiring).
       GEMINI_CLI_NO_RELAUNCH: 'true',
+      // Gemini ACP is interactive even with NO_BROWSER; CI suppresses native OAuth browser launch.
+      ...(options.readinessOnly === true ? { CI: '1' } : {}),
     },
     unsetEnv,
     mcpServers: options.mcpServers,

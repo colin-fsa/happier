@@ -3,6 +3,7 @@ import type { AgentState, Metadata, PermissionMode, UserMessage } from '@/api/ty
 import { pushMessageToQueueWithSpecialCommands, type SpecialCommandQueue } from '@/agent/runtime/queueSpecialCommands';
 import { resolveAppendSystemPromptModeOverride } from '@/agent/runtime/permission/appendSystemPromptField';
 import { resolveProviderPromptForDispatch } from '@/agent/runtime/prompt/resolveProviderPromptForDispatch';
+import type { StructuredInputCatalogReaders } from '@/agent/runtime/prompt/resolveStructuredInputProviderContext';
 import { createProviderPromptAcceptanceSettlement } from '@/agent/runtime/prompt/createProviderPromptAcceptanceSettlement';
 import { isNonSteerablePromptPayload } from '@/cli/parsers/specialCommands';
 
@@ -41,7 +42,7 @@ export type InFlightConfigApplyOutcome = Readonly<
   | { status: 'failed'; reason?: string | undefined }
 >;
 
-export type InFlightSteerController = Readonly<{
+export type InFlightSteerController = StructuredInputCatalogReaders & Readonly<{
   /**
    * Whether the runtime is currently processing a turn (i.e. can accept steer input).
    */
@@ -50,6 +51,7 @@ export type InFlightSteerController = Readonly<{
    * Whether the runtime/backend combination supports steering input into an active turn.
    */
   supportsInFlightSteer: () => boolean;
+  isProviderNativeCommand?: (text: string) => boolean | Promise<boolean>;
   /**
    * Send additional user text to the in-flight turn.
    *
@@ -57,7 +59,7 @@ export type InFlightSteerController = Readonly<{
    */
   steerText: (
     text: string,
-    identity?: InFlightSteerDeliveryIdentity,
+    options?: InFlightSteerPromptOptions,
     callbacks?: Readonly<{ onProviderPromptAccepted?: () => void }>,
   ) => Promise<void>;
   /** Cancel the active provider turn before executing an `interrupt_and_send` Pending action. */
@@ -75,6 +77,10 @@ export type InFlightSteerDeliveryIdentity = Readonly<{
   localIds?: readonly string[];
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
+}>;
+
+export type InFlightSteerPromptOptions = InFlightSteerDeliveryIdentity & Readonly<{
+  metadata?: unknown;
 }>;
 
 export function registerPermissionModeMessageQueueBinding(opts: {
@@ -247,52 +253,47 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           await steerReplaySeedRetirement.drain();
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           let providerText = text;
+          let providerMetadata: unknown = message.meta;
           let settleReplaySeedOnProviderAcceptance: (() => Promise<unknown>) | null = null;
           if (typeof session.getMetadataSnapshot === 'function') {
-            try {
-              if (!isCurrentBinding(session, messageBindingGeneration)) return;
-              // ACP steer carries no metadata to the PROVIDER, so the resolved meta below is
-              // discarded — but the message's own metadata is still handed in, because the
-              // session-reference projection is TEXT and must be identical on send and steer
-              // (D-21). No catalog readers are supplied, so this costs no RPC and cannot
-              // reject: skill/vendor provider context is a meta projection no ACP backend
-              // reads. It routes through the one prompt-finalization owner (D-21a) rather
-              // than calling the replay seed directly.
-              const seedResolution = await resolveProviderPromptForDispatch({
-                session: {
-                  getMetadataSnapshot: () =>
-                    isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
-                  // Resolution is generation-guarded above and below. This writer is retained
-                  // only by the exact provider-acceptance settlement, which must still retire
-                  // the seed on its original Session after the queue binding moves elsewhere.
-                  updateMetadata: (updater) => session.updateMetadata(updater),
-                  ...(typeof session.refreshSessionSnapshotFromServerBestEffort === 'function'
-                    ? {
-                        refreshSessionSnapshotFromServerBestEffort: (refreshOpts?: {
-                          reason: 'connect' | 'waitForMetadataUpdate';
-                        }) => {
-                          if (!isCurrentBinding(session, messageBindingGeneration)) return Promise.resolve();
-                          return session.refreshSessionSnapshotFromServerBestEffort?.(refreshOpts) ?? Promise.resolve();
-                        },
-                      }
-                    : {}),
-                },
-                userText: text,
-                allowSeed: true,
-                localId: deliveryIdentity.localId,
-                nowMs: Date.now(),
-                refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
-                ...(message.meta ? { meta: message.meta } : {}),
-              });
-              if (!isCurrentBinding(session, messageBindingGeneration)) return;
-              didReplaySeedBootstrapForSteer = true;
-              providerText = seedResolution.providerPrompt;
-              if (seedResolution.seedApplied) {
-                settleReplaySeedOnProviderAcceptance = seedResolution.settleReplaySeedOnProviderAcceptance;
-              }
-            } catch {
-              if (!isCurrentBinding(session, messageBindingGeneration)) return;
-              // Best-effort only; fall back to steering the raw user text.
+            if (!isCurrentBinding(session, messageBindingGeneration)) return;
+            const providerNativeCommand = await steer.isProviderNativeCommand?.(text) === true;
+            if (!isCurrentBinding(session, messageBindingGeneration)) return;
+            // Send and steer share finalization and live catalog resolution. Provider
+            // adapters project the resolved metadata according to their native contract.
+            const seedResolution = await resolveProviderPromptForDispatch({
+              session: {
+                getMetadataSnapshot: () =>
+                  isCurrentBinding(session, messageBindingGeneration) ? session.getMetadataSnapshot?.() : {},
+                // Resolution is generation-guarded above and below. This writer is retained
+                // only by the exact provider-acceptance settlement, which must still retire
+                // the seed on its original Session after the queue binding moves elsewhere.
+                updateMetadata: (updater) => session.updateMetadata(updater),
+                ...(typeof session.refreshSessionSnapshotFromServerBestEffort === 'function'
+                  ? {
+                      refreshSessionSnapshotFromServerBestEffort: (refreshOpts?: {
+                        reason: 'connect' | 'waitForMetadataUpdate';
+                      }) => {
+                        if (!isCurrentBinding(session, messageBindingGeneration)) return Promise.resolve();
+                        return session.refreshSessionSnapshotFromServerBestEffort?.(refreshOpts) ?? Promise.resolve();
+                      },
+                    }
+                  : {}),
+              },
+              userText: text,
+              allowSeed: !providerNativeCommand,
+              localId: deliveryIdentity.localId,
+              nowMs: Date.now(),
+              refreshMetadataBeforeRead: !didReplaySeedBootstrapForSteer,
+              ...(message.meta ? { meta: message.meta } : {}),
+              catalogs: steer,
+            });
+            if (!isCurrentBinding(session, messageBindingGeneration)) return;
+            didReplaySeedBootstrapForSteer = true;
+            providerText = seedResolution.providerPrompt;
+            providerMetadata = seedResolution.meta;
+            if (seedResolution.seedApplied) {
+              settleReplaySeedOnProviderAcceptance = seedResolution.settleReplaySeedOnProviderAcceptance;
             }
           }
 
@@ -313,7 +314,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
                   settleReplaySeedOnProviderAcceptance,
                 )
             : null;
-          if (deliveryIdentity.steerOptions === undefined) {
+          const steerOptions = providerMetadata && typeof providerMetadata === 'object'
+            && Object.keys(providerMetadata).length > 0
+            ? { ...deliveryIdentity.steerOptions, metadata: providerMetadata }
+            : deliveryIdentity.steerOptions;
+          if (steerOptions === undefined) {
             if (onProviderPromptAccepted) {
               await steer.steerText(providerText, undefined, { onProviderPromptAccepted });
             } else {
@@ -322,11 +327,11 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           } else if (onProviderPromptAccepted) {
             await steer.steerText(
               providerText,
-              deliveryIdentity.steerOptions,
+              steerOptions,
               { onProviderPromptAccepted },
             );
           } else {
-            await steer.steerText(providerText, deliveryIdentity.steerOptions);
+            await steer.steerText(providerText, steerOptions);
           }
           // Exact runtimes confirm before returning and are drained here. A runtime that returns
           // at transport custody confirms later. Each callback closes over its own settler so a
@@ -337,14 +342,16 @@ export function registerPermissionModeMessageQueueBinding(opts: {
           }
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           return;
-        } catch {
+        } catch (error) {
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           if (isClaimedSteer) {
+            logger.infoFile('[permissionMode] In-flight provider input was rejected', { error, localId: deliveryIdentity.localId });
             await blockPendingDelivery('steering_unavailable');
             if (!isCurrentBinding(session, messageBindingGeneration)) return;
             publishSteerBounceUnavailable(session);
             return;
           }
+          logger.infoFile('[permissionMode] In-flight provider input returned to the queue', { error, localId: deliveryIdentity.localId });
           pushToQueueBestEffort();
           if (!isCurrentBinding(session, messageBindingGeneration)) return;
           // Lane P (O-design Seam A corrective): a steer the runner accepted just BOUNCED to the

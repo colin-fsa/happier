@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -10,6 +10,7 @@ import { resolveAcpSdkEntryFromCwd } from '@/capabilities/probes/agentModelsProb
 import type { AcpAuthentication } from '@/agent/acp/AcpAuthentication';
 
 import { createGeminiBackend } from './backend';
+import { probeAcpCatalogs } from '@/capabilities/probes/probeAcpCatalogs';
 
 type AcpBackendLike = {
   options: {
@@ -23,6 +24,8 @@ type AcpBackendLike = {
 describe('createGeminiBackend auth method', () => {
   const envKeys = [
     'HOME',
+    'CI',
+    'NO_BROWSER',
     'HAPPIER_GEMINI_PATH',
     'GEMINI_API_KEY',
     'GOOGLE_API_KEY',
@@ -62,7 +65,7 @@ describe('createGeminiBackend auth method', () => {
   }
 
   async function withFakeGeminiAcpCli<T>(
-    params: { newSessionLogPath: string; authenticateLogPath?: string },
+    params: { newSessionLogPath: string; authenticateLogPath?: string; catalogAuthentication?: 'cached' | 'missing'; browserLaunchPath?: string },
     fn: (geminiPath: string) => Promise<T> | T,
   ): Promise<T> {
     return await withTempDir('happier-gemini-bin-', async (dir) => {
@@ -95,6 +98,8 @@ async function main() {
   const acp = await import(pathToFileURL(${JSON.stringify(acpSdkEntry)}).href);
   const newSessionLogPath = ${JSON.stringify(params.newSessionLogPath)};
   const authenticateLogPath = ${JSON.stringify(params.authenticateLogPath ?? null)};
+  const catalogAuthentication = ${JSON.stringify(params.catalogAuthentication ?? null)};
+  const browserLaunchPath = ${JSON.stringify(params.browserLaunchPath ?? null)};
 
   const app = acp.agent({ name: 'happier-gemini-auth-test-agent' })
     .onRequest('initialize', async () => {
@@ -113,9 +118,14 @@ async function main() {
       if (authenticateLogPath) {
         appendFileSync(authenticateLogPath, JSON.stringify(params) + '\\n', 'utf8');
       }
+      // Gemini v0.38.2 and v0.63.0 suppress OAuth browser launch when CI is nonempty.
+      if (catalogAuthentication === 'missing') {
+        if (!process.env.CI && browserLaunchPath) appendFileSync(browserLaunchPath, 'opened');
+        throw new Error('Authentication required');
+      }
       return {};
     })
-    .onRequest('session/new', async ({ params }) => {
+    .onRequest('session/new', async ({ params, client }) => {
       const mcpServers = Array.isArray(params && params.mcpServers)
         ? params.mcpServers.map(normalizeServer)
         : [];
@@ -148,7 +158,13 @@ async function main() {
             : null,
         },
       }) + '\\n', 'utf8');
-      return { sessionId: randomUUID() };
+      const sessionId = randomUUID();
+      if (catalogAuthentication === 'cached') {
+        await client.notify('session/update', { sessionId, update: {
+          sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'native-review', description: 'Review the project' }],
+        } });
+      }
+      return { sessionId };
     })
     .onRequest('session/prompt', async ({ params, client }) => {
       await client.notify('session/update', {
@@ -474,6 +490,42 @@ main().catch((error) => {
       }),
     );
   });
+
+  it.each(['cached', 'missing'] as const)('discovers Gemini commands without opening an OAuth browser with %s authentication', async (catalogAuthentication) => {
+    await withTempDir('gemini-catalog-auth-', async (dir) => {
+      const home = join(dir, 'home');
+      mkdirSync(home);
+      const browserLaunchPath = join(dir, 'browser-launch');
+      await withFakeGeminiAcpCli({ newSessionLogPath: join(dir, 'sessions.jsonl'), catalogAuthentication, browserLaunchPath }, async () => {
+        envScope.patch({ HOME: home, CI: undefined, NO_BROWSER: undefined, GEMINI_API_KEY: undefined, GOOGLE_API_KEY: undefined });
+        const pending = probeAcpCatalogs({ agentId: 'gemini', cwd: dir, timeoutMs: 5_000, processEnv: { ...process.env } });
+        if (catalogAuthentication === 'cached') {
+          await expect(pending).resolves.toEqual({ commands: [{ name: 'native-review', description: 'Review the project' }], skills: null });
+        } else {
+          await expect(pending).rejects.toThrow();
+        }
+        expect(existsSync(browserLaunchPath)).toBe(false);
+      });
+    });
+  }, 20_000);
+
+  it('preserves interactive OAuth startup for an ordinary Gemini session', async () => {
+    await withTempDir('gemini-session-auth-', async (dir) => {
+      const home = join(dir, 'home');
+      mkdirSync(home);
+      const browserLaunchPath = join(dir, 'browser-launch');
+      await withFakeGeminiAcpCli({ newSessionLogPath: join(dir, 'sessions.jsonl'), catalogAuthentication: 'missing', browserLaunchPath }, async () => {
+        envScope.patch({ HOME: home, CI: undefined, NO_BROWSER: undefined, GEMINI_API_KEY: undefined, GOOGLE_API_KEY: undefined });
+        const { backend } = createGeminiBackend({ cwd: dir });
+        try {
+          await expect(backend.startSession()).rejects.toThrow();
+          expect(existsSync(browserLaunchPath)).toBe(true);
+        } finally {
+          await backend.dispose();
+        }
+      });
+    });
+  }, 20_000);
 
   it('passes gateway metadata on the Gemini ACP authenticate call', async () => {
     await withTempDir('happier-gemini-home-', async (homeDir) => {

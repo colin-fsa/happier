@@ -16,11 +16,13 @@ export const agent = {
     return async (opts) => {
       const options = opts as Parameters<typeof createCatalogDefinedAcpBackend>[1] & {
         accountSettings?: AccountSettings | null;
+        readinessOnly?: boolean;
       };
       const { ensureAgyAcpServerForLaunch } = await import('./acp/ensureAgyAcpServerForLaunch');
       const launch = await ensureAgyAcpServerForLaunch({
         accountSettings: options.accountSettings,
         env: options.env,
+        ...(options.readinessOnly ? { readinessOnly: true } : {}),
       });
       return { backend: createCatalogDefinedAcpBackend('agy', { ...options, launch }) };
     };

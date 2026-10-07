@@ -1,4 +1,4 @@
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 import { checklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
@@ -22,6 +22,16 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
+import { probeAgentCatalogs } from '@/capabilities/probes/agentCatalogsProbe';
+import { remainingCatalogProbeMs, withCatalogProbeLifecycle, type CatalogProbeLifecycle, type NativeCatalogCleanup, type RegisterNativeCatalogCleanup } from '@/capabilities/probes/catalogProbeLifecycle';
+import { buildAgentProbeCacheKey } from '@/capabilities/probes/buildAgentProbeCacheKey';
+import { resolveAgentProbeVariant } from '@/capabilities/probes/resolveAgentProbeVariant';
+import { createHash } from 'node:crypto';
+import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
+import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
+import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR, parseExplicitSpawnEnvKeysFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+import { logger } from '@/ui/logger';
+import { stripDaemonOwnedChildEnvOverrides } from '@/daemon/spawn/stripDaemonOwnedChildEnvOverrides';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
@@ -47,7 +57,63 @@ import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfile
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
-type CliProbeMethod = 'probeModels' | 'probeModes' | 'probeConfigOptions';
+type CliProbeMethod = 'probeModels' | 'probeModes' | 'probeConfigOptions' | 'probeCatalogs';
+// Only share an active launch. The composer lifecycle owns its settled catalog snapshot.
+type CatalogProbeOperation = {
+    controller: AbortController;
+    promise: Promise<CapabilitiesInvokeResponse>;
+    waiters: number;
+    cleanup: NativeCatalogCleanup | null;
+};
+const catalogProbeRequests = new Map<string, CatalogProbeOperation>();
+
+async function shareCatalogProbe(
+    key: string,
+    lifecycle: Required<CatalogProbeLifecycle>,
+    run: (lifecycle: Required<CatalogProbeLifecycle>, registerCleanup?: RegisterNativeCatalogCleanup) => Promise<CapabilitiesInvokeResponse>,
+    registerCleanup?: RegisterNativeCatalogCleanup,
+): Promise<CapabilitiesInvokeResponse> {
+    lifecycle.signal.throwIfAborted();
+    let operation = catalogProbeRequests.get(key);
+    if (operation?.controller.signal.aborted) operation = undefined;
+    if (!operation) {
+        const controller = new AbortController();
+        const created: CatalogProbeOperation = {
+            controller,
+            waiters: 0,
+            cleanup: null,
+            promise: Promise.resolve().then(() => withCatalogProbeLifecycle(
+                { ...lifecycle, signal: controller.signal },
+                (sharedLifecycle) => run(sharedLifecycle, (cleanup) => { created.cleanup = cleanup; }),
+                () => created.cleanup?.(),
+            )),
+        };
+        operation = created;
+        catalogProbeRequests.set(key, created);
+        void created.promise.finally(() => {
+            if (catalogProbeRequests.get(key) === created) catalogProbeRequests.delete(key);
+        }).catch(() => undefined);
+    }
+    const shared = operation;
+    registerCleanup?.(() => shared.controller.signal.aborted ? shared.cleanup?.() : undefined);
+    shared.waiters += 1;
+    let released = false;
+    const release = () => {
+        if (released) return;
+        released = true;
+        shared.waiters -= 1;
+        if (shared.waiters === 0) {
+            shared.controller.abort(lifecycle.signal.reason);
+        }
+    };
+    lifecycle.signal.addEventListener('abort', release, { once: true });
+    try {
+        return await shared.promise;
+    } finally {
+        lifecycle.signal.removeEventListener('abort', release);
+        release();
+    }
+}
 
 function titleCase(value: string): string {
     if (!value) return value;
@@ -112,6 +178,9 @@ async function resolveProbeBackendContext(
     const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
     const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
     const runtimeKindOverride = (params ?? {}).runtimeKindOverride;
+    const applyRuntimeOverride = (settings: Record<string, unknown> | null) => params?.agentId
+        ? applyAgentRuntimeKindOverrideToAccountSettings({ agentId: params.agentId as AgentId, accountSettings: settings, runtimeKindOverride })
+        : settings;
 
     const agentId = typeof params?.agentId === 'string' ? params.agentId : null;
     const needsAccountSettingsForProbes =
@@ -122,14 +191,14 @@ async function resolveProbeBackendContext(
         || needsAccountSettingsForProbes
         || profileId !== null;
     if (!shouldLoadAccountSettings && options.requireCredentials !== true) {
-      return { backendTarget, credentials: null, accountSettings: null };
+      return { backendTarget, credentials: null, accountSettings: applyRuntimeOverride(null) };
     }
 
     const credentials = await readCredentials().catch(() => null);
-    if (!credentials) return { backendTarget, credentials: null, accountSettings: null };
+    if (!credentials) return { backendTarget, credentials: null, accountSettings: applyRuntimeOverride(null) };
 
     if (!shouldLoadAccountSettings) {
-      return { backendTarget, credentials, accountSettings: null };
+      return { backendTarget, credentials, accountSettings: applyRuntimeOverride(null) };
     }
 
     const accountSettingsContext = await bootstrapAccountSettingsContext({
@@ -141,13 +210,7 @@ async function resolveProbeBackendContext(
     }).catch(() => null);
 
     const accountSettings = accountSettingsContext?.settings ?? null;
-    const effectiveAccountSettings = params?.agentId
-        ? applyAgentRuntimeKindOverrideToAccountSettings({
-            agentId: params.agentId as AgentId,
-            accountSettings,
-            runtimeKindOverride,
-        })
-        : accountSettings;
+    const effectiveAccountSettings = applyRuntimeOverride(accountSettings);
 
     return {
       backendTarget,
@@ -189,7 +252,15 @@ async function resolveProfileProbeEnvironment(params: Readonly<{
         promptSecretFn: null,
         startedBy: 'daemon',
     });
-    return { ...params.processEnv, ...overlay.envOverlayExpanded };
+    const envOverlay = stripDaemonOwnedChildEnvOverrides(overlay.envOverlayExpanded);
+    return {
+        ...params.processEnv,
+        ...envOverlay,
+        [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: JSON.stringify(Array.from(new Set([
+            ...parseExplicitSpawnEnvKeysFromProcessEnv(params.processEnv),
+            ...Object.keys(envOverlay),
+        ]))),
+    };
 }
 
 async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
@@ -314,26 +385,61 @@ async function invokeCliProbeMethod(
     agentId: AgentCatalogEntry['id'],
     method: CliProbeMethod,
     params?: Record<string, unknown>,
+    signal?: AbortSignal,
+): Promise<CapabilitiesInvokeResponse> {
+    if (method !== 'probeCatalogs') return await prepareAndInvokeCliProbeMethod(agentId, method, params);
+    if (params?.connectedServices !== undefined && params.connectedServices !== null
+        && !ConnectedServiceBindingsV1Schema.safeParse(params.connectedServices).success) {
+        return { ok: false, error: { code: 'invalid-request', message: 'Invalid selected connected-service bindings' } };
+    }
+    const timeoutMs = typeof params?.timeoutMs === 'number' ? params.timeoutMs : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
+    let cleanup: NativeCatalogCleanup | undefined;
+    try {
+        return await withCatalogProbeLifecycle({ timeoutMs, signal }, (lifecycle) =>
+            prepareAndInvokeCliProbeMethod(agentId, method, params, lifecycle, (nativeCleanup) => { cleanup = nativeCleanup; }),
+            () => cleanup?.());
+    } catch (error) {
+        logger.infoFile('[capabilities] Native catalog preflight failed', { agentId });
+        return { ok: false, error: {
+            code: 'preflight-catalog-unavailable',
+            message: error instanceof Error ? error.message : 'Native catalog discovery failed',
+        } };
+    }
+}
+
+async function prepareAndInvokeCliProbeMethod(
+    agentId: AgentCatalogEntry['id'],
+    method: CliProbeMethod,
+    params?: Record<string, unknown>,
+    lifecycle?: Required<CatalogProbeLifecycle>,
+    registerCleanup?: RegisterNativeCatalogCleanup,
 ): Promise<CapabilitiesInvokeResponse> {
     const connectedServices = parseProbeConnectedServices(params);
     const entry = AGENTS[agentId];
     const preflightAdapter = entry?.getPreflightSessionControlsProbeAdapter
         ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
         : null;
-    const requiresMaterializedAuth = preflightAdapter?.connectedServiceAuth === 'materialized-env'
+    if (lifecycle) remainingCatalogProbeMs(lifecycle);
+    const requiresMaterializedAuth = (preflightAdapter?.connectedServiceAuth === 'materialized-env'
+        || (method === 'probeCatalogs' && preflightAdapter?.connectedServiceAuth === 'materialized-env-for-catalogs'))
         && Boolean(connectedServices && Object.values(connectedServices.bindingsByServiceId)
             .some((binding) => binding.source === 'connected'));
     const probeContext = await resolveProbeBackendContext(
         { ...params, agentId },
         { requireCredentials: requiresMaterializedAuth },
     );
+    if (lifecycle) remainingCatalogProbeMs(lifecycle);
     const timeoutMsRaw = (params ?? {}).timeoutMs;
     const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
     const cwd = resolveProbeCwd((params ?? {}).cwd);
     const profileId = parseProbeProfileId(params);
     let profileProcessEnv: NodeJS.ProcessEnv;
     try {
-        profileProcessEnv = await resolveProfileProbeEnvironment({
+        // The GUI supplies the launch owner's fully materialized profile map, including an
+        // empty map when the selected secret should come from the machine environment.
+        profileProcessEnv = method === 'probeCatalogs' && params?.environmentVariables !== undefined
+            ? process.env
+            : await resolveProfileProbeEnvironment({
             agentId,
             profileId,
             credentials: probeContext.credentials,
@@ -341,6 +447,7 @@ async function invokeCliProbeMethod(
             processEnv: process.env,
         });
     } catch {
+        lifecycle?.signal.throwIfAborted();
         return {
             ok: false,
             error: {
@@ -349,56 +456,100 @@ async function invokeCliProbeMethod(
             },
         };
     }
-    let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment;
-    try {
-        connectedServiceProbeEnvironment = await resolveConnectedServiceProbeEnvironment({
-            agentId,
-            cwd,
-            connectedServices,
-            credentials: probeContext.credentials,
-            accountSettings: probeContext.accountSettings,
-            requiresMaterializedAuth,
-            processEnv: profileProcessEnv,
-        });
-    } catch {
-        return {
-            ok: false,
-            error: {
-                code: 'connected-service-preflight-failed',
-                message: 'Could not prepare the selected connected-service account for this probe.',
-            },
-        };
-    }
-
-    try {
-        const commonParams = {
-            agentId,
-            backendTarget: probeContext.backendTarget,
-            cwd,
-            timeoutMs,
-            profileId,
-            accountSettings: probeContext.accountSettings,
-            credentials: probeContext.credentials,
-            connectedServices,
-            processEnv: connectedServiceProbeEnvironment.processEnv,
-            connectedServiceSelectionCacheKey:
-                connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
-        };
-
-        if (method === 'probeModels') {
-            const result = await probeAgentModelsBestEffort({ ...commonParams, bypassCache: params?.bypassCache === true });
-            return { ok: true, result };
-        }
-        if (method === 'probeModes') {
-            const result = await probeAgentModesBestEffort(commonParams);
-            return { ok: true, result };
+    if (lifecycle) remainingCatalogProbeMs(lifecycle);
+    const selectedEnv = validateEnvVarRecordStrict(params?.environmentVariables);
+    if (!selectedEnv.ok) return { ok: false, error: { code: 'invalid-request', message: selectedEnv.error } };
+    const selectedEnvOverlay = stripDaemonOwnedChildEnvOverrides(selectedEnv.env);
+    profileProcessEnv = {
+        ...profileProcessEnv,
+        ...expandEnvironmentVariables(selectedEnvOverlay, { ...profileProcessEnv, ...selectedEnvOverlay }),
+        [HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR]: JSON.stringify(Array.from(new Set([
+            ...parseExplicitSpawnEnvKeysFromProcessEnv(profileProcessEnv),
+            ...Object.keys(selectedEnvOverlay),
+        ]))),
+    };
+    const runProbe = async (probeLifecycle = lifecycle, registerNativeCleanup = registerCleanup): Promise<CapabilitiesInvokeResponse> => {
+        let connectedServiceProbeEnvironment: ConnectedServiceProbeEnvironment;
+        try {
+            connectedServiceProbeEnvironment = await resolveConnectedServiceProbeEnvironment({
+                agentId,
+                cwd,
+                connectedServices,
+                credentials: probeContext.credentials,
+                accountSettings: probeContext.accountSettings,
+                requiresMaterializedAuth,
+                processEnv: profileProcessEnv,
+            });
+        } catch {
+            probeLifecycle?.signal.throwIfAborted();
+            return {
+                ok: false,
+                error: {
+                    code: 'connected-service-preflight-failed',
+                    message: 'Could not prepare the selected connected-service account for this probe.',
+                },
+            };
         }
 
-        const result = await probeAgentConfigOptionsBestEffort(commonParams);
-        return { ok: true, result };
-    } finally {
-        await connectedServiceProbeEnvironment.cleanup?.();
-    }
+        let connectedCleanup: Promise<void> | undefined;
+        const cleanupConnected = () => connectedCleanup ??= Promise.resolve().then(() => connectedServiceProbeEnvironment.cleanup?.());
+        try {
+            if (connectedServiceProbeEnvironment.cleanup) registerNativeCleanup?.(cleanupConnected);
+            const remainingMs = probeLifecycle ? remainingCatalogProbeMs(probeLifecycle) : timeoutMs;
+            const commonParams = {
+                agentId,
+                backendTarget: probeContext.backendTarget,
+                cwd,
+                timeoutMs: remainingMs,
+                ...(probeLifecycle ? { deadlineAt: probeLifecycle.deadlineAt, signal: probeLifecycle.signal } : {}),
+                ...(registerNativeCleanup ? { onNativeCleanup: (nativeCleanup: NativeCatalogCleanup) => registerNativeCleanup(async () => {
+                    try {
+                        await nativeCleanup();
+                    } finally {
+                        await cleanupConnected();
+                    }
+                }) } : {}),
+                profileId,
+                accountSettings: probeContext.accountSettings,
+                credentials: probeContext.credentials,
+                connectedServices,
+                processEnv: connectedServiceProbeEnvironment.processEnv,
+                connectedServiceSelectionCacheKey:
+                    connectedServiceProbeEnvironment.connectedServiceSelectionCacheKey,
+            };
+
+            if (method === 'probeModels') {
+                const result = await probeAgentModelsBestEffort({ ...commonParams, bypassCache: params?.bypassCache === true });
+                return { ok: true, result };
+            }
+            if (method === 'probeModes') {
+                const result = await probeAgentModesBestEffort(commonParams);
+                return { ok: true, result };
+            }
+            if (method === 'probeCatalogs') {
+                return { ok: true, result: await probeAgentCatalogs({ ...commonParams, bypassCache: params?.bypassCache === true }) };
+            }
+
+            const result = await probeAgentConfigOptionsBestEffort(commonParams);
+            return { ok: true, result };
+        } finally {
+            await cleanupConnected();
+        }
+    };
+    if (method !== 'probeCatalogs' || params?.bypassCache === true) return await runProbe();
+    const scopeFingerprint = createHash('sha256').update(JSON.stringify({
+        environment: Object.entries(profileProcessEnv).sort(([left], [right]) => left.localeCompare(right)),
+        accountSettings: probeContext.accountSettings,
+        connectedServices,
+        profileId,
+        timeoutMs,
+    })).digest('hex');
+    const scopeKey = buildAgentProbeCacheKey({
+        agentId, cwd, backendTarget: probeContext.backendTarget,
+        variant: `${resolveAgentProbeVariant({ agentId, backendTarget: probeContext.backendTarget,
+            accountSettings: probeContext.accountSettings, connectedServices, processEnv: profileProcessEnv })}:${scopeFingerprint}`,
+    });
+    return await shareCatalogProbe(scopeKey, lifecycle!, runProbe, registerCleanup);
 }
 
 function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capability {
@@ -412,24 +563,25 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
                 probeModels: { title: 'Probe models' },
                 probeModes: { title: 'Probe modes' },
                 probeConfigOptions: { title: 'Probe config options' },
+                probeCatalogs: { title: 'Probe commands and skills' },
             },
         },
         detect: async ({ request, context }) => {
             const entry = context.cliSnapshot?.clis?.[agentId];
             return buildCliCapabilityData({ request, entry });
         },
-        invoke: async ({ method, params }) => {
+        invoke: async ({ method, params, signal }) => {
             if (method === 'install') {
                 return invokeProviderCliInstall(agentId, params);
             }
             if (method === 'probeModels') {
-                return invokeCliProbeMethod(agentId, method, params);
+                return invokeCliProbeMethod(agentId, method, params, signal);
             }
             if (method === 'probeModes') {
-                return invokeCliProbeMethod(agentId, method, params);
+                return invokeCliProbeMethod(agentId, method, params, signal);
             }
-            if (method === 'probeConfigOptions') {
-                return invokeCliProbeMethod(agentId, method, params);
+            if (method === 'probeConfigOptions' || method === 'probeCatalogs') {
+                return invokeCliProbeMethod(agentId, method, params, signal);
             }
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
         },
@@ -445,25 +597,26 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
         ...(existingMethods.probeModels ? {} : { probeModels: { title: 'Probe models' } }),
         ...(existingMethods.probeModes ? {} : { probeModes: { title: 'Probe modes' } }),
         ...(existingMethods.probeConfigOptions ? {} : { probeConfigOptions: { title: 'Probe config options' } }),
+        ...(existingMethods.probeCatalogs ? {} : { probeCatalogs: { title: 'Probe commands and skills' } }),
         ...(existingMethods.install ? {} : { install: { title: 'Install' } }),
     };
 
     const baseInvoke = cap.invoke;
 
-    const invoke: Capability['invoke'] = async ({ method, params }) => {
+    const invoke: Capability['invoke'] = async ({ method, params, signal }) => {
         if (method === 'install') {
             return invokeProviderCliInstall(agentId, params);
         }
         if (method === 'probeModels') {
-            return invokeCliProbeMethod(agentId, method, params);
+            return invokeCliProbeMethod(agentId, method, params, signal);
         }
         if (method === 'probeModes') {
-            return invokeCliProbeMethod(agentId, method, params);
+            return invokeCliProbeMethod(agentId, method, params, signal);
         }
-        if (method === 'probeConfigOptions') {
-            return invokeCliProbeMethod(agentId, method, params);
+        if (method === 'probeConfigOptions' || method === 'probeCatalogs') {
+            return invokeCliProbeMethod(agentId, method, params, signal);
         }
-        if (baseInvoke) return await baseInvoke({ method, params });
+        if (baseInvoke) return await baseInvoke({ method, params, signal });
         return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
     };
 
@@ -538,7 +691,7 @@ export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegist
         return await (await getService()).detect(data);
     });
 
-    rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data) => {
-        return await (await getService()).invoke(data);
+    rpcHandlerManager.registerHandler<CapabilitiesInvokeRequest, CapabilitiesInvokeResponse>(RPC_METHODS.CAPABILITIES_INVOKE, async (data, _legacyLocalOptions?: undefined, context?: RpcHandlerContext) => {
+        return await (await getService()).invoke(data, context);
     });
 }

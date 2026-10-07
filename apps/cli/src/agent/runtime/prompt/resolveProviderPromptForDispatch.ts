@@ -114,7 +114,7 @@ export async function resolveProviderPromptForDispatch(params: Readonly<{
         meta: params.meta,
         ...(params.catalogs ? { catalogs: params.catalogs } : {}),
         onDiagnostic: (diagnostic) => {
-            logger.debug(
+            logger.infoFile(
                 `[PromptDispatch] ${diagnostic.catalog} catalog ${diagnostic.reason}; `
                 + `${diagnostic.referenceCount} composer reference(s) contributed no provider item`,
             );

@@ -255,6 +255,7 @@ import {
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createSessionSocketTransport } from './connection/createSessionSocketTransport';
 import { ensureSessionConnectionSupervisionActive } from './connection/ensureSessionConnectionSupervisionActive';
+import { SESSION_CONNECTION_STATE_EVENT } from './connection/sessionConnectionStateEvent';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import {
     createAuthenticationHttpStatusError,
@@ -517,7 +518,6 @@ function logSessionConnectionState(state: ManagedConnectionState): void {
     });
 }
 
-const SESSION_CONNECTION_STATE_EVENT = 'session-connection-state';
 const SESSION_PRESENCE_RECONNECT_REASSERT_DELAY_MS = 2_000;
 // How long a `thinking=true` keepalive may persist against an already-terminal turn status
 // before the publisher self-heals it to idle. Comfortably longer than a new turn's

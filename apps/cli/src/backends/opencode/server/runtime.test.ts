@@ -151,6 +151,7 @@ function createFakeClient(opts: Readonly<{
   };
   const clientBase = {
     supportsInFlightSteer: vi.fn(() => true),
+    getApiGeneration: vi.fn<OpenCodeServerRuntimeClient['getApiGeneration']>(async () => 'v2'),
     sessionList: vi.fn(async () => ([] as unknown[])),
     sessionCreate: vi.fn<OpenCodeServerRuntimeClient['sessionCreate']>(async () => ({ id: 'ses_1' })),
     sessionGet: vi.fn(async ({ sessionId }: { sessionId: string }) => ({ id: sessionId })),
@@ -160,6 +161,7 @@ function createFakeClient(opts: Readonly<{
     sessionMessagesList: vi.fn(async (_params: { sessionId: string }) => ([] as unknown[])),
     sessionDiff: vi.fn(async () => ([] as unknown[])),
     sessionPromptAsync: vi.fn<OpenCodeServerRuntimeClient['sessionPromptAsync']>(async () => {}),
+    sessionCommand: vi.fn<OpenCodeServerRuntimeClient['sessionCommand']>(async () => {}),
     sessionSummarize: vi.fn(async (_input?: unknown) => {}),
     sessionAbort: vi.fn(async (_input?: unknown) => {}),
     sessionFork: vi.fn(async () => ({ id: 'ses_fork' })),
@@ -173,6 +175,7 @@ function createFakeClient(opts: Readonly<{
     globalConfigGet: vi.fn(async () => ({ model: 'openai/gpt-5.2' })),
     agentsList: vi.fn(async () => ([{ name: 'build', description: 'Build agent' }])),
     appSkills: vi.fn(async () => ([] as unknown[])),
+    appCommands: vi.fn(async () => ([] as unknown[])),
     providersList: vi.fn(async () => ([
       {
         id: 'openai',
@@ -310,6 +313,7 @@ function createFakeSession(sessionId = 'happy_sess_opencode') {
     getMetadataSnapshot: () => meta,
     updateMetadata: vi.fn(async (updater: (prev: any) => any) => {
       const next = updater(meta);
+      if (next === meta) return;
       Object.keys(meta).forEach((k) => delete meta[k]);
       Object.assign(meta, next);
     }),
@@ -554,13 +558,20 @@ describe('createOpenCodeServerRuntime', () => {
     expect(runtime.supportsInFlightSteer()).toBe(true);
     await runtime.steerPrompt('adjust course', {
       localId: 'local-steer',
+      metadata: { happierStructuredInputV1: {
+        v: 1,
+        skillMentions: [{ name: 'review', path: '/skills/review/SKILL.md' }],
+      } },
       onProviderPromptAccepted: accepted,
     });
 
     expect(readOpenCodePromptAsyncCall(client, 1)).toMatchObject({
       sessionId: 'ses_1',
       messageId: expect.any(String),
-      parts: [{ type: 'text', text: 'adjust course' }],
+      parts: [
+        { type: 'text', text: 'adjust course' },
+        { type: 'skill', name: 'review', path: '/skills/review/SKILL.md', text: 'Use the review skill for this request.' },
+      ],
       delivery: 'steer',
     });
     expect(accepted).toHaveBeenCalledTimes(1);
@@ -568,6 +579,234 @@ describe('createOpenCodeServerRuntime', () => {
     await runtime.cancel();
     await promptPromise.catch(() => undefined);
     await runtime.reset();
+  });
+
+  it('publishes the native command catalog for an existing OpenCode session', async () => {
+    const client = createFakeClient();
+    client.appCommands.mockResolvedValue([{ name: 'review', description: 'Review changes' }]);
+    const { runtime, session, promptPromise } = await beginOpenCodePromptForTest({ client });
+    try {
+      await expect.poll(() => session.__getMetadata().slashCommandDetails).toEqual([
+        { command: 'review', description: 'Review changes' },
+      ]);
+      expect(session.__getMetadata().slashCommands).toEqual(['review']);
+      expect(await runtime.isProviderNativeCommand('/review args')).toBe(true);
+      expect(await runtime.isProviderNativeCommand('/unknown args')).toBe(false);
+      client.appCommands.mockResolvedValue([{ name: 'ship', description: 'Ship changes' }]);
+      await client.__emit({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } });
+      await expect.poll(() => session.__getMetadata().slashCommands).toEqual(['ship']);
+
+    } finally {
+      await runtime.cancel();
+      await promptPromise.catch(() => undefined);
+      await runtime.reset();
+    }
+  });
+
+  it('publishes commands activated by a real V2 prompt after the cold catalog was empty', async () => {
+    const client = createFakeClient();
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp', session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, { createClient: async () => client });
+    await runtime.startOrLoad({});
+    await client.__emit({ directory: '/tmp', payload: { type: 'server.connected', properties: {} } });
+    expect(session.__getMetadata().slashCommands ?? []).toEqual([]);
+    client.sessionPromptAsync.mockImplementationOnce(async () => {
+      client.appCommands.mockResolvedValue([{ name: 'review', description: 'Review changes' }]);
+    });
+    runtime.beginTurn();
+    const accepted = vi.fn();
+    const prompt = runtime.sendPromptWithMeta({ text: 'hello', onProviderPromptAccepted: accepted });
+    void prompt.catch(() => undefined);
+    try {
+      await expect.poll(() => accepted.mock.calls.length).toBe(1);
+      await expect.poll(() => session.__getMetadata().slashCommands).toEqual(['review']);
+    } finally {
+      await runtime.cancel();
+      await prompt.catch(() => undefined);
+      await runtime.reset();
+    }
+  });
+
+  it('dispatches known native commands with preserved arguments and completes callbacks without a parent turn', async () => {
+    const client = createFakeClient();
+    client.appCommands.mockResolvedValue([{ name: 'review' }]);
+    client.supportsInFlightSteer.mockReturnValue(false);
+    client.getApiGeneration.mockResolvedValue('v1');
+    let completeCommand: (() => void) | undefined;
+    client.sessionCommand.mockImplementationOnce(() => new Promise<void>((resolve) => { completeCommand = resolve; }));
+    const session = createFakeSession();
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp', session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange: vi.fn(),
+    }, { createClient: async () => client });
+    await runtime.startOrLoad({});
+    await runtime.setSessionModel('openai/gpt-5.2');
+    await runtime.setSessionConfigOption('reasoning_effort', 'high');
+    runtime.beginTurn();
+    const accepted = vi.fn();
+    const promptPromise = runtime.sendPromptWithMeta({
+      text: '/review  src/a.ts\nkeep spacing  ', localId: 'local-native-command',
+      onProviderPromptAccepted: accepted,
+    });
+    const commandOutcome = observePromiseSettlement(promptPromise);
+    void promptPromise.catch(() => undefined);
+    try {
+      await expect.poll(() => client.sessionCommand.mock.calls.length).toBe(1);
+      expect(client.sessionCommand.mock.calls[0]?.[0]).toEqual({
+        sessionId: 'ses_1', command: 'review', arguments: ' src/a.ts\nkeep spacing  ',
+        agent: undefined, model: { providerID: 'openai', modelID: 'gpt-5.2' },
+        variant: 'high', parts: [],
+      });
+      expect(client.sessionPromptAsync).not.toHaveBeenCalled();
+      await client.__emit({ directory: '/tmp', payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } } });
+      await flushTranscriptCommitMicrotasks();
+      expect(commandOutcome.status).toBe('pending');
+      expect(accepted).not.toHaveBeenCalled();
+      completeCommand?.();
+      await expect.poll(() => accepted.mock.calls.length).toBe(1);
+      await expect(promptPromise).resolves.toBeUndefined();
+      expect(runtime.isTurnInFlight()).toBe(false);
+      expect(session.sendAgentMessage).toHaveBeenCalledWith('opencode', expect.objectContaining({ type: 'task_complete' }));
+      expect(session.__getMetadata().opencodeUserMessageIdMapV1).toBeUndefined();
+
+      // A cancelled callback cannot accept the input later or wedge the next ordinary prompt.
+      let completeCancelledCommand: (() => void) | undefined;
+      client.sessionCommand.mockImplementationOnce(() => new Promise<void>((resolve) => { completeCancelledCommand = resolve; }));
+      runtime.beginTurn();
+      const cancelledAccepted = vi.fn();
+      const cancelled = runtime.sendPromptWithMeta({ text: '/review', onProviderPromptAccepted: cancelledAccepted });
+      void cancelled.catch(() => undefined);
+      await expect.poll(() => client.sessionCommand.mock.calls.length).toBe(2);
+      await runtime.cancel();
+      await expect(cancelled).rejects.toThrow('OpenCode session aborted');
+      completeCancelledCommand?.();
+      await flushTranscriptCommitMicrotasks();
+      expect(cancelledAccepted).not.toHaveBeenCalled();
+      runtime.beginTurn();
+      const ordinary = runtime.sendPrompt('ordinary follow-up');
+      void ordinary.catch(() => undefined);
+      await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(1);
+      await runtime.cancel();
+      await ordinary.catch(() => undefined);
+    } finally {
+      await runtime.cancel();
+      await promptPromise.catch(() => undefined);
+      await runtime.reset();
+    }
+  });
+
+  it('keeps actual provider work visible after native command callback completion and imports its expanded history', async () => {
+    const client = createFakeClient();
+    client.appCommands.mockResolvedValue([{ name: 'review' }]);
+    const session = createFakeSession();
+    const onThinkingChange = vi.fn();
+    const ephemeral = vi.fn((_provider: unknown, _body: unknown) => ({ accepted: true, epoch: 1 }));
+    session.sendAgentMessageEphemeral = ephemeral;
+    const runtime = createOpenCodeServerRuntime({
+      directory: '/tmp', session, messageBuffer: new MessageBuffer(), mcpServers: {},
+      permissionHandler: createFakePermissionHandler() as unknown as ProviderEnforcedPermissionHandler,
+      onThinkingChange,
+    }, { createClient: async () => client });
+    await runtime.startOrLoad({});
+    client.sessionCommand.mockImplementation(async () => {
+      await client.__emit({ directory: '/tmp', payload: { type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } } });
+      await emitAssistantMessageUpdated(client, { messageId: 'msg_command_assistant', completed: null });
+      await client.__emit({ directory: '/tmp', payload: { type: 'message.part.delta', properties: {
+        sessionID: 'ses_1', messageID: 'msg_command_assistant', partID: 'part_command_assistant', partType: 'text', delta: 'Reviewed',
+      } } });
+      await emitAssistantMessageUpdated(client, {
+        messageId: 'msg_command_internal', completed: null, extraInfo: { summary: true },
+      });
+      await client.__emit({ directory: '/tmp', payload: { type: 'session.next.text.started', properties: {
+        sessionID: 'ses_1', assistantMessageID: 'msg_command_internal', textID: 'part_command_internal',
+      } } });
+      await client.__emit({ directory: '/tmp', payload: { type: 'message.part.delta', properties: {
+        sessionID: 'ses_1', messageID: 'msg_command_internal', partID: 'part_command_internal', partType: 'text', delta: 'INTERNAL_SUMMARY',
+      } } });
+    });
+    runtime.beginTurn();
+    await runtime.sendPrompt('/review');
+    await runtime.flushTurn();
+    expect(onThinkingChange.mock.calls.at(-1)?.[0]).toBe(true);
+    await expect.poll(() => ephemeral.mock.calls.length).toBeGreaterThan(0);
+    expect(ephemeral).toHaveBeenCalledWith('opencode', expect.objectContaining({ type: 'message', message: 'Reviewed' }), expect.anything());
+    expect(JSON.stringify(ephemeral.mock.calls)).not.toContain('INTERNAL_SUMMARY');
+    expect(runtime.isTurnInFlight()).toBe(true);
+    await runtime.steerPrompt('adjust course');
+    expect(readOpenCodePromptAsyncCall(client, 0)).toMatchObject({ parts: [{ type: 'text', text: 'adjust course' }], delivery: 'steer' });
+    client.sessionMessagesList.mockResolvedValue([
+      { info: { id: 'msg_command_user', role: 'user', sessionID: 'ses_1' }, parts: [{ type: 'text', text: 'Expanded review template' }] },
+      { info: { id: 'msg_command_assistant', role: 'assistant', parentID: 'msg_command_user', sessionID: 'ses_1' }, parts: [{ type: 'text', text: 'Reviewed' }] },
+    ]);
+    runtime.beginTurn();
+    const queuedPrompt = runtime.sendPromptWithMeta({ text: 'queued follow-up', localId: 'queued-after-command' });
+    const queuedOutcome = observePromiseSettlement(queuedPrompt);
+    void queuedPrompt.catch(() => undefined);
+    await expect.poll(() => client.sessionPromptAsync.mock.calls.length).toBe(2);
+    await client.__emit({ directory: '/tmp', payload: { type: 'message.part.delta', properties: {
+      sessionID: 'ses_1', messageID: 'msg_command_assistant', partID: 'part_command_assistant', partType: 'text', delta: ' again',
+    } } });
+    await expect.poll(() => ephemeral.mock.calls.some((call) => (call[1] as { message?: unknown })?.message === 'Reviewed again')).toBe(true);
+    // This assistant belongs to the command, so its terminal frame cannot settle the later caller turn.
+    await emitAssistantMessageUpdated(client, { messageId: 'msg_command_assistant', finish: 'stop', extraInfo: { parentID: 'msg_command_user' } });
+    await flushTranscriptCommitMicrotasks();
+    expect(queuedOutcome.status).toBe('pending');
+    await runtime.cancel();
+    await queuedPrompt.catch(() => undefined);
+
+
+    client.sessionMessagesList.mockResolvedValue([
+      { info: { id: 'msg_subagent_completion', role: 'synthetic', sessionID: 'ses_1',
+          metadata: { source: 'subagent', childID: 'ses_child', state: 'completed' },
+          time: { created: 9 } }, parts: [] },
+      { info: { id: 'msg_command_user', role: 'user', sessionID: 'ses_1', time: { created: 10 } },
+        parts: [{ id: 'part_command_user', type: 'text', text: 'Expanded review template' }] },
+      { info: { id: 'msg_command_assistant', role: 'assistant', parentID: 'msg_command_user', sessionID: 'ses_1',
+        finish: 'stop', time: { created: 11, completed: 12 } },
+        parts: [{ id: 'part_command_assistant', type: 'text', text: 'Reviewed again' }] },
+    ]);
+    await client.__emit({ directory: '/tmp', payload: { type: 'session.idle', properties: { sessionID: 'ses_1' } } });
+    await expect.poll(() => session.sendUserTextMessageCommitted.mock.calls.length).toBe(1);
+    expect(onThinkingChange.mock.calls.at(-1)?.[0]).toBe(false);
+    const committed = getCommittedTranscriptRows(session, { type: 'message' });
+    expect(committed.filter((row) => row.body.message === 'Reviewed again')).toHaveLength(1);
+    expect(JSON.stringify(committed)).not.toContain('INTERNAL_SUMMARY');
+    expect(session.sendUserTextMessageCommitted).toHaveBeenCalledTimes(1);
+
+    await runtime.cancel();
+    expect(client.sessionAbort).toHaveBeenCalled();
+    await runtime.reset();
+  });
+
+  it('uses native command steering for known names and ordinary prompts for unknown slash text', async () => {
+    const client = createFakeClient();
+    client.appCommands.mockResolvedValue([{ name: 'review' }]);
+    const { runtime, promptPromise } = await beginOpenCodePromptForTest({ client });
+    try {
+      const accepted = vi.fn();
+      await runtime.steerPrompt('/review exact  arguments', {
+        localId: 'local-native-steer', onProviderPromptAccepted: accepted,
+        metadata: { happierStructuredInputV1: { v: 1, skillMentions: [{ id: 'review-directory', name: 'review', path: '/skills/review/SKILL.md' }] } },
+      });
+      expect(client.sessionCommand.mock.calls[0]?.[0]).toMatchObject({
+        sessionId: 'ses_1', command: 'review', arguments: 'exact  arguments', delivery: 'steer',
+        parts: [{ type: 'skill', id: 'review-directory', name: 'review', path: '/skills/review/SKILL.md', text: 'Use the review skill for this request.' }],
+      });
+      expect(accepted).toHaveBeenCalledTimes(1);
+      await runtime.steerPrompt('/unknown keep this literal');
+      expect(readOpenCodePromptAsyncCall(client, 1)).toMatchObject({
+        parts: [{ type: 'text', text: '/unknown keep this literal' }], delivery: 'steer',
+      });
+    } finally {
+      await runtime.cancel();
+      await promptPromise.catch(() => undefined);
+      await runtime.reset();
+    }
   });
 
   it('recognizes provider terminal tool statuses', () => {
@@ -2323,6 +2562,7 @@ describe('createOpenCodeServerRuntime', () => {
     // V1 `summarize` is synchronous: the HTTP return is completion, so the runtime fallback
     // stays the completion signal. V2 `compact` is async admission (see the delayed tests below).
     client.supportsInFlightSteer.mockReturnValue(false);
+    client.getApiGeneration.mockResolvedValue('v1');
     const session = createFakeSession();
     const runtime = createOpenCodeServerRuntime({
       directory: '/tmp',

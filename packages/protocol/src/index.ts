@@ -123,6 +123,8 @@ export {
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
   SessionUsageLimitWaitResumeEnableResponseV1Schema,
   SessionSkillCatalogItemV1Schema,
+  PreflightSessionCatalogsV1Schema,
+  type PreflightSessionCatalogsV1,
   SessionSkillCatalogListRequestV1Schema,
   SessionSkillCatalogListResponseV1Schema,
   SessionVendorPluginCatalogListRequestV1Schema,
@@ -202,6 +204,8 @@ export {
   type SkillCatalogItemIdentityV1,
   type SkillCatalogOriginV1,
 } from './sessionWorkState/index.js';
+
+export { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from './strings/opaqueIdentifier.js';
 
 export {
   SESSION_WORKFLOW_ACTIVITY_RECENT_RUNS_LIMIT,

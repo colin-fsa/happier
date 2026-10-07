@@ -6,6 +6,7 @@ import {
     SessionSkillCatalogListResponseV1Schema,
     SessionVendorPluginCatalogListResponseV1Schema,
     readMentionRefOpaqueForKindV1,
+    readNonBlankOpaqueIdentifier,
     resolveSkillCatalogItemIdentityV1,
     sanitizeMentionRefsV1,
     type MentionRefV1,
@@ -125,7 +126,10 @@ function buildSkillMentionRecord(item: MetadataRecord): MetadataRecord {
     const description = readString(item.description);
     const origin = readString(item.origin) ?? readString(item.source);
     const projectionKind = readString(item.projectionKind);
+    const id = readNonBlankOpaqueIdentifier(item.id);
     return {
+        ...(id ? { id } : {}),
+        ...(item.idSource === 'generated' ? { idSource: 'generated' } : {}),
         name,
         ...(path ? { path } : {}),
         ...(displayName ? { displayName } : {}),

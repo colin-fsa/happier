@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -27,7 +28,7 @@ import { createExecutionRunPermissionHandler } from '@/agent/executionRuns/polic
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
 import { waitForCondition } from '@/testkit/async/waitFor';
-import { createApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createApiSessionClientFixture, createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { runScmCommand } from '@/scm/runtime';
 import {
@@ -169,6 +170,7 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
     rejectReviewStartMethodUnavailable?: boolean;
     rejectStructuredTurnInput?: boolean;
     rejectStructuredSteerInput?: boolean;
+    rejectSteerExpectedTurnId?: boolean;
     threadStartServiceTier?: string | null;
     steerUserMessageEchoDelayMs?: number;
     omitSteerUserMessageEcho?: boolean;
@@ -1619,6 +1621,10 @@ async function writeFakeCodexAppServerScript(params: Readonly<{
         '        const expectedTurnId = typeof msg.params?.expectedTurnId === "string" ? msg.params.expectedTurnId : null;',
         '        const turnId = typeof msg.params?.turnId === "string" ? msg.params.turnId : null;',
         '        const selected = expectedTurnId ?? turnId;',
+        `        if (${JSON.stringify(params.rejectSteerExpectedTurnId === true)} && expectedTurnId) {`,
+        '            process.stdout.write(JSON.stringify({ id: msg.id, error: { code: -32602, message: "invalid expectedTurnId precondition" } }) + "\\n");',
+        '            continue;',
+        '        }',
         `        if (${JSON.stringify(params.rejectStructuredSteerInput === true)} && Array.isArray(msg.params?.input) && msg.params.input.length > 1) {`,
         '            if (steerText === "structured-fallback-owner-change") {',
         '                process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: msg.params?.threadId ?? null, turn: { id: selected } } }) + "\\n");',
@@ -1741,6 +1747,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable?: boolean;
             rejectStructuredTurnInput?: boolean;
             rejectStructuredSteerInput?: boolean;
+            rejectSteerExpectedTurnId?: boolean;
             threadStartServiceTier?: string | null;
             steerUserMessageEchoDelayMs?: number;
             omitSteerUserMessageEcho?: boolean;
@@ -1809,6 +1816,7 @@ describe('createCodexAppServerRuntime', () => {
             rejectReviewStartMethodUnavailable: options.rejectReviewStartMethodUnavailable,
             rejectStructuredTurnInput: options.rejectStructuredTurnInput,
             rejectStructuredSteerInput: options.rejectStructuredSteerInput,
+            rejectSteerExpectedTurnId: options.rejectSteerExpectedTurnId,
             threadStartServiceTier: options.threadStartServiceTier,
             steerUserMessageEchoDelayMs: options.steerUserMessageEchoDelayMs,
             omitSteerUserMessageEcho: options.omitSteerUserMessageEcho,
@@ -1936,7 +1944,7 @@ describe('createCodexAppServerRuntime', () => {
     });
 
     it('does not keep session open on optional goal and session-control projections', async () => {
-        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-optional-startup-', {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-optional-startup-', {
             omitGoalGetResponse: true,
             omitSessionControlsResponses: true,
             rpcTimeoutMs: 10_000,
@@ -1949,6 +1957,11 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         const startup = runtime.startOrLoad({});
+        await vi.waitFor(async () => {
+            expect(await readRequestLog(requestLogPath)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: 'thread/goal/get' }),
+            ]));
+        });
         const outcome = await Promise.race([
             startup.then(() => 'started' as const),
             new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 250)),
@@ -2292,7 +2305,7 @@ describe('createCodexAppServerRuntime', () => {
         expect(turns[2]?.params).toMatchObject({ approvalPolicy: 'on-request', approvalsReviewer: 'user', sandboxPolicy: { type: 'workspaceWrite' } });
     });
 
-    it('keeps the scalar policy when a managed turn also needs a text-only input retry', async () => {
+    it('preserves structured input when a managed scalar policy retry is rejected', async () => {
         const { root, requestLogPath } = await createRuntimeFixture('happier-codex-managed-structured-turn-', {
             rejectPermissionsProfile: true,
             rejectStructuredTurnInput: true,
@@ -2308,7 +2321,7 @@ describe('createCodexAppServerRuntime', () => {
 
         await runtime.startOrLoad({});
         permissionMode = 'safe-yolo';
-        await runtime.sendPrompt('managed-structured-turn', {
+        await expect(runtime.sendPrompt('managed-structured-turn', {
             metadata: {
                 happierStructuredInputV1: {
                     vendorPluginMentions: [
@@ -2316,14 +2329,17 @@ describe('createCodexAppServerRuntime', () => {
                     ],
                 },
             },
-        });
+        })).rejects.toThrow(/structured turn input unsupported/);
 
         const turns = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
-        expect(turns).toHaveLength(4);
-        expect(turns[3]?.params).toMatchObject({
+        expect(turns).toHaveLength(3);
+        expect(turns[2]?.params).toMatchObject({
             approvalPolicy: 'on-request',
             approvalsReviewer: 'user',
-            input: [{ type: 'text', text: 'managed-structured-turn' }],
+            input: [
+                { type: 'text', text: 'managed-structured-turn' },
+                { type: 'mention', name: 'Reviewer', path: 'plugin://reviewer@codex' },
+            ],
         });
     });
 
@@ -3802,7 +3818,9 @@ describe('createCodexAppServerRuntime', () => {
         });
 
         await runtime.startOrLoad({ resumeId: 'thread-resume-active' });
-        await new Promise((resolve) => setTimeout(resolve, 80));
+        await vi.waitFor(() => {
+            expect(sessionTurnLifecycle.completeTurn).toHaveBeenCalledWith({ provider: 'codex' });
+        });
 
         expect(permissionHandler.handleToolCall).toHaveBeenCalledWith(
             'resume_tool_input',
@@ -4727,99 +4745,116 @@ describe('createCodexAppServerRuntime', () => {
         ]));
     });
 
-    it('retries turn start with text-only input while keeping native permissions when structured input is unsupported', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-turn-structured-fallback-permissions-', {
+    it('rejects unsupported structured turn input without accepting a text-only replacement', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-turn-structured-rejected-', {
             rejectStructuredTurnInput: true,
         });
-
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
             session: { updateMetadata: vi.fn() } as any,
             permissionMode: 'read-only',
         });
-
+        const onProviderPromptAccepted = vi.fn();
         await runtime.startOrLoad({});
-        await runtime.sendPrompt('structured-turn-fallback', {
+        await expect(runtime.sendPrompt('structured-turn-rejected', {
+            onProviderPromptAccepted,
             metadata: {
                 happierStructuredInputV1: {
-                    vendorPluginMentions: [
-                        { displayName: 'Reviewer', vendorPluginRef: 'plugin://reviewer@codex' },
-                    ],
+                    vendorPluginMentions: [{ displayName: 'Reviewer', vendorPluginRef: 'plugin://reviewer@codex' }],
+                    skillMentions: [{ name: 'Review', path: '/skills/review/SKILL.md' }],
+                    imageInputs: [{ kind: 'image', url: 'https://example.com/review.png' }],
                 },
             },
+        })).rejects.toThrow(/structured turn input unsupported/);
+        expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+        expect(runtime.isTurnInFlight()).toBe(false);
+        const turnStarts = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/start');
+        expect(turnStarts).toHaveLength(1);
+        expect(turnStarts[0]?.params).toMatchObject({
+            input: [
+                { type: 'text', text: 'structured-turn-rejected' },
+                { type: 'mention', name: 'Reviewer', path: 'plugin://reviewer@codex' },
+                { type: 'skill', name: 'Review', path: '/skills/review/SKILL.md' },
+                { type: 'image', url: 'https://example.com/review.png' },
+            ],
+            permissions: { type: 'profile', id: ':read-only' },
         });
-
-        const turnStarts = (await readRequestLog(requestLogPath))
-            .filter((entry) => entry.method === 'turn/start') as Array<{ params?: Record<string, unknown> }>;
-        expect(turnStarts).toEqual([
-            expect.objectContaining({
-                params: expect.objectContaining({
-                    input: [
-                        { type: 'text', text: 'structured-turn-fallback' },
-                        { type: 'mention', name: 'Reviewer', path: 'plugin://reviewer@codex' },
-                    ],
-                    permissions: { type: 'profile', id: ':read-only' },
-                }),
-            }),
-            expect.objectContaining({
-                params: expect.objectContaining({
-                    input: [{ type: 'text', text: 'structured-turn-fallback' }],
-                    permissions: { type: 'profile', id: ':read-only' },
-                }),
-            }),
-        ]);
-        expect(turnStarts[1]?.params).not.toHaveProperty('sandboxPolicy');
-        expect(turnStarts[1]?.params).not.toHaveProperty('approvalPolicy');
+        // A failed structured submission must leave the runtime ready for a valid follow-up.
+        await runtime.sendPrompt('plain-follow-up');
     });
 
-    it('retries turn steer with text-only input when structured steer input is unsupported', async () => {
-        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-structured-fallback-', {
+    it('rejects unsupported structured steer input without accepting a text-only replacement', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-structured-rejected-', {
             rejectStructuredSteerInput: true,
+            omitTurnCompletedForPrompt: 'overlap-start',
         });
-
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
             session: { updateMetadata: vi.fn() } as any,
         });
-
         await runtime.startOrLoad({});
         const sendPromptPromise = runtime.sendPrompt('overlap-start');
-        await new Promise((resolve) => setTimeout(resolve, 30));
-
-        expect(runtime.isTurnInFlight()).toBe(true);
-        await runtime.steerPrompt('nudge with plugin', {
+        sendPromptPromise.catch(() => undefined);
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000,
+            intervalMs: 10,
+            label: 'active turn to become steerable before rejected structured steer',
+        });
+        const onProviderPromptAccepted = vi.fn();
+        await expect(runtime.steerPrompt('nudge with plugin', {
+            onProviderPromptAccepted,
             metadata: {
                 happierStructuredInputV1: {
-                    vendorPluginMentions: [
-                        { displayName: 'Reviewer', vendorPluginRef: 'plugin://reviewer@codex' },
-                    ],
+                    vendorPluginMentions: [{ displayName: 'Reviewer', vendorPluginRef: 'plugin://reviewer@codex' }],
                 },
             },
+        })).rejects.toThrow(/structured steer input unsupported/);
+        expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+        const steers = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/steer');
+        expect(steers).toHaveLength(1);
+        expect(steers[0]?.params).toMatchObject({
+            threadId: 'thread-started',
+            expectedTurnId: 'turn-overlap-start',
+            input: [
+                { type: 'text', text: 'nudge with plugin' },
+                { type: 'mention', name: 'Reviewer', path: 'plugin://reviewer@codex' },
+            ],
         });
+        await runtime.steerPrompt('plain-follow-up');
+        await runtime.cancel();
         await sendPromptPromise;
+    });
 
-        const requestLog = (await readFile(requestLogPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-        expect(requestLog.filter((entry: { method: string }) => entry.method === 'turn/steer')).toEqual([
-            expect.objectContaining({
-                params: expect.objectContaining({
-                    threadId: 'thread-started',
-                    expectedTurnId: 'turn-overlap-start',
-                    input: [
-                        { type: 'text', text: 'nudge with plugin' },
-                        { type: 'mention', name: 'Reviewer', path: 'plugin://reviewer@codex' },
-                    ],
-                }),
-            }),
-            expect.objectContaining({
-                params: expect.objectContaining({
-                    threadId: 'thread-started',
-                    expectedTurnId: 'turn-overlap-start',
-                    input: [{ type: 'text', text: 'nudge with plugin' }],
-                }),
-            }),
-        ]);
+    it('surfaces a rejected steer precondition without retrying through an unrecognized turnId key', async () => {
+        const { root, requestLogPath } = await createRuntimeFixture('happier-codex-app-server-runtime-steer-precondition-', {
+            rejectSteerExpectedTurnId: true,
+            omitTurnCompletedForPrompt: 'overlap-start',
+        });
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: { updateMetadata: vi.fn() } as any,
+        });
+        await runtime.startOrLoad({});
+        const sendPromptPromise = runtime.sendPrompt('overlap-start');
+        sendPromptPromise.catch(() => undefined);
+        await waitForCondition(() => runtime.canSteerPrompt(), {
+            timeoutMs: 1_000,
+            intervalMs: 10,
+            label: 'active turn to become steerable before rejected precondition',
+        });
+        const onProviderPromptAccepted = vi.fn();
+        await expect(runtime.steerPrompt('precondition rejected', { onProviderPromptAccepted }))
+            .rejects.toThrow(/expectedTurnId precondition/);
+        expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+        const steers = (await readRequestLog(requestLogPath)).filter((entry) => entry.method === 'turn/steer');
+        expect(steers).toHaveLength(1);
+        expect(steers[0]?.params).toMatchObject({ expectedTurnId: 'turn-overlap-start' });
+        expect(steers[0]?.params).not.toHaveProperty('turnId');
+        await runtime.cancel();
+        await sendPromptPromise;
     });
 
     it('does not retry a structured steer after the active turn owner terminates', async () => {
@@ -4849,7 +4884,7 @@ describe('createCodexAppServerRuntime', () => {
                     ],
                 },
             },
-        })).rejects.toThrow('Codex app-server active turn is not steerable');
+        })).rejects.toThrow(/structured steer input unsupported/);
         await sendPromptPromise;
 
         const requestLog = await readRequestLog(requestLogPath);
@@ -7927,6 +7962,73 @@ describe('createCodexAppServerRuntime', () => {
         });
     });
 
+    it('retries a persisted async Codex answer after the session reconnects', async () => {
+        const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-reconnect-async-user-action-');
+        const connection = new EventEmitter();
+        let agentState: any = {
+            requests: {},
+            completedRequests: {
+                async_question_reconnect: {
+                    tool: 'AskUserQuestion',
+                    arguments: {
+                        codexAsyncQuestionV1: {
+                            v: 1,
+                            itemId: 'async_question_reconnect',
+                            questions: [{ title: 'Choose an environment', options: ['Production'] }],
+                        },
+                        questions: [{
+                            id: '["happier-codex-async-question","async_question_reconnect",0]',
+                            question: 'Choose an environment',
+                            options: [{ label: 'Production' }],
+                        }],
+                    },
+                    createdAt: 1,
+                    completedAt: 2,
+                    status: 'approved',
+                    decision: 'approved',
+                    structuredAnswersV1: {
+                        '["happier-codex-async-question","async_question_reconnect",0]': ['Production'],
+                    },
+                },
+            },
+        };
+        const enqueueSessionUserMessage = vi.fn()
+            .mockRejectedValueOnce(new Error('session offline'))
+            .mockResolvedValue(undefined);
+        const runtime = createCodexAppServerRuntime({
+            directory: root,
+            onThinkingChange: vi.fn(),
+            session: {
+                updateMetadata: vi.fn(),
+                enqueueSessionUserMessage,
+                sendCodexMessage: vi.fn(),
+                sendCodexMessageCommitted: vi.fn(async () => ({ seq: 1 })),
+                getAgentStateSnapshot: () => agentState,
+                updateAgentState: vi.fn(async (updater: (current: typeof agentState) => typeof agentState) => {
+                    agentState = updater(agentState);
+                }),
+                on: connection.on.bind(connection),
+                off: connection.off.bind(connection),
+            } as any,
+        } as any);
+
+        await runtime.startOrLoad({});
+        await waitForCondition(() => enqueueSessionUserMessage.mock.calls.length === 1, {
+            timeoutMs: 500,
+            intervalMs: 10,
+            label: 'initial async question delivery attempt',
+        });
+        connection.emit('session-connection-state', { phase: 'online' });
+        await waitForCondition(() => agentState.completedRequests.async_question_reconnect.codexAsyncQuestionDeliveryV1?.status === 'delivered', {
+            timeoutMs: 500,
+            intervalMs: 10,
+            label: 'async question delivery after reconnect',
+        });
+        expect(enqueueSessionUserMessage).toHaveBeenCalledTimes(2);
+        expect(enqueueSessionUserMessage.mock.calls[0]?.[0].localId).toBe('codex-async-question:async_question_reconnect');
+        expect(enqueueSessionUserMessage.mock.calls[1]?.[0].localId).toBe('codex-async-question:async_question_reconnect');
+    });
+
     it('rehydrates a pending async Codex question into AskUserQuestion when the resumed turn is steerable', async () => {
         const { root } = await createRuntimeFixture(
             'happier-codex-app-server-runtime-rehydrate-async-user-action-',
@@ -8366,17 +8468,15 @@ describe('createCodexAppServerRuntime', () => {
     it('forwards thread token usage updates and patches the active model context window from runtime telemetry', async () => {
         const { root } = await createRuntimeFixture('happier-codex-app-server-runtime-token-usage-');
 
-        const updateMetadata = vi.fn((updater: (metadata: Record<string, unknown>) => Record<string, unknown>) =>
-            updater({ machineId: 'machine_1' }),
-        );
         const sendCodexMessage = vi.fn();
+        const session = createMutableApiSessionClientFixture({
+            metadata: { ...createRuntimeMetadata(root), machineId: 'machine_1' },
+            overrides: { sendCodexMessage },
+        });
         const runtime = createCodexAppServerRuntime({
             directory: root,
             onThinkingChange: vi.fn(),
-            session: {
-                updateMetadata,
-                sendCodexMessage,
-            } as any,
+            session,
         });
 
         await runtime.startOrLoad({});
@@ -8396,8 +8496,7 @@ describe('createCodexAppServerRuntime', () => {
             }),
         }));
 
-        const latestMetadata = updateMetadata.mock.results.at(-1)?.value as Record<string, unknown>;
-        const modelsState = latestMetadata[SESSION_MODELS_STATE_KEY] as {
+        const modelsState = session.getMetadataSnapshot()?.[SESSION_MODELS_STATE_KEY] as {
             currentModelId?: string;
             availableModels?: Array<Record<string, unknown>>;
         };

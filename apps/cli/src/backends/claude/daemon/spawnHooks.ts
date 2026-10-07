@@ -30,7 +30,7 @@ export const claudeDaemonSpawnHooks: DaemonSpawnHooks = {
         : { kind: 'provider', childEnv: { HAPPIER_CLAUDE_UNIFIED_TERMINAL_PIN: '1' } }
       : { kind: 'runner', startingMode: 'remote', childEnv: { HAPPIER_CLAUDE_UNIFIED_TERMINAL_PIN: '0' } };
   },
-  validateSpawn: async () => validateProviderCliSpawn({ agentId: 'claude' }),
+  validateSpawn: async ({ environmentVariables }) => validateProviderCliSpawn({ agentId: 'claude', processEnv: environmentVariables }),
   buildExtraEnvForChild: () => {
     return {
       ...resolveClaudeConfigDirEnvOverlay(process.env),

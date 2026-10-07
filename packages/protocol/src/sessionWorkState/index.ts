@@ -68,6 +68,8 @@ export {
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
   SessionUsageLimitWaitResumeEnableResponseV1Schema,
   SessionSkillCatalogItemV1Schema,
+  PreflightSessionCatalogsV1Schema,
+  type PreflightSessionCatalogsV1,
   SessionSkillCatalogListRequestV1Schema,
   SessionSkillCatalogListResponseV1Schema,
   SessionVendorPluginCatalogListRequestV1Schema,

@@ -283,8 +283,11 @@ is a local kill switch and cannot re-enable discovery after the account setting 
 
 Provider-owned probing:
 - The CLI capability RPC resolves the selected backend profile once before any model, mode, or
-  config-option probe. It uses the same profile environment and Saved Secret resolver as session
-  startup, then layers any connected-service materialization on top. Provider adapters consume the
+  config-option or native-catalog probe. It uses the same profile environment and Saved Secret resolver
+  as session startup, layers selected session environment overrides, then prepares connected-service
+  materialization. A native-catalog request with an explicit GUI-materialized environment map uses
+  that map as the profile authority, including an empty map for machine-environment secret choices.
+  Provider adapters consume the
   resulting `processEnv`; they must not rebuild a competing profile environment from ambient state.
 - Implement the probe in `apps/cli/src/backends/<provider>/preflight/**` and register it through
   `getPreflightSessionControlsProbeAdapter`. Type it as `PreflightSessionControlsProbeAdapter` —
@@ -296,8 +299,65 @@ Provider-owned probing:
   The returned string partitions the probe cache; without it, results computed for one account or
   runtime mode are served to another. Codex uses this generic cache variant; Claude instead declares
   provider-owned caching and keys its catalog by the effective endpoint and credential identity.
-- Fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
+- Model probes fail closed to the static catalog. A probe that cannot authenticate returns `null` rather than
   probing with whatever credential happens to be in the daemon's environment.
+
+In development source, `capabilities.invoke` exposes `probeCatalogs` on each CLI capability through
+the same preflight adapter. Its `PreflightSessionCatalogsV1` result separates native slash commands
+from typed skills, with explicit support flags and normalized items. Codex app-server reads
+`skills/list` without starting a thread; OpenCode V1 server reads native command and skill endpoints
+using a temporary managed server; Claude initializes its native command catalog; Pi uses
+`get_commands` in ephemeral RPC mode. ACP transports observe `available_commands_update` after
+an ephemeral provider session opens, without submitting a prompt. A slash skill is still a slash
+command unless the transport exposes a typed skill catalog. Unavailable discovery returns
+`preflight-catalog-unavailable`, allowing recovery rather than presenting it as unsupported.
+Concurrent requests share one preflight launch only when their complete resolved launch scope
+matches; the composer lifecycle owns the successful selection snapshot.
+
+Catalog requests use one deadline for account settings, profile and connected-account preparation,
+backend readiness, and native discovery. Expired or cancelled preparation cannot start a native
+probe. A cancelled caller leaves a shared launch running for its remaining callers; the final caller
+awaits cleanup of native resources and authentication materialization already acquired. A fresh
+request can start a new ephemeral launch while an aborted launch finishes cleanup. Malformed
+connected-account bindings fail at catalog ingress rather than falling back to ambient credentials.
+
+The new-session composer demands discovery only for `/` or `$` suggestions and scopes that snapshot to the selected machine,
+server/account, backend, project, profile, and authentication context. Local slash rows remain
+available while discovery is pending. A selected native skill retains any agent-supplied identifier
+and its source reference through structured input rather than becoming a library import. Catalog
+reference identifiers synthesized for lookup are not native invocation identifiers; entries without
+a native identifier retain name/source-path resolution.
+
+Pre-session discovery requires managed prerequisites to be ready: the canonical launch installable
+owner runs in readiness-only mode and does not install or start background updates. Actual session
+launch retains its configured installation policy.
+Gemini readiness-only backends set the native `CI` control to suppress OAuth browser launch;
+cached authentication remains usable, while missing authentication reports discovery unavailable.
+
+OpenCode V2 cold pre-session discovery is unavailable in development source: its public API does
+not expose a plugin-activation completion barrier that makes a cold command/skill inventory
+authoritative. Discovery must report that limitation rather than submit a bootstrap prompt or
+publish an unverified empty catalog. Existing-session V2 command and skill dispatch is a separate
+runtime contract.
+
+In development source, an existing OpenCode server session publishes its native command catalog
+through the same slash-command metadata owner. Known names execute through OpenCode's command
+endpoint with their arguments preserved; unknown slash text remains an ordinary prompt. Structured
+skill selection still resolves through the shared prompt finalizer, while native commands skip
+replay and fresh-system-prompt seeding. OpenCode V1 command requests accept file attachments and
+wait for command completion; unsupported structured extras or in-flight delivery fail explicitly
+before submission. V2 command requests preserve native skill and agent selections and support
+in-flight delivery. The semantic skill reader honors the newer catalog's
+`idSource: 'generated'` marker: generated composer references use native name/path lookup,
+while provider-supplied IDs retain their exact bytes.
+A successful V2 command response completes the callback, which can produce a parent
+turn, a subtask, or no inference. Actual provider status and assistant events keep resulting parent
+work visible and steerable through the existing stream and transcript owners. Built-in V2 config
+subtasks deliver their completion into the parent as internal synthetic input and resume its
+normal assistant continuation.
+The same catalog is refreshed after a real prompt is accepted. A cold V2 session can still lack
+project commands until that prompt activates native plugins; Happier does not submit a hidden
+prompt to warm the registry.
 
 ## Adding a new agent/provider (end-to-end)
 

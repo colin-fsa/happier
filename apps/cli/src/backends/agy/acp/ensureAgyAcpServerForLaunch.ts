@@ -10,6 +10,7 @@ import { resolveAgyAcpReleaseAsset } from '@/runtime/managedTools/providers/agyA
 export async function ensureAgyAcpServerForLaunch(params: Readonly<{
   accountSettings?: AccountSettings | null;
   env?: NodeJS.ProcessEnv;
+  readinessOnly?: boolean;
 }> = {}): Promise<Readonly<{ command: string; args: readonly string[] }>> {
   const machineId = (await readSettings()).machineId ?? '';
   const ensured = await ensureRuntimeInstallablesForLaunch({
@@ -17,6 +18,7 @@ export async function ensureAgyAcpServerForLaunch(params: Readonly<{
     settings: params.accountSettings ?? getActiveAccountSettingsSnapshot()?.settings ?? null,
     machineId,
     env: params.env,
+    ...(params.readinessOnly ? { readinessOnly: true } : {}),
   });
   if (!ensured.ok) {
     const detail = ensured.logPath ? `${ensured.errorMessage} (install log: ${ensured.logPath})` : ensured.errorMessage;
