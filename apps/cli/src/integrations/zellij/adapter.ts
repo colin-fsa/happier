@@ -1543,6 +1543,8 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
         duplicateRisk = 'likely';
         const submission = await runTerminalPromptSubmission({
           promptText: textToWrite,
+          signal: input.signal,
+          resolveDeliveryState: input.resolveDeliveryState,
           ...(promptSubmitVerification?.shouldVerifyAfterSubmit(textToWrite)
             ? {
               verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => {
