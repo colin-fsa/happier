@@ -9766,6 +9766,7 @@ settingsSession: {
         blockedCliUnresponsiveStatus: 'Die Happier-Befehlszeile antwortet nicht mehr.',
         blockedCliUnavailableStatus: "Happier konnte seine Kommandozeile auf diesem Computer nicht starten.",
         blockedCliFailedStatus: 'Happier konnte die Einrichtung dieses Computers nicht zu Ende lesen.',
+        blockedStepStatus: ({ step }: { step: string }) => `Konnte nicht abgeschlossen werden: ${step}`,
         unreachableStatus: ({ relay }: { relay: string }) => `Dieser Computer antwortet auf ${relay} noch nicht.`,
         notConvergedStatus: ({ relay }: { relay: string }) => `Der Hintergrunddienst dieses Computers ist für ${relay} noch nicht vollständig gestartet.`,
         canceledTitle: 'Einrichtung abgebrochen',

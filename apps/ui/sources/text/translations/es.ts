@@ -10412,6 +10412,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'La línea de comandos de Happier dejó de responder.',
         blockedCliUnavailableStatus: "Happier no pudo iniciar su línea de comandos en este ordenador.",
     blockedCliFailedStatus: 'Happier no pudo terminar de leer la configuración de este ordenador.',
+    blockedStepStatus: ({ step }: { step: string }) => `No se pudo completar: ${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `Este ordenador todavía no responde en ${relay}.`,
     notConvergedStatus: ({ relay }: { relay: string }) => `El servicio en segundo plano de este ordenador aún no ha terminado de arrancar para ${relay}.`,
     canceledTitle: 'Configuración cancelada',

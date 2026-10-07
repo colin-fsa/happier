@@ -10039,6 +10039,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'Happier 命令行停止响应。',
         blockedCliUnavailableStatus: "Happier 无法在此电脑上启动命令行。",
     blockedCliFailedStatus: 'Happier 没能读完这台电脑的设置。',
+    blockedStepStatus: ({ step }: { step: string }) => `未能完成：${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `这台电脑还没在 ${relay} 上响应。`,
     notConvergedStatus: ({ relay }: { relay: string }) => `这台电脑的后台服务还没有为 ${relay} 完成启动。`,
     canceledTitle: '设置已取消',

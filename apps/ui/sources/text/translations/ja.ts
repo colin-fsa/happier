@@ -10631,6 +10631,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'Happier のコマンドラインが応答しなくなりました。',
         blockedCliUnavailableStatus: "このコンピューターで Happier コマンドラインを起動できませんでした。",
     blockedCliFailedStatus: 'このコンピュータのセットアップを最後まで読み取れませんでした。',
+    blockedStepStatus: ({ step }: { step: string }) => `完了できませんでした：${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `このコンピュータはまだ ${relay} で応答していません。`,
     notConvergedStatus: ({ relay }: { relay: string }) => `このコンピュータのバックグラウンドサービスは ${relay} 向けの起動をまだ完了していません。`,
     canceledTitle: 'セットアップをキャンセルしました',

@@ -9753,6 +9753,7 @@ settingsSession: {
         blockedCliUnresponsiveStatus: 'La ligne de commande Happier ne répond plus.',
         blockedCliUnavailableStatus: "Happier n’a pas pu démarrer son outil en ligne de commande sur cet ordinateur.",
         blockedCliFailedStatus: 'Happier n’a pas pu finir de lire la configuration de cet ordinateur.',
+        blockedStepStatus: ({ step }: { step: string }) => `Impossible de terminer : ${step}`,
         unreachableStatus: ({ relay }: { relay: string }) => `Cet ordinateur ne répond pas encore sur ${relay}.`,
         notConvergedStatus: ({ relay }: { relay: string }) => `Le service en arrière-plan de cet ordinateur n’a pas fini de démarrer pour ${relay}.`,
         canceledTitle: 'Configuration annulée',

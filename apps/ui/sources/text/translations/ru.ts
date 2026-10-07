@@ -10299,6 +10299,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'Командная строка Happier перестала отвечать.',
         blockedCliUnavailableStatus: "Happier не удалось запустить командную строку на этом компьютере.",
     blockedCliFailedStatus: 'Happier не смог до конца прочитать настройку этого компьютера.',
+    blockedStepStatus: ({ step }: { step: string }) => `Не удалось завершить: ${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `Этот компьютер пока не отвечает на ${relay}.`,
     notConvergedStatus: ({ relay }: { relay: string }) => `Фоновая служба на этом компьютере ещё не закончила запуск для ${relay}.`,
     canceledTitle: 'Настройка отменена',

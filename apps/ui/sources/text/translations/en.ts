@@ -9796,6 +9796,7 @@ settingsSession: {
         blockedCliUnresponsiveStatus: 'The Happier command line stopped responding.',
         blockedCliUnavailableStatus: "Happier couldn’t start its command line on this computer.",
         blockedCliFailedStatus: 'Happier couldn’t finish reading this computer’s setup.',
+        blockedStepStatus: ({ step }: { step: string }) => `Couldn’t finish: ${step}`,
         unreachableStatus: ({ relay }: { relay: string }) => `This computer isn’t answering on ${relay} yet.`,
         notConvergedStatus: ({ relay }: { relay: string }) => `This computer’s background service hasn’t finished coming up for ${relay}.`,
         canceledTitle: 'Setup canceled',

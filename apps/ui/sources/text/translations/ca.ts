@@ -9702,6 +9702,7 @@ settingsSession: {
         blockedCliUnresponsiveStatus: 'La línia d’ordres del Happier ha deixat de respondre.',
         blockedCliUnavailableStatus: "Happier no ha pogut iniciar la seva línia d’ordres en aquest ordinador.",
         blockedCliFailedStatus: 'El Happier no ha pogut acabar de llegir la configuració d’aquest ordinador.',
+        blockedStepStatus: ({ step }: { step: string }) => `No s’ha pogut completar: ${step}`,
         unreachableStatus: ({ relay }: { relay: string }) => `Aquest ordinador encara no respon a ${relay}.`,
         notConvergedStatus: ({ relay }: { relay: string }) => `El servei en segon pla d’aquest ordinador encara no ha acabat d’arrencar per a ${relay}.`,
         canceledTitle: 'Configuració cancel·lada',

@@ -10405,6 +10405,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'Wiersz poleceń Happier przestał odpowiadać.',
         blockedCliUnavailableStatus: "Happier nie mógł uruchomić swojego narzędzia wiersza poleceń na tym komputerze.",
     blockedCliFailedStatus: 'Happier nie mógł dokończyć odczytu konfiguracji tego komputera.',
+    blockedStepStatus: ({ step }: { step: string }) => `Nie udało się ukończyć: ${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `Ten komputer jeszcze nie odpowiada na ${relay}.`,
     notConvergedStatus: ({ relay }: { relay: string }) => `Usługa w tle na tym komputerze nie zakończyła jeszcze uruchamiania dla ${relay}.`,
     canceledTitle: 'Konfiguracja anulowana',

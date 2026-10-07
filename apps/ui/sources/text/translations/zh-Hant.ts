@@ -8427,6 +8427,7 @@ settingsSession: {
         blockedCliUnresponsiveStatus: 'Happier 命令列停止回應。',
         blockedCliUnavailableStatus: "Happier 無法在此電腦上啟動命令列。",
         blockedCliFailedStatus: 'Happier 沒能讀完這台電腦的設定。',
+        blockedStepStatus: ({ step }: { step: string }) => `未能完成：${step}`,
         unreachableStatus: ({ relay }: { relay: string }) => `這台電腦還沒在 ${relay} 上回應。`,
         notConvergedStatus: ({ relay }: { relay: string }) => `這台電腦的背景服務還沒為 ${relay} 完成啟動。`,
         canceledTitle: '設定已取消',

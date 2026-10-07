@@ -10727,6 +10727,7 @@ settingsSession: {
     blockedCliUnresponsiveStatus: 'La riga di comando di Happier ha smesso di rispondere.',
         blockedCliUnavailableStatus: "Happier non ha potuto avviare la sua riga di comando su questo computer.",
     blockedCliFailedStatus: 'Happier non è riuscito a finire di leggere la configurazione di questo computer.',
+    blockedStepStatus: ({ step }: { step: string }) => `Impossibile completare: ${step}`,
     unreachableStatus: ({ relay }: { relay: string }) => `Questo computer non risponde ancora su ${relay}.`,
     notConvergedStatus: ({ relay }: { relay: string }) => `Il servizio in background di questo computer non ha ancora finito di avviarsi per ${relay}.`,
     canceledTitle: 'Configurazione annullata',

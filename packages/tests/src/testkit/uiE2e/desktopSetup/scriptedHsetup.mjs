@@ -76,7 +76,7 @@ lines.once('line', (line) => {
         event('progress', 'setup.thisComputer.installService', 'Installing service');
         write({
             protocolVersion: PROTOCOL_VERSION, taskId: 'scripted', ok: false,
-            error: { code: 'service_install_blocked', message: 'systemd --user is not available in this session (Failed to connect to bus).' },
+            error: { code: 'cli_command_failed', message: 'Access is denied.' },
         });
         process.exit(0);
     }
