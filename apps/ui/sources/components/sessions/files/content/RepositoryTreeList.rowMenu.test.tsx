@@ -9,6 +9,7 @@ import {
 } from '@/dev/testkit';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { installFilesContentCommonModuleMocks } from './filesContentTestHelpers';
+import type { WorkspaceFileTransferResult } from '@/hooks/session/files/useWorkspaceFileTransfers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -196,7 +197,7 @@ describe('RepositoryTreeList (row menu)', () => {
         downloadAvailabilityState.value = true;
     });
 
-    async function renderRepositoryTreeList(params: Readonly<{ downloadActionsAvailable?: boolean }> = {}) {
+    async function renderRepositoryTreeList(params: Readonly<{ downloadActionsAvailable?: boolean; downloadResult?: WorkspaceFileTransferResult }> = {}) {
         const { RepositoryTreeList } = await import('./RepositoryTreeList');
 
         function Wrapper() {
@@ -207,7 +208,7 @@ describe('RepositoryTreeList (row menu)', () => {
                     sessionId="session-1"
                     onRequestDownload={params.downloadActionsAvailable === false
                         ? null
-                        : async () => ({ ok: true as const })}
+                        : async () => params.downloadResult ?? ({ ok: true as const })}
                     expandedPaths={expandedPaths}
                     onExpandedPathsChange={setExpandedPaths}
                     onOpenFile={vi.fn()}
@@ -305,6 +306,18 @@ describe('RepositoryTreeList (row menu)', () => {
             'repository-tree-menuitem-delete',
             'repository-tree-menuitem-copy-path',
         ]);
+    });
+
+    it.each([true, false])('treats a canceled download separately from a download error (canceled=%s)', async (canceled) => {
+        sessionListDirectorySpy.mockResolvedValue({
+            success: true,
+            entries: [{ name: 'recording.mp4', type: 'file' }],
+        });
+        const screen = await renderRepositoryTreeList({
+            downloadResult: { ok: false, error: canceled ? 'Download canceled' : 'Destination is full', canceled },
+        });
+        await pressRowAction(screen, 'recording.mp4', 'repository-tree-menuitem-download');
+        expect(modalAlertSpy).toHaveBeenCalledTimes(canceled ? 0 : 1);
     });
 
     it('omits download actions when the session download route is unavailable (even if a callback exists)', async () => {

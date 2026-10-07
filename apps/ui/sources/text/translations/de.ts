@@ -6797,6 +6797,8 @@ export const de: TranslationStructure = {
 	                        copyPath: 'Pfad kopieren',
 	                        download: 'Herunterladen',
 	                        downloadAsZip: 'Als ZIP herunterladen',
+	                        openWith: 'Öffnen mit',
+	                        share: 'Teilen',
 	                    },
 	                    dropToUpload: 'Dateien zum Hochladen hierher ziehen',
 	                    rename: {
@@ -7037,6 +7039,9 @@ export const de: TranslationStructure = {
           unstagedChanges: ({ count }: { count: number }) => `Nicht gestagete Änderungen (${count})`,
             // File viewer strings
             fileReadFailed: 'Die Datei ließ sich nicht lesen',
+            androidFileActionsUnavailable: "Android-Dateiaktionen sind in dieser App-Version nicht verfügbar. Aktualisiere Happier und versuche es erneut.",
+            fileSharingUnavailable: "Dateifreigabe ist auf diesem Gerät nicht verfügbar.",
+            fileCleanupFailed: "Die temporäre Datei konnte nicht entfernt werden",
             fileTooLargeToPreview: 'Die Datei ist zu groß für eine Vorschau',
             fileWriteFailed: 'Die Datei ließ sich nicht schreiben',
                 fileEditor: {
@@ -7107,6 +7112,7 @@ export const de: TranslationStructure = {
             },
             loadingFile: ({ fileName }: { fileName: string }) => `Lädt ${fileName}...`,
             binaryFile: 'Binärdatei',
+            videoPreview: 'Videovorschau',
             imagePreviewTooLarge: 'Die Bildvorschau ist zu groß zum Anzeigen',
             sessionMedia: {
                 generatedImageA11y: ({ name }: { name: string }) => `Erzeugtes Bild öffnen: ${name}`,

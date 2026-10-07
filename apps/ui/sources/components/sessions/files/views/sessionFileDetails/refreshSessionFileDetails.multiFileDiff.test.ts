@@ -40,11 +40,6 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
     resolveSessionPathState: () => ({ status: 'ready', sessionPath: '/repo', homeDir: null }),
 }));
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    getImageMimeTypeFromPath: () => null,
-    isBinaryContent: () => false,
-    isKnownBinaryPath: () => false,
-}));
 
 const { refreshSessionFileDetails } = await import('./refreshSessionFileDetails');
 

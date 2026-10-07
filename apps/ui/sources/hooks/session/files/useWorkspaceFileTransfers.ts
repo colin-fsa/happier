@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { t } from '@/text';
 
 import { openLocalUploadSourceReader } from '@/sync/runtime/files/localUploadSourceReader';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
@@ -7,7 +8,8 @@ import { downloadDaemonSessionFileToDestination, uploadDaemonSessionFileFromRead
 import { sessionStatFile } from '@/sync/ops';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { resolveLocalUploadSourceSizeBytes } from '@/sync/runtime/files/localUploadSourceReader';
-import { createNativeCacheFileSink, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { createNativeCacheFileSink, shareNativeCacheFile, type NativeCacheFileSink } from '@/sync/runtime/files/nativeCacheFileSink';
+import { resolveWebFileBufferMaxBytes } from '@/sync/runtime/files/webFileBufferBudget';
 
 export type WorkspaceUploadEntry =
     | Readonly<{ kind: 'web'; file: File; relativePath: string }>
@@ -35,34 +37,16 @@ export type WorkspaceDownloadState =
         name: string;
         downloadedBytes: number;
         totalBytes: number;
+        cancelable?: boolean;
     }>
     | Readonly<{ status: 'done'; name: string; totalBytes: number }>
     | Readonly<{ status: 'canceled' }>
     | Readonly<{ status: 'error'; error: string }>;
 
-type TransferResult = { ok: true } | { ok: false; error: string };
-
-function parseOptionalPositiveInt(value: unknown): number | undefined {
-    const raw = String(value ?? '').trim();
-    if (!raw) return undefined;
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return undefined;
-    const normalized = Math.floor(parsed);
-    return normalized > 0 ? normalized : undefined;
-}
-
-function resolveWebDownloadMaxBytes(): number {
-    return (
-        parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPIER_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPY_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_FILES_DOWNLOAD_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPIER_FILES_PREVIEW_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_HAPPY_FILES_PREVIEW_MAX_BYTES)
-        ?? parseOptionalPositiveInt(process.env.EXPO_PUBLIC_FILES_PREVIEW_MAX_BYTES)
-        // Conservative default to prevent unbounded buffering on web.
-        ?? 50_000_000
-    );
-}
+type TransferResult = { ok: true } | { ok: false; error: string; canceled?: boolean };
+export type WorkspaceFileTransferResult = TransferResult;
+export type WorkspaceFileDownloadAction = 'save' | 'open' | 'share';
+type WorkspaceFileDownloadInput = Readonly<{ path: string; asZip: boolean; action?: WorkspaceFileDownloadAction }>;
 
 function joinRepoPath(parentDir: string, relativePath: string): string {
     const cleanParent = String(parentDir ?? '').trim().replace(/\\/g, '/').replace(/\/+$/g, '');
@@ -226,7 +210,7 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     downloadState: WorkspaceDownloadState;
     startUploads: (input: Readonly<{ entries: readonly WorkspaceUploadEntry[]; destinationDir: string }>) => Promise<TransferResult>;
     cancelUploads: () => void;
-    startDownload: (input: Readonly<{ path: string; asZip: boolean }>) => Promise<TransferResult>;
+    startDownload: (input: WorkspaceFileDownloadInput) => Promise<TransferResult>;
     cancelDownload: () => void;
 }> {
     const {
@@ -239,14 +223,15 @@ export function useWorkspaceFileTransfers(params: Readonly<{
     const [downloadState, setDownloadState] = React.useState<WorkspaceDownloadState>({ status: 'idle' });
 
     const uploadAbortRef = React.useRef<AbortController | null>(null);
-    const downloadAbortRef = React.useRef<AbortController | null>(null);
+    const downloadOperationRef = React.useRef<{ controller: AbortController; cancelable: boolean } | null>(null);
 
     const cancelUploads = React.useCallback(() => {
         uploadAbortRef.current?.abort();
     }, []);
 
     const cancelDownload = React.useCallback(() => {
-        downloadAbortRef.current?.abort();
+        const operation = downloadOperationRef.current;
+        if (operation?.cancelable) operation.controller.abort();
     }, []);
 
     const startUploads = React.useCallback(async (input: Readonly<{ entries: readonly WorkspaceUploadEntry[]; destinationDir: string }>): Promise<TransferResult> => {
@@ -363,172 +348,236 @@ export function useWorkspaceFileTransfers(params: Readonly<{
         }
     }, [maxConcurrentUploads, onAfterUploadSuccess, onResolveUploadConflicts, sessionId]);
 
-    const startDownload = React.useCallback(async (input: Readonly<{ path: string; asZip: boolean }>): Promise<TransferResult> => {
-        if (downloadAbortRef.current) {
+    const startDownload = React.useCallback(async (input: WorkspaceFileDownloadInput): Promise<TransferResult> => {
+        if (downloadOperationRef.current) {
             return { ok: false, error: 'Download already in progress' };
         }
 
         const controller = new AbortController();
-        downloadAbortRef.current = controller;
+        const operation = { controller, cancelable: true };
+        downloadOperationRef.current = operation;
+        const beginNativeHandoff = () => {
+            if (controller.signal.aborted) {
+                setDownloadState({ status: 'canceled' });
+                return false;
+            }
+            // The OS owns the action after handoff; app cancellation cannot
+            // stop its copy, dismiss its share sheet, or retract a granted URI.
+            operation.cancelable = false;
+            setDownloadState(prev => prev.status === 'downloading' ? { ...prev, cancelable: false } : prev);
+            return true;
+        };
 
         const nativeSinkRef: { current: NativeCacheFileSink | null } = { current: null };
+        let keepNativeSink = false;
+        let failureMessage: string | null = null;
         const downloadedChunks: Uint8Array[] = [];
         let webBufferedBytes = 0;
         let webExceededLimit = false;
-        const webDownloadMaxBytes = resolveWebDownloadMaxBytes();
+        const webDownloadMaxBytes = resolveWebFileBufferMaxBytes();
         const updateProgress = (progress: Readonly<{ downloadedBytes: number; totalBytes: number }>) => {
             setDownloadState((prev) => prev.status === 'downloading'
                 ? { ...prev, downloadedBytes: progress.downloadedBytes, totalBytes: progress.totalBytes }
                 : prev);
         };
 
-        try {
-            const res = await downloadDaemonSessionFileToDestination({
-                sessionId,
-                request: input,
-                destination: {
-                    writeBytes: async (bytes) => {
-                        if (Platform.OS === 'web') {
-                            if (webExceededLimit) {
+        let cleanupOverride: TransferResult | null = null;
+        const download = (async (): Promise<TransferResult> => {
+            try {
+                const res = await downloadDaemonSessionFileToDestination({
+                    sessionId,
+                    request: { path: input.path, asZip: input.asZip },
+                    destination: {
+                        writeBytes: async (bytes) => {
+                            if (Platform.OS === 'web') {
+                                if (webExceededLimit) {
+                                    return;
+                                }
+
+                                webBufferedBytes += bytes.byteLength;
+                                if (webBufferedBytes > webDownloadMaxBytes) {
+                                    webExceededLimit = true;
+                                    // Stop the transfer as early as possible without throwing through the pipeline.
+                                    try {
+                                        controller.abort();
+                                    } catch {}
+
+                                    webBufferedBytes = 0;
+                                    downloadedChunks.length = 0;
+                                    return;
+                                }
+
+                                downloadedChunks.push(new Uint8Array(bytes));
                                 return;
                             }
 
-                            webBufferedBytes += bytes.byteLength;
-                            if (webBufferedBytes > webDownloadMaxBytes) {
-                                webExceededLimit = true;
-                                // Stop the transfer as early as possible without throwing through the pipeline.
-                                try {
-                                    controller.abort();
-                                } catch {}
-
+                            if (!nativeSinkRef.current) {
+                                throw new Error('Download sink unavailable');
+                            }
+                            await nativeSinkRef.current.writeBytes(bytes);
+                        },
+                        close: async () => {
+                            if (Platform.OS !== 'web' && nativeSinkRef.current) {
+                                await nativeSinkRef.current.close();
+                            }
+                        },
+                        cleanup: async () => {
+                            if (Platform.OS === 'web') {
                                 webBufferedBytes = 0;
                                 downloadedChunks.length = 0;
                                 return;
                             }
 
-                            downloadedChunks.push(new Uint8Array(bytes));
-                            return;
-                        }
+                            if (nativeSinkRef.current) {
+                                await nativeSinkRef.current.cleanup();
+                            }
+                        },
+                    },
+                    onInit: async (init) => {
+                        setDownloadState({
+                            status: 'downloading',
+                            name: init.name,
+                            downloadedBytes: 0,
+                            totalBytes: init.sizeBytes,
+                        });
 
-                        if (!nativeSinkRef.current) {
-                            throw new Error('Download sink unavailable');
-                        }
-                        await nativeSinkRef.current.writeBytes(bytes);
-                    },
-                    close: async () => {
-                        if (Platform.OS !== 'web' && nativeSinkRef.current) {
-                            await nativeSinkRef.current.close();
-                        }
-                    },
-                    cleanup: async () => {
                         if (Platform.OS === 'web') {
+                            if (init.sizeBytes > webDownloadMaxBytes) {
+                                return {
+                                    success: false,
+                                    error: 'File exceeds the web download size limit',
+                                };
+                            }
                             webBufferedBytes = 0;
-                            downloadedChunks.length = 0;
+                            webExceededLimit = false;
                             return;
                         }
 
-                        if (nativeSinkRef.current) {
-                            await nativeSinkRef.current.cleanup();
-                        }
-                    },
-                },
-                onInit: async (init) => {
-                    setDownloadState({
-                        status: 'downloading',
-                        name: init.name,
-                        downloadedBytes: 0,
-                        totalBytes: init.sizeBytes,
-                    });
-
-                    if (Platform.OS === 'web') {
-                        if (init.sizeBytes > webDownloadMaxBytes) {
+                        const sink = await createNativeCacheFileSink({
+                            directoryName: 'happier-downloads',
+                            name: init.name || 'download',
+                        });
+                        if (!sink.ok) {
                             return {
                                 success: false,
-                                error: 'File exceeds the web download size limit',
+                                error: sink.error,
                             };
                         }
-                        webBufferedBytes = 0;
-                        webExceededLimit = false;
-                        return;
-                    }
+                        nativeSinkRef.current = sink.sink;
+                    },
+                    signal: controller.signal,
+                    onProgress: updateProgress,
+                });
 
-                    const sink = await createNativeCacheFileSink({
-                        directoryName: 'happier-downloads',
-                        name: init.name || 'download',
-                    });
-                    if (!sink.ok) {
-                        return {
-                            success: false,
-                            error: sink.error,
-                        };
-                    }
-                    nativeSinkRef.current = sink.sink;
-                },
-                signal: controller.signal,
-                onProgress: updateProgress,
-            });
-
-            if (Platform.OS === 'web' && webExceededLimit) {
-                setDownloadState({ status: 'error', error: 'File exceeds the web download size limit' });
-                return { ok: false, error: 'File exceeds the web download size limit' };
-            }
-
-            if (!res.ok) {
-                setDownloadState(controller.signal.aborted ? { status: 'canceled' } : { status: 'error', error: res.error });
-                return { ok: false, error: res.error };
-            }
-
-            if (Platform.OS === 'web') {
-                const blob = new Blob(downloadedChunks as BlobPart[], { type: 'application/octet-stream' });
-                downloadedChunks.length = 0;
-                const url = URL.createObjectURL(blob);
-                try {
-                    const anchor = document.createElement('a');
-                    anchor.href = url;
-                    anchor.download = res.name || 'download';
-                    anchor.rel = 'noopener noreferrer';
-                    anchor.click();
-                } finally {
-                    setTimeout(() => {
-                        try { URL.revokeObjectURL(url); } catch { }
-                    }, 1_000);
+                if (Platform.OS === 'web' && webExceededLimit) {
+                    setDownloadState({ status: 'error', error: 'File exceeds the web download size limit' });
+                    return { ok: false, error: 'File exceeds the web download size limit' };
                 }
-            } else if (nativeSinkRef.current) {
-                try {
-                    const Sharing: any = await import('expo-sharing');
-                    if (Sharing && typeof Sharing.isAvailableAsync === 'function') {
-                        const available = await Sharing.isAvailableAsync();
-                        if (available && typeof Sharing.shareAsync === 'function') {
-                            await Sharing.shareAsync(nativeSinkRef.current.fileUri);
+
+                if (!res.ok) {
+                    failureMessage = res.error;
+                    const canceled = controller.signal.aborted && operation.cancelable;
+                    setDownloadState(canceled ? { status: 'canceled' } : { status: 'error', error: res.error });
+                    return { ok: false, error: res.error, ...(canceled ? { canceled: true } : {}) };
+                }
+
+                if (Platform.OS === 'web') {
+                    const blob = new Blob(downloadedChunks as BlobPart[], { type: 'application/octet-stream' });
+                    downloadedChunks.length = 0;
+                    const url = URL.createObjectURL(blob);
+                    try {
+                        const anchor = document.createElement('a');
+                        anchor.href = url;
+                        anchor.download = res.name || 'download';
+                        anchor.rel = 'noopener noreferrer';
+                        anchor.click();
+                    } finally {
+                        setTimeout(() => {
+                            try { URL.revokeObjectURL(url); } catch { }
+                        }, 1_000);
+                    }
+                } else if (nativeSinkRef.current) {
+                    if (controller.signal.aborted) {
+                        setDownloadState({ status: 'canceled' });
+                        return { ok: false, error: 'Download canceled', canceled: true };
+                    }
+                    const action = input.action ?? 'save';
+                    if (Platform.OS === 'android' && action !== 'share') {
+                        const { performAndroidFileAction } = await import('@/sync/runtime/files/nativeFileActions');
+                        if (!beginNativeHandoff()) return { ok: false, error: 'Download canceled', canceled: true };
+                        const result = await performAndroidFileAction({
+                            fileUri: nativeSinkRef.current.fileUri,
+                            name: res.name || 'download',
+                            action,
+                        });
+                        if (result.canceled) {
+                            setDownloadState({ status: 'canceled' });
+                            return { ok: false, error: 'Download canceled', canceled: true };
                         }
+                        keepNativeSink = action === 'open';
+                    } else {
+                        const result = await shareNativeCacheFile({
+                            fileUri: nativeSinkRef.current.fileUri,
+                            name: res.name || 'download',
+                            isCurrent: () => !controller.signal.aborted,
+                            onHandoff: () => { beginNativeHandoff(); },
+                        });
+                        if (result.status === 'canceled') {
+                            setDownloadState({ status: 'canceled' });
+                            return { ok: false, error: 'Download canceled', canceled: true };
+                        }
+                        if (result.status === 'unavailable') throw new Error(t('files.fileSharingUnavailable'));
+                        keepNativeSink = result.retainCacheFile;
                     }
-                } catch {
-                    // Best-effort share only.
+                } else {
+                    setDownloadState({ status: 'error', error: 'Download sink unavailable' });
+                    return { ok: false, error: 'Download sink unavailable' };
                 }
-            } else {
-                setDownloadState({ status: 'error', error: 'Download sink unavailable' });
-                return { ok: false, error: 'Download sink unavailable' };
-            }
 
-            if (controller.signal.aborted) {
-                if (nativeSinkRef.current) {
-                    await nativeSinkRef.current.cleanup();
+                if (controller.signal.aborted && operation.cancelable) {
+                    if (nativeSinkRef.current && !keepNativeSink) {
+                        await nativeSinkRef.current.cleanup();
+                    }
+                    setDownloadState({ status: 'canceled' });
+                    return { ok: false, error: 'Download canceled', canceled: true };
                 }
-                setDownloadState({ status: 'canceled' });
-                return { ok: false, error: 'Download canceled' };
-            }
 
-            setDownloadState((prev) => prev.status === 'downloading'
-                ? { status: 'done', name: prev.name, totalBytes: prev.totalBytes }
-                : prev);
-            return { ok: true };
-        } finally {
-            if (Platform.OS === 'web') {
-                webBufferedBytes = 0;
-                downloadedChunks.length = 0;
+                setDownloadState((prev) => prev.status === 'downloading'
+                    ? { status: 'done', name: prev.name, totalBytes: prev.totalBytes }
+                    : prev);
+                return { ok: true };
+            } catch (error) {
+                const message = error instanceof Error ? error.message : t('errors.operationFailed');
+                failureMessage = message;
+                const canceled = controller.signal.aborted && operation.cancelable;
+                setDownloadState(canceled ? { status: 'canceled' } : { status: 'error', error: message });
+                return { ok: false, error: message, ...(canceled ? { canceled: true } : {}) };
             }
-            downloadAbortRef.current = null;
-        }
+        })();
+        return download.finally(async () => {
+            let cleanupResult: TransferResult | null = null;
+            try {
+                if (nativeSinkRef.current && !keepNativeSink) await nativeSinkRef.current.cleanup();
+            } catch (error) {
+                const cleanupMessage = error instanceof Error ? error.message : t('files.fileCleanupFailed');
+                const message = failureMessage ? `${failureMessage}; ${t('files.fileCleanupFailed')}: ${cleanupMessage}` : cleanupMessage;
+                setDownloadState({ status: 'error', error: message });
+                cleanupResult = { ok: false, error: message };
+            } finally {
+                if (Platform.OS === 'web') {
+                    webBufferedBytes = 0;
+                    downloadedChunks.length = 0;
+                }
+                if (downloadOperationRef.current === operation) downloadOperationRef.current = null;
+            }
+            cleanupOverride = cleanupResult;
+        }).then(
+            result => cleanupOverride ?? result,
+            (error: unknown) => {
+                if (cleanupOverride) return cleanupOverride;
+                throw error;
+            },
+        );
     }, [sessionId]);
 
     return React.useMemo(() => ({

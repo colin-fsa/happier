@@ -672,6 +672,10 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
                             filePath={filePath}
                             imagePreviewUri={imagePreviewUri}
                             imagePreviewSvgXml={imagePreviewSvgXml}
+                            sessionId={sessionId}
+                            videoMimeType={fileContent?.binaryMime?.startsWith('video/') ? fileContent.binaryMime : null}
+                            videoPreviewRevision={fileContent?.binaryPreviewRevision}
+                            isActive={isActive}
                         />
                     </ScrollView>
                 ) : (

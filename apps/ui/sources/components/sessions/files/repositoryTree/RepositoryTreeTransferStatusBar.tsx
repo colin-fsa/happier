@@ -145,7 +145,7 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
             <View style={styles.row}>
                 <Icon name="download" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.label}>{label}</Text>
-                <Pressable
+                {props.state.cancelable !== false ? <Pressable
                     testID="repository-tree-download-cancel"
                     accessibilityRole="button"
                     accessibilityLabel={t('common.cancel')}
@@ -154,7 +154,7 @@ function DownloadRow(props: Readonly<{ state: Extract<WorkspaceDownloadState, { 
                     hitSlop={10}
                 >
                     <Icon name="x" size={16} color={theme.colors.text.secondary} />
-                </Pressable>
+                </Pressable> : <View style={{ width: styles.cancelButton.width, height: styles.cancelButton.height }} />}
             </View>
             <TransferProgressBar progress={progress} />
         </View>
@@ -180,4 +180,3 @@ export function RepositoryTreeTransferStatusBar(props: Readonly<{
         </View>
     );
 }
-

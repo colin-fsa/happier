@@ -6827,6 +6827,8 @@ export const en = {
 	                        copyPath: 'Copy path',
 	                        download: 'Download',
 	                        downloadAsZip: 'Download as zip',
+	                        openWith: 'Open with',
+	                        share: 'Share',
 	                    },
 	                    dropToUpload: 'Drop files to upload',
 	                    rename: {
@@ -7067,6 +7069,9 @@ export const en = {
           unstagedChanges: ({ count }: { count: number }) => `Unstaged Changes (${count})`,
             // File viewer strings
             fileReadFailed: 'Failed to read file',
+            androidFileActionsUnavailable: "Android file actions are unavailable in this app build. Update Happier and try again.",
+            fileSharingUnavailable: "File sharing is unavailable on this device.",
+            fileCleanupFailed: "Could not remove the temporary file",
             fileTooLargeToPreview: 'File is too large to preview',
             fileWriteFailed: 'Failed to write file',
                 fileEditor: {
@@ -7137,6 +7142,7 @@ export const en = {
             },
             loadingFile: ({ fileName }: { fileName: string }) => `Loading ${fileName}...`,
             binaryFile: 'Binary File',
+            videoPreview: 'Video preview',
             imagePreviewTooLarge: 'Image preview is too large to display',
             sessionMedia: {
                 generatedImageA11y: ({ name }: { name: string }) => `Open generated image ${name}`,
