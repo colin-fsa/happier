@@ -280,6 +280,18 @@ describe('runSessionAgentTransition', () => {
   });
 
   describe('pre-effect rejections leave the source running', () => {
+    it.each(['unrecognized-permission', '', 42])('rejects invalid authored permission %j before stopping the source', async (permissionMode) => {
+      primeHappyPath();
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({ input: { text: 'keep going', localId: LOCAL_ID, meta: { permissionMode } } }),
+      });
+
+      expect(result).toEqual({ type: 'rejected', code: 'unsupported_operation', sourceEffect: 'none' });
+      expect(mocks.callOrder).toEqual([]);
+    });
+
     it.each([
       [
         'the server explicitly disables it',
@@ -1078,6 +1090,22 @@ describe('runSessionAgentTransition', () => {
       // exact submitted input is admitted under.
       const enqueue = mocks.enqueuePendingQueueV2MessageViaHttp.mock.calls[0]?.[0];
       expect((enqueue.body.content.v as { meta: Record<string, unknown> }).meta.permissionMode).toBe('yolo');
+    });
+
+    it('admits the frozen input permission instead of a different committed Session permission', async () => {
+      primeHappyPath(sourceMetadata({ permissionMode: 'yolo' }));
+
+      const result = await runSessionAgentTransition({
+        credentials,
+        request: request({ input: { text: 'keep going', localId: LOCAL_ID, meta: { permissionMode: 'read-only' } } }),
+      });
+
+      expect(result).toEqual({ type: 'accepted', localId: LOCAL_ID });
+      const enqueue = mocks.enqueuePendingQueueV2MessageViaHttp.mock.calls[0]?.[0];
+      expect((enqueue.body.content.v as { meta: Record<string, unknown> }).meta.permissionMode).toBe('read-only');
+      const cutover = mocks.commitSessionAgentTransitionCutover.mock.calls[0]?.[0];
+      const written = JSON.parse(cutover.currentView.metadataCiphertext) as Record<string, unknown>;
+      expect(written.permissionMode).toBe('yolo');
     });
 
     // With bytes and version taken from one post-stop observation, the CAS can

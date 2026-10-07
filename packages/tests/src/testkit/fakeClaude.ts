@@ -14,6 +14,7 @@ export type FakeClaudeInvocation = {
   invocationId?: string;
   mode: 'sdk' | 'local';
   argv: string[];
+  claudeConfigDir?: string;
   mcpConfigs?: unknown[];
   mergedMcpServers?: Record<string, unknown>;
   [key: string]: unknown;

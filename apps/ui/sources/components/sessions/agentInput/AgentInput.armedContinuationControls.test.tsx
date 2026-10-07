@@ -7,6 +7,10 @@ import { getPermissionModeBadgeLabelForAgentType } from '@/sync/domains/permissi
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 installAgentInputCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({ translate: (key, params) => `${key}${params?.agent ? ` ${params.agent}` : ''}` });
+    },
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({

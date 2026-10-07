@@ -111,6 +111,8 @@ import {
 import {
     evaluateAgentSessionCapabilitySupport,
     resolveAgentIdFromSessionMetadata,
+    parsePermissionIntentAlias,
+    resolvePermissionIntentFromSessionMetadata,
 } from '@happier-dev/agents';
 import {
     SPAWN_SESSION_ERROR_CODES,
@@ -127,6 +129,7 @@ import { readMessageDisplayText } from '@/sync/domains/messages/messageDisplayTe
 import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 import { Session, type Metadata } from '@/sync/domains/state/storageTypes';
 import { sync } from '@/sync/sync';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { computeNextAcpConfigOptionOverrideMetadata } from '@/sync/engine/overrides/acpConfigOptionOverridePublish';
 import { readSessionConfigOptionOverridesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { useApplyLocalSettings } from '@/sync/store/settingsWriters';
@@ -144,7 +147,7 @@ import { expandPromptTemplateInvocation } from '@/sync/domains/input/slashComman
 import { resolvePromptInvocationComposerSendAction } from '@/sync/domains/input/slashCommands/promptInvocationBehavior';
 import type { SessionArmedAgentContinuationSubmission } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
-import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import type { AgentInputLocalUiStateV1 } from '@/sync/domains/input/draftValues/agentInputLocalUiStateStore';
 import { applyPermissionModeSelection } from '@/sync/domains/permissions/permissionModeApply';
 import {
@@ -3841,6 +3844,12 @@ function SessionViewLoaded({
     const voiceEnabled = useFeatureEnabled('voice');
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments');
     const connectedServiceQuotasEnabled = useFeatureEnabled('connectedServices.quotas');
+    const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices', {
+        scopeKind: 'spawn', serverId: capabilityServerId,
+    });
+    const connectedServiceAccountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', {
+        scopeKind: 'spawn', serverId: capabilityServerId,
+    });
     const attachmentsUploadsFeatureEnabled = useFeatureEnabled('attachments.uploads', {
         scopeKind: 'spawn',
         serverId: capabilityServerId,
@@ -3942,7 +3951,10 @@ function SessionViewLoaded({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         cwd: (session.metadata?.path as string | undefined) ?? null,
         profileId: liveComposerState.profileId ?? null,
-    }), [capabilityServerId, liveComposerState.profileId, machineId, session.metadata?.path, settings]);
+        accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2,
+        connectedServicesFeatureEnabled,
+        accountGroupsFeatureEnabled: connectedServiceAccountGroupsFeatureEnabled,
+    }), [accountProfile?.connectedServicesV2, capabilityServerId, connectedServiceAccountGroupsFeatureEnabled, connectedServicesFeatureEnabled, liveComposerState.profileId, machineId, session.metadata?.path, settings]);
     const resolveSessionModelDiscoveryContext = React.useCallback((): SessionModelDiscoveryContext => {
         const backendTarget = sessionActionDefaultBackend?.backendTarget
             ?? { kind: 'builtInAgent' as const, agentId: liveComposerState.agentId };
@@ -4412,6 +4424,12 @@ function SessionViewLoaded({
     const clearArmedContinuationSubmissionDraftsIfCurrent = React.useCallback((
         submission: SessionArmedAgentContinuationSubmission,
     ) => {
+        // Custody owns this exact input, even if the reader has chosen another mode since.
+        fireAndForget(sync.publishNextPromptPermissionModeAfterAdmission({
+            sessionId,
+            admittedPermissionMode: submission.input.meta.permissionMode,
+            expectedAccountScope: activeServerAccountScope,
+        }), { tag: 'SessionView.publishAdmittedPermissionIntent' });
         const currentness = submission.currentness;
         let didClearSemantic = false;
         clearComposerAfterOutboundHandoff({
@@ -4471,6 +4489,7 @@ function SessionViewLoaded({
             clearSentReviewCommentDrafts();
         }
     }, [
+        activeServerAccountScope,
         clearDraftForSessionIfCurrentValueMatches,
         clearSentReviewCommentDrafts,
         draftScope,
@@ -4741,14 +4760,15 @@ function SessionViewLoaded({
     }, [session.metadata, sessionId]);
     const buildNextMessageMetaOverrides = React.useCallback((
         metaOverrides: Record<string, unknown> | undefined,
-        _destination: SessionComposerSendDestination,
+        destination: SessionComposerSendDestination,
     ) => {
+        const targetSelection = destination.kind === 'armedAgentContinuation' ? destination.intent.selection : null;
         return buildSessionComposerNextMessageMetaOverridesFromUiState({
-            agentId: liveComposerState.agentId,
-            configOptionOverrides: optimisticSessionConfigOptionOverrides,
-            metaOverrides,
+            agentId: targetSelection ? resolveAgentIdFromFlavor(targetSelection.agentId) : liveComposerState.agentId,
+            configOptionOverrides: targetSelection ? targetSelection.sessionConfigOptionOverrides : optimisticSessionConfigOptionOverrides,
+            metaOverrides: targetSelection ? { ...metaOverrides, permissionMode: parsePermissionIntentAlias(permissionMode) ?? 'default' } : metaOverrides,
         });
-    }, [liveComposerState.agentId, optimisticSessionConfigOptionOverrides]);
+    }, [liveComposerState.agentId, optimisticSessionConfigOptionOverrides, permissionMode]);
 
     // Function to update model mode (only for agents that expose model selection in the UI)
     const updateModelMode = React.useCallback((mode: ModelMode, modelOptionsContext?: SessionModelOptionsContext) => {
@@ -5634,6 +5654,7 @@ function SessionViewLoaded({
                     sessionId,
                     localId: destination.localId,
                     intent: destination.intent,
+                    committedPermissionMode: resolvePermissionIntentFromSessionMetadata(storage.getState().sessions[sessionId]?.metadata)?.intent ?? 'default',
                     input: {
                         text: outboundForTransition.text,
                         ...(outboundForTransition.displayText !== undefined
@@ -5654,17 +5675,6 @@ function SessionViewLoaded({
                 const transitionInput = existingSubmission?.localId === destination.localId
                     ? existingSubmission.input
                     : buildArmedAgentContinuationTransitionInput(transitionSubmission);
-                if (!inSessionAgentPicker.recordArmedContinuationSubmission({
-                    localId: destination.localId,
-                    input: transitionInput,
-                    currentness: {
-                        text: previousMessage,
-                        mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
-                        attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
-                    },
-                })) {
-                    return;
-                }
                 // The server's reconciliation path is allowed to update a
                 // matching localId, so retrying an edited composer must reuse
                 // the arm's first exact wire input rather than trusting localId
@@ -5678,7 +5688,26 @@ function SessionViewLoaded({
                         },
                     }
                     : transitionSubmission;
-                const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch);
+                const isScopeCurrent = () => areServerAccountScopesEqual(activeServerAccountScope, getActiveServerAccountScope());
+                const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch, {
+                    isCurrent: isScopeCurrent,
+                    onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
+                        localId: destination.localId,
+                        input: transitionInput,
+                        currentness: {
+                            text: previousMessage,
+                            mentions: semanticDraftSnapshot.structuredInputMentions ?? [],
+                            attachmentDraftIds: attachmentDrafts.map((draft) => draft.id),
+                        },
+                    }),
+                });
+                if (!isScopeCurrent()) return;
+                if (result === null) {
+                    if (disposition.notice) setArmedContinuationOutcome({
+                        kind: 'refusal', scopeKey: activeServerAccountScopeKey, message: disposition.notice.message,
+                    });
+                    return;
+                }
                 // The armed row is dropped only once it stops being a truthful
                 // promise about the next message.
                 // A draft clear is consumed by the one compare-clear owner below,

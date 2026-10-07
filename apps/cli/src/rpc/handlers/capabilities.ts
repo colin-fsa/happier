@@ -643,7 +643,11 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     };
 }
 
-export async function createCliCapabilitiesService(): Promise<ReturnType<typeof createCapabilitiesService>> {
+type CliCapabilitiesOptions = Readonly<{
+    hasSessionAgentTransition?: () => boolean;
+}>;
+
+export async function createCliCapabilitiesService(options?: CliCapabilitiesOptions): Promise<ReturnType<typeof createCapabilitiesService>> {
     const cliCapabilities = await Promise.all(
         (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
             if (entry.getCliCapabilityOverride) {
@@ -662,10 +666,19 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
     );
     const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
 
+    const hasSessionAgentTransition = options?.hasSessionAgentTransition;
+    const daemonCapabilities: Capability[] = hasSessionAgentTransition ? [{
+        descriptor: { id: 'tool.sessionAgentTransition', kind: 'tool', title: 'Agent transitions' },
+        // The machine process installs its transition handler after registering
+        // shared capabilities. Check the actual owner at detection time.
+        detect: async () => ({ supportsInputPermissionIntent: hasSessionAgentTransition() }),
+    }] : [];
+
     return createCapabilitiesService({
         capabilities: [
             ...cliCapabilities,
             ...extraCapabilities,
+            ...daemonCapabilities,
             ...installableDepCapabilities,
             tmuxCapability,
             windowsTerminalCapability,
@@ -677,12 +690,12 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
     });
 }
 
-export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar): void {
+export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar, options?: CliCapabilitiesOptions): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
 
     const getService = (): Promise<ReturnType<typeof createCapabilitiesService>> => {
         if (servicePromise) return servicePromise;
-        const pending = createCliCapabilitiesService().catch((error) => {
+        const pending = createCliCapabilitiesService(options).catch((error) => {
             if (servicePromise === pending) {
                 servicePromise = null;
             }

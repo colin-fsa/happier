@@ -112,6 +112,41 @@ describe('continueSessionWithArmedAgent', () => {
         expect(outcome.disposition.arm).toBe('keep');
     });
 
+    it('preserves a changed permission intent when a legacy daemon reports unknown capability', async () => {
+        machineRpcWithServerScope.mockResolvedValue({ protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: false, checkedAt: 1,
+                error: { code: 'unknown-capability', message: 'Unknown capability' } },
+        } });
+        const outcome = await continueSessionWithArmedAgent(submission({
+            committedPermissionMode: 'default', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+        }));
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
+        expect(outcome.result).toBeNull();
+        expect(outcome.disposition).toMatchObject({ draft: 'preserve', arm: 'keep', send: 'allow' });
+    });
+
+    it('continues on an older daemon when permission aliases have the same canonical intent', async () => {
+        machineRpcWithServerScope.mockResolvedValue({ type: 'accepted', localId: 'local-1' });
+        const outcome = await continueSessionWithArmedAgent(submission({
+            committedPermissionMode: 'bypassPermissions', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+        }));
+        expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['session.agentTransition']);
+        expect(outcome.result).toEqual({ type: 'accepted', localId: 'local-1' });
+    });
+
+    it.each([{}, { protocolVersion: 1, results: { 'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: 'yes' } } } }])(
+        'reports an unreadable permission capability as unavailable before attempting a transition', async (capabilities) => {
+            machineRpcWithServerScope.mockResolvedValue(capabilities);
+            const outcome = await continueSessionWithArmedAgent(submission({
+                committedPermissionMode: 'default', input: { text: 'ship it', meta: { permissionMode: 'yolo' } },
+            }));
+            expect(machineRpcWithServerScope.mock.calls.map(([request]) => request.method)).toEqual(['capabilities.detect']);
+            expect(outcome.result).toBeNull();
+            expect(outcome.disposition.notice?.message).not.toEqual(t('session.agentContinuation.transition.rejected.unsupportedOperation'));
+            expect(outcome.disposition).toMatchObject({ draft: 'preserve', arm: 'keep', send: 'allow' });
+        },
+    );
+
     it('never fabricates a rejection when the transport proves nothing', async () => {
         machineRpcWithServerScope.mockRejectedValue(new Error('socket closed'));
 

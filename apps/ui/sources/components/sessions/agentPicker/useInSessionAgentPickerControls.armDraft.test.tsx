@@ -7,6 +7,7 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { existingSessionDraftSemanticValues } from '@/sync/domains/input/drafts/existingSessionDraftSemanticValues';
 import type { SessionArmedAgentContinuation } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
 
 import {
     useInSessionAgentPickerControls,
@@ -213,7 +214,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
                 input: {
                     localId: submittedLocalId as string,
                     text: 'switch and send this',
-                    meta: {},
+                    meta: { permissionMode: 'yolo' },
                 },
                 currentness: {
                     text: 'switch and send this',
@@ -224,7 +225,17 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         });
         expect(readPersistedArm()?.submission).toMatchObject({
             localId: submittedLocalId,
-            input: { text: 'switch and send this' },
+            input: { text: 'switch and send this', meta: { permissionMode: 'yolo' } },
+        });
+        await act(async () => {
+            expect(first.getCurrent().recordArmedContinuationSubmission({
+                localId: submittedLocalId as string,
+                input: { localId: submittedLocalId as string, text: 'edited retry', meta: { permissionMode: 'read-only' } },
+                currentness: { text: 'edited retry', mentions: [], attachmentDraftIds: [] },
+            })).toBe(true);
+        });
+        expect(readPersistedArm()?.submission?.input).toMatchObject({
+            text: 'switch and send this', meta: { permissionMode: 'yolo' },
         });
         await first.unmount();
 
@@ -234,8 +245,36 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(second.getCurrent().armedContinuationLocalId).toBe(submittedLocalId);
         expect(second.getCurrent().armedContinuationSubmission).toMatchObject({
             localId: submittedLocalId,
-            input: { text: 'switch and send this' },
+            input: { text: 'switch and send this', meta: { permissionMode: 'yolo' } },
         });
+    });
+
+    it('leaves the persisted arm unsubmitted when a legacy daemon cannot transfer permission intent', async () => {
+        const hook = await renderControls();
+        await armTarget(hook, 'builtInAgent:codex');
+        const localId = hook.getCurrent().armedContinuationLocalId;
+        if (!localId) throw new Error('Expected an armed continuation identity');
+        const input = { localId, text: 'continue', meta: { permissionMode: 'yolo' } };
+        machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: false, checkedAt: 1,
+                error: { code: 'unknown-capability', message: 'Unknown capability' } },
+        } });
+        const outcome = await continueSessionWithArmedAgent({
+            sessionId: 'session-1', machineId: 'machine-1', serverId: SCOPE.serverId, localId,
+            intent: armedIntentFor('codex'), committedPermissionMode: 'default', input,
+            sourceAgentLabel: 'Claude Code', targetAgentLabel: 'Codex',
+        }, {
+            onBeforeTransitionDispatch: () => hook.getCurrent().recordArmedContinuationSubmission({
+                localId, input, currentness: { text: 'continue', mentions: [], attachmentDraftIds: [] },
+            }),
+        });
+        expect(outcome.result).toBeNull();
+        expect(readPersistedArm()).toMatchObject({ intent: armedIntentFor('codex') });
+        expect(readPersistedArm()?.submission).toBeUndefined();
+        await hook.unmount();
+        const remounted = await renderControls();
+        expect(remounted.getCurrent().armedContinuation).toEqual(armedIntentFor('codex'));
+        expect(remounted.getCurrent().armedContinuationSubmission).toBeNull();
     });
 
     it('mints a fresh identity when a distinct target is armed after a submission', async () => {
