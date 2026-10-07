@@ -3680,7 +3680,7 @@ describe('SessionView (direct sessions)', () => {
     };
     let rejectSubmit!: (error: Error) => void;
 
-    void deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
+    await deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
     existingSessionDraftSemanticValues.write(scope, 's1', 'routing.recipient', oldRecipient);
     existingSessionDraftSemanticValues.write(scope, 's1', 'routing.executionRunDelivery', 'interrupt');
     existingSessionDraftSemanticValues.write(scope, 's1', 'structuredInput.mentions', [oldMention]);
@@ -3733,7 +3733,7 @@ describe('SessionView (direct sessions)', () => {
       expect(existingSessionDraftSemanticValues.read(scope, 's1', 'structuredInput.mentions')).toEqual([newMention]);
       expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'direct send rejected');
     } finally {
-      void deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
+      await deleteSessionDraft({ scope, address: TEST_SESSION_DRAFT_ADDRESS });
     }
   });
 
