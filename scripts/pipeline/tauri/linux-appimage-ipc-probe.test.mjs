@@ -42,13 +42,15 @@ function withScratch(run) {
   return Promise.resolve(run(root)).finally(() => rmSync(root, { recursive: true, force: true }));
 }
 
-test('the stand-in CLI answers the status read and records the process tree that ran it', linuxOnly, () => withScratch(async (root) => {
+test('the stand-in CLI answers startup status and service-list reads and records their process tree', linuxOnly, () => withScratch(async (root) => {
   const recordDir = join(root, 'records');
   const cli = writeStubHappierCli({ dir: join(root, 'bin'), recordDir });
-  const { appPid, outputs } = await runThroughAppTree(cli, [['--version'], ['daemon', 'status', '--json']]);
+  const { appPid, outputs } = await runThroughAppTree(cli, [['--version'], ['daemon', 'service', 'list', '--json'], ['daemon', 'status', '--json']]);
   assert.equal(outputs[0].stdout.trim(), '0.2.99');
-  assert.equal(JSON.parse(outputs[1].stdout).service.installed, false);
   const verdict = evaluateAppIpcInvocations({ invocations: readStubInvocations(recordDir), appPid, isBundledHsetup: isNodeHsetup });
+  assert.equal(outputs[1].status, 0);
+  assert.deepEqual(JSON.parse(outputs[1].stdout), { entries: [], services: [] });
+  assert.equal(JSON.parse(outputs[2].stdout).service.installed, false);
   assert.deepEqual(verdict.statusRead.argv, ['daemon', 'status', '--json']);
   assert.equal(verdict.hsetupExe, process.execPath);
 }));
@@ -56,7 +58,7 @@ test('the stand-in CLI answers the status read and records the process tree that
 test('no status read at all fails the probe', linuxOnly, () => withScratch(async (root) => {
   const recordDir = join(root, 'records');
   const cli = writeStubHappierCli({ dir: join(root, 'bin'), recordDir });
-  const { appPid } = await runThroughAppTree(cli, [['--version']]);
+  const { appPid } = await runThroughAppTree(cli, [['--version'], ['daemon', 'service', 'list', '--json']]);
   assert.throws(
     () => evaluateAppIpcInvocations({ invocations: readStubInvocations(recordDir), appPid, isBundledHsetup: isNodeHsetup }),
     /no `daemon status --json`/,

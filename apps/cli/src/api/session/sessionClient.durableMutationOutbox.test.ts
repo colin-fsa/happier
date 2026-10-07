@@ -11,7 +11,7 @@ import {
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
 } from '@happier-dev/protocol';
 
-import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createPlainSessionFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
@@ -32,12 +32,29 @@ let supervisorControl: null | Readonly<{
   stop(): Promise<void>;
 }> = null;
 let supervisorConnectedTransitions = 0;
+let realSupervisorConnectedCompletion: Promise<void> | null = null;
 let useRealSupervisor = false;
 let transportCreationCount = 0;
 let sessionConnectionGate: Promise<void> | null = null;
 let disconnectSessionTransport: (() => void) | null = null;
 let tempHomeDir: string | null = null;
 const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+let pendingConsumerModules: Awaited<ReturnType<typeof loadPendingConsumerModules>> | null = null;
+
+async function loadPendingConsumerModules() {
+  const [client, queue, consumer, logging] = await Promise.all([
+    import('./sessionClient'),
+    import('@/agent/runtime/modeMessageQueue'),
+    import('@/agent/runtime/sessionInput/SessionProviderInputConsumer'),
+    import('@/ui/logger'),
+  ]);
+  return {
+    ApiSessionClient: client.ApiSessionClient,
+    MessageQueue2: queue.MessageQueue2,
+    createSessionProviderInputConsumer: consumer.createSessionProviderInputConsumer,
+    logger: logging.logger,
+  };
+}
 
 async function createRuntimePersistenceContext(sessionId: string) {
   const { configuration } = await import('@/configuration');
@@ -99,16 +116,28 @@ vi.mock('@happier-dev/connection-supervisor', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@happier-dev/connection-supervisor')>();
   return {
     DEFAULT_MANAGED_CONNECTION_POLICY: actual.DEFAULT_MANAGED_CONNECTION_POLICY,
-    createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => {
+    createManagedConnectionSupervisor: (params: Parameters<typeof actual.createManagedConnectionSupervisor>[0]) => {
       if (useRealSupervisor) {
-        return actual.createManagedConnectionSupervisor(params as Parameters<typeof actual.createManagedConnectionSupervisor>[0]);
+        return actual.createManagedConnectionSupervisor({
+          ...params,
+          onConnected: (context) => {
+            const completion = Promise.resolve(params.onConnected?.(context));
+            realSupervisorConnectedCompletion = completion;
+            return completion;
+          },
+        });
       }
       let phase = 'idle';
       supervisorConnect = async () => {
         params.createTransport();
         phase = 'online';
         supervisorConnectedTransitions += 1;
-        await params.onConnected?.();
+        await params.onConnected?.({
+          state: {
+            phase: 'online', reason: null, attempt: supervisorConnectedTransitions,
+            nextRetryAt: null, lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null,
+          },
+        });
       };
       supervisorControl = {
         start: async () => {
@@ -174,10 +203,12 @@ const reusableUnknownTurnId = ['primary', 'runtime'].join('-') + ':s1:unknown';
 describe('ApiSessionClient durable mutation outbox', () => {
   beforeEach(async () => {
     vi.resetModules();
+    vi.mocked(axios.get).mockReset();
     vi.mocked(axios.post).mockReset();
     supervisorConnect = null;
     supervisorControl = null;
     supervisorConnectedTransitions = 0;
+    realSupervisorConnectedCompletion = null;
     useRealSupervisor = false;
     transportCreationCount = 0;
     sessionConnectionGate = null;
@@ -185,6 +216,7 @@ describe('ApiSessionClient durable mutation outbox', () => {
     sessionSocketStub = null;
     sessionSocketStubFactory = null;
     userSocketStub = null;
+    pendingConsumerModules = null;
     await useTempHappyHome();
   });
 
@@ -390,6 +422,159 @@ describe('ApiSessionClient durable mutation outbox', () => {
     expect(materializationsBeforePublisherAck).toBe(0);
     expect(pendingMaterializeCount).toBe(1);
     expect(transportCreationCount).toBe(lifecycle ? 2 : 1);
+  });
+
+  describe('Pending consumer convergence', () => {
+    beforeEach(async () => {
+      pendingConsumerModules = await loadPendingConsumerModules();
+    });
+
+    it.each([
+      'publisher readiness',
+      'version-mismatch acknowledgement and matching hint',
+    ] as const)('delivers Pending through the real consumer after %s without another queue mutation', async (contract) => {
+      const versionMismatch = contract === 'version-mismatch acknowledgement and matching hint';
+      useRealSupervisor = true;
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
+        capabilities: { session: { runtimeActivity: { protocolVersion: 2 }, pendingInput: { protocolVersion: 1 } } },
+      }), { status: 200 })));
+
+      const activityRequest = createDeferred<void>();
+      const activityAck = createDeferred<void>();
+      const metadata = { ...createPlainSessionFixture().metadata, machineId: 'machine-1' };
+      let pendingClaims = 0;
+      sessionSocketStub = createApiSessionSocketStub({
+        connected: true,
+        emit: (event, args) => {
+          if (event === 'ping' && typeof args[0] === 'function') args[0]();
+        },
+        emitWithAck: async (event, payload) => {
+          if (event === 'ping') return { v: 1 };
+          if (event === 'session-runtime-activity-snapshot') {
+            activityRequest.resolve();
+            await activityAck.promise;
+            const request = payload as Readonly<{
+              sessionId: string;
+              mutationId: string;
+              snapshot: Readonly<{ state: string; activeCount: number }>;
+            }>;
+            return {
+              status: 'applied', sessionId: request.sessionId, mutationId: request.mutationId,
+              projection: { ...request.snapshot, observedAt: 1, revision: 1 },
+            };
+          }
+          if (event === 'pending-materialize-next') {
+            pendingClaims += 1;
+            if (versionMismatch) {
+              expect(payload).toMatchObject({ sid: 's1', expectedPendingVersion: pendingClaims === 1 ? 1 : 2 });
+            }
+            if (versionMismatch && pendingClaims === 1) {
+              return {
+                ok: true, didMaterialize: false, deferredReason: 'pending_version_mismatch',
+                pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2,
+              };
+            }
+            return {
+              ok: true, didMaterialize: true, didWrite: false,
+              pendingCount: 1, pendingBlockedCount: 0, pendingVersion: versionMismatch ? 3 : 2,
+              message: {
+                id: null, seq: null, localId: 'early-pending', messageRole: 'user',
+                providerAction: 'send', requestedAction: { v: 1, kind: 'enqueue' },
+                deliveryState: { mode: 'provider', unresolved: true },
+                content: { t: 'plain', v: {
+                  role: 'user', localId: 'early-pending',
+                  content: { type: 'text', text: 'prompt accepted before publisher readiness' },
+                  meta: { source: 'ui', sentFrom: 'e2e' },
+                } },
+                createdAt: 1, updatedAt: 1,
+              },
+            };
+          }
+          if (event === 'session-runtime-activity-close') return { status: 'closed', sessionId: 's1' };
+          throw new Error(`Unexpected session socket ACK event: ${event}`);
+        },
+      });
+      userSocketStub = createApiSessionSocketStub({ connected: false });
+      // The optional user-scoped transport stays offline; delivery must use the exact session socket.
+      userSocketStub.connect.mockImplementation(() => userSocketStub);
+      vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { session: createSessionRecordFixture({
+        id: 's1', encryptionMode: 'plain', metadataVersion: 0, metadata: JSON.stringify(metadata),
+        pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1, latestTurnStatus: null,
+      }) } });
+
+      if (!pendingConsumerModules) throw new Error('Missing real Pending consumer test preparation');
+      const { ApiSessionClient, MessageQueue2, createSessionProviderInputConsumer, logger } = pendingConsumerModules;
+      const decisions = vi.spyOn(logger, 'infoFile');
+      const client = new ApiSessionClient('tok', createPlainSessionFixture({
+        id: 's1', pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0,
+        metadata,
+      }));
+      const controller = new AbortController();
+      const queue = new MessageQueue2<null>(() => 'mode');
+      const consumer = createSessionProviderInputConsumer({ messageQueue: queue, session: client });
+      let publication: Promise<void> | null = null;
+      try {
+        client.onUserMessage((message, info) => queue.push(message.content.text, null, {
+          userMessageLocalId: message.localId,
+          userMessageSeq: info?.seq ?? null,
+          providerAcceptancePending: info?.providerAcceptancePending,
+        }));
+        publication = client.getRuntimeActivitySnapshotPublisher().publish({ state: 'idle', activeCount: 0 });
+        await activityRequest.promise;
+        if (versionMismatch) {
+          activityAck.resolve();
+          await publication;
+          // Finish the real connection callback so its readiness wake cannot rescue a later lost ACK wake.
+          expect(realSupervisorConnectedCompletion).not.toBeNull();
+          await realSupervisorConnectedCompletion;
+        }
+        sessionSocketStub.trigger('update', {
+          id: 'early-pending-hint', seq: 1, createdAt: 1,
+          body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1 },
+        });
+        const batch = consumer.waitForNextInput({ abortSignal: controller.signal });
+        const received: Array<Awaited<typeof batch>> = [];
+        void batch.then((value) => { received.push(value); });
+        if (!versionMismatch) {
+          // Observe the real consumer's bounded pre-readiness rejoin before releasing the OS/network ACK.
+          await expect.poll(() => decisions.mock.calls.filter(([label, detail]) => (
+            label === '[pendingQueue] input consumer materialization decision'
+            && detail !== null && typeof detail === 'object'
+            && 'resultType' in detail && detail.resultType === 'retryable_transport'
+          )).length).toBeGreaterThanOrEqual(2);
+          expect(pendingClaims).toBe(0);
+          activityAck.resolve();
+        } else {
+          await expect.poll(() => decisions.mock.calls.filter(([label, detail]) => (
+            label === '[pendingQueue] input consumer materialization decision'
+            && detail !== null && typeof detail === 'object'
+            && 'deferredReason' in detail && detail.deferredReason === 'pending_version_mismatch'
+          )).length).toBe(1);
+          expect(pendingClaims).toBeGreaterThanOrEqual(1);
+          // The ordinary hint may arrive after the ACK taught us this same projection.
+          // Deduplicating that hint must not strand the newly learned deliverable row.
+          sessionSocketStub.trigger('update', {
+            id: 'matching-pending-hint', seq: 2, createdAt: 2,
+            body: { t: 'pending-changed', sid: 's1', pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 2 },
+          });
+        }
+        await expect.poll(() => received).toEqual([expect.objectContaining({
+          message: 'prompt accepted before publisher readiness',
+          userMessageLocalIds: ['early-pending'], providerAcceptancePending: true,
+        })]);
+        await batch;
+        expect(pendingClaims).toBe(versionMismatch ? 2 : 1);
+        expect(queue.size()).toBe(0);
+      } finally {
+        controller.abort();
+        activityAck.resolve();
+        await publication;
+        await consumer.closeProviderInputAdmissionAndWaitForDispatches();
+        await client.close();
+        decisions.mockRestore();
+      }
+    });
   });
 
   it('does not queue a terminal session turn mutation when no turn is active', async () => {
