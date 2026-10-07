@@ -17,6 +17,7 @@ describe('claude 1m context facts', () => {
   it('marks 1M-capable models as supported (incl. [1m] variants)', () => {
     expect(isClaude1mContextSupportedModelId('claude-fable-5')).toBe(true);
     expect(isClaude1mContextSupportedModelId('claude-opus-5')).toBe(true);
+    expect(isClaude1mContextSupportedModelId('claude-sonnet-5-5')).toBe(true);
     expect(isClaude1mContextSupportedModelId('claude-sonnet-5')).toBe(true);
     expect(isClaude1mContextSupportedModelId('claude-opus-4-8')).toBe(true);
     expect(isClaude1mContextSupportedModelId('claude-opus-4-7')).toBe(true);
@@ -35,6 +36,7 @@ describe('claude 1m context facts', () => {
   it('marks current always-1M models as having no opt-in toggle', () => {
     expect(isClaude1mAlwaysOnModelId('claude-fable-5')).toBe(true);
     expect(isClaude1mAlwaysOnModelId('claude-opus-5')).toBe(true);
+    expect(isClaude1mAlwaysOnModelId('claude-sonnet-5-5')).toBe(true);
     expect(isClaude1mAlwaysOnModelId('claude-sonnet-5')).toBe(true);
     expect(isClaude1mAlwaysOnModelId('claude-opus-4-8')).toBe(true);
     expect(isClaude1mAlwaysOnModelId('claude-opus-4-7')).toBe(true);
@@ -47,6 +49,7 @@ describe('claude 1m context facts', () => {
     expect(isClaude1mContextOptInModelId('claude-opus-4-6')).toBe(true);
     expect(isClaude1mContextOptInModelId('claude-fable-5')).toBe(false);
     expect(isClaude1mContextOptInModelId('claude-opus-5')).toBe(false);
+    expect(isClaude1mContextOptInModelId('claude-sonnet-5-5')).toBe(false);
     expect(isClaude1mContextOptInModelId('claude-sonnet-5')).toBe(false);
     expect(isClaude1mContextOptInModelId('claude-opus-4-8')).toBe(false);
     expect(isClaude1mContextOptInModelId('claude-haiku-4-5')).toBe(false);
@@ -76,6 +79,7 @@ describe('resolveClaudeContextWindowTokensForModelId', () => {
     expect(resolveClaudeContextWindowTokensForModelId('claude-opus-5-5')).toBe(1_000_000);
     expect(resolveClaudeContextWindowTokensForModelId('claude-fable-5')).toBe(1_000_000);
     expect(resolveClaudeContextWindowTokensForModelId('claude-opus-5')).toBe(1_000_000);
+    expect(resolveClaudeContextWindowTokensForModelId('claude-sonnet-5-5')).toBe(1_000_000);
     expect(resolveClaudeContextWindowTokensForModelId('claude-sonnet-5')).toBe(1_000_000);
     expect(resolveClaudeContextWindowTokensForModelId('claude-opus-4-8')).toBe(1_000_000);
     expect(resolveClaudeContextWindowTokensForModelId('claude-opus-4-7')).toBe(1_000_000);
