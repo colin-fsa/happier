@@ -60,8 +60,10 @@ export const COMPOSER_SUGGESTION_KIND_DEADLINE_MS = 2_500;
 const EMPTY_CATALOGS: ComposerSuggestionCatalogs = Object.freeze({});
 
 export type GetSuggestionsOptions = Readonly<{
-    /** Bypasses the session-metadata catalog read entirely (test seam, SB-8). */
+    /** The host's scoped snapshot; bypasses the session-metadata catalog read. */
     catalogs?: ComposerSuggestionCatalogs;
+    /** Scoped pre-session source, demanded only by kinds with native catalogs. */
+    loadCatalogs?: () => Promise<ComposerSuggestionCatalogs>;
     /** The host's eligible-kind subset (R-9). Defaults to every registered kind. */
     kinds?: readonly ComposerSuggestionKindId[];
     /**
@@ -201,6 +203,8 @@ type KindResolveArgs = Readonly<{
     scopedQuery: string;
     scope: string | null;
     catalogOverrides: ComposerSuggestionCatalogs | undefined;
+    loadCatalogs: GetSuggestionsOptions['loadCatalogs'];
+    signal: AbortSignal | undefined;
 }>;
 
 /**
@@ -216,13 +220,22 @@ async function resolveKindCandidates(
     args: KindResolveArgs,
 ): Promise<readonly AutocompleteSuggestion[]> {
     let catalogs = args.catalogOverrides ?? EMPTY_CATALOGS;
-    // Session catalogs are published BY a session, so with no session there is nothing to
-    // hydrate and nothing to read. The kind still runs and simply finds an empty catalog.
-    if (definition.catalog && !args.catalogOverrides && args.sessionId) {
+    // A running session owns its published catalogs; a pre-session host supplies the
+    // native snapshot discovered for its selected launch scope.
+    if (definition.catalog && definition.catalog !== 'commands' && !args.catalogOverrides && args.sessionId) {
         const catalogRequest: { vendorPlugins?: boolean; skills?: boolean } = {};
         catalogRequest[definition.catalog] = true;
         await ensureSessionSuggestionCatalogs(args.sessionId, catalogRequest);
         catalogs = readComposerSuggestionCatalogs(args.sessionId);
+    } else if (definition.catalog && !args.catalogOverrides && !args.sessionId && args.loadCatalogs) {
+        try {
+            catalogs = await args.loadCatalogs();
+        } catch (reason: unknown) {
+            // Local commands remain available when native discovery fails. Skill failures
+            // are reported by the dispatcher, which already owns empty-kind diagnostics.
+            if (definition.catalog !== 'commands') throw reason;
+            if (!args.signal?.aborted) log.log(`[composer-suggestions] native commands unavailable: ${describeSuggestionFailure(reason)}`);
+        }
     }
     return await definition.resolve({
         sessionId: args.sessionId,
@@ -267,6 +280,8 @@ export async function getSuggestions(
         scopedQuery: scope.scopedQuery,
         scope: scope.scope,
         catalogOverrides: options?.catalogs,
+        loadCatalogs: options?.loadCatalogs,
+        signal,
     };
 
     // Started once. Both settlement passes below observe THESE promises, so no kind

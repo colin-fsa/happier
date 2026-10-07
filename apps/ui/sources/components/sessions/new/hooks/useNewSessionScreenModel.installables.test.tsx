@@ -500,10 +500,6 @@ vi.mock('@/components/sessions/new/modules/useNewSessionConnectedServices', () =
     }),
 }));
 
-vi.mock('@/components/sessions/new/modules/profileHelpers', () => ({
-    useProfileMap: (profiles: Array<{ id: string }>) => new Map(profiles.map((profile) => [profile.id, profile])),
-    transformProfileToEnvironmentVars: () => [],
-}));
 
 vi.mock('@/components/sessions/new/hooks/newSessionModelModePolicy', () => ({
     resolveInitialNewSessionModelMode: () => 'default',
@@ -789,13 +785,47 @@ describe('useNewSessionScreenModel (installables)', () => {
         expect(model?.variant).toBe('simple');
     });
 
-    it('enables workspace and slash suggestions before a session exists', async () => {
-        const hook = await renderNewSessionScreenModel();
-        const model = hook.getCurrent();
-
-        expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual(['file', 'session', 'slashCommand']);
-        const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('/go');
-        expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '/goal')).toBe(true);
+    it('enables workspace, native skill and slash suggestions before a session exists', async () => {
+        cliAvailabilityState.value = {
+            ...cliAvailabilityState.value,
+            available: { codex: true, claude: true, opencode: null },
+        };
+        machineRpcWithServerScopeMock.mockReset();
+        machineRpcWithServerScopeMock.mockResolvedValue({ ok: true, result: {
+            commands: { supported: true, items: [{ command: 'project-check' }] },
+            skills: { supported: true, items: [{
+                name: 'project-check', origin: 'codex_native', path: '/repo/.agents/skills/project-check/SKILL.md',
+            }] },
+        } });
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const model = hook.getCurrent();
+            const nativeCalls = () => machineRpcWithServerScopeMock.mock.calls
+                .map(([params]) => params as { machineId: string; serverId: string; payload: { method?: string; params?: unknown } })
+                .filter((params) => params.payload?.method === 'probeCatalogs');
+            expect(nativeCalls()).toEqual([]);
+            expect(model?.simpleProps?.emptyAutocompleteKinds).toEqual(['file', 'session', 'skill', 'slashCommand']);
+            await act(async () => {
+                const suggestions = await model?.simpleProps?.emptyAutocompleteSuggestions('/go');
+                expect(suggestions?.some((suggestion: { text?: string }) => suggestion.text === '/goal')).toBe(true);
+            });
+            await flushHookEffects();
+            const current = hook.getCurrent();
+            expect(await current?.simpleProps?.emptyAutocompleteSuggestions('$project')).toEqual(expect.arrayContaining([
+                expect.objectContaining({ text: '$project-check', structuredInput: expect.objectContaining({ origin: 'codex_native' }) }),
+            ]));
+            expect(await current?.simpleProps?.emptyAutocompleteSuggestions('/project')).toEqual(expect.arrayContaining([
+                expect.objectContaining({ text: '/project-check' }),
+            ]));
+            expect(nativeCalls()).toEqual([expect.objectContaining({
+                machineId: 'machine-1', serverId: 's1',
+                payload: expect.objectContaining({ params: expect.objectContaining({
+                    cwd: '/repo', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, environmentVariables: {},
+                }) }),
+            })]);
+        } finally {
+            machineRpcWithServerScopeMock.mockReset();
+        }
     });
 
     it('scopes the `@session` picker to the server this session will spawn on', async () => {

@@ -146,6 +146,36 @@ describe('sectioned composer suggestions (EU-3)', () => {
         vi.useRealTimers();
     });
 
+    it('offers a native skill before a session exists and preserves its catalog identity', async () => {
+        storageStateMock.sessions = {};
+        const { getSuggestions } = await importSuggestions();
+        const suggestions = await getSuggestions(null, '$project', {
+            kinds: ['skill'],
+            loadCatalogs: async () => ({
+                skills: [{
+                    id: 'vendor:codex:project-check',
+                    name: 'project-check',
+                    path: '/repo/.agents/skills/project-check/SKILL.md',
+                    origin: 'vendor',
+                    backendId: 'codex',
+                }],
+            }),
+        });
+
+        expect(suggestions).toEqual([expect.objectContaining({
+            kind: 'skill',
+            text: '$project-check',
+            structuredInput: {
+                kind: 'skill',
+                id: 'vendor:codex:project-check',
+                name: 'project-check',
+                path: '/repo/.agents/skills/project-check/SKILL.md',
+                origin: 'vendor',
+                backendId: 'codex',
+            },
+        })]);
+    });
+
     describe('INV-2 — no kind suppresses another', () => {
         it('returns both files and plugins for a bare-word query that matches a plugin', async () => {
             // The headline defect: one enabled matching plugin used to return ZERO files.

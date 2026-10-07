@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
 
 import {
     FileMentionSuggestion,
@@ -58,15 +59,15 @@ import {
 export type { ComposerSuggestionKindId } from './composerSuggestionGrammar';
 
 /** Which session catalog snapshot a kind reads, if any. */
-export type ComposerSuggestionCatalogKey = 'vendorPlugins' | 'skills';
+export type ComposerSuggestionCatalogKey = 'vendorPlugins' | 'skills' | 'commands';
 
 export type ComposerSuggestionResolveContext = Readonly<{
     /**
      * The session whose *published* state this composer reads: its command list, its plugin
      * and skill catalogs, and which session the `@session` picker must exclude.
      *
-     * `null` before the session exists. That is not a degraded case — it is the honest answer,
-     * and the kinds that need a session simply contribute nothing. It replaces a
+     * `null` before the session exists. The host can still supply workspace/provider
+     * catalogs; kinds requiring session-published state contribute nothing. It replaces a
      * `'__new_session__'` sentinel that was threaded through session-addressed APIs to fake one.
      */
     sessionId: string | null;
@@ -208,7 +209,8 @@ async function resolveSkillSuggestions(
     for (const skill of context.catalogs.skills ?? []) {
         if (out.length >= context.limit) break;
         if (skill.enabled === false) continue;
-        const key = skill.name.trim().toLowerCase();
+        const suppliedId = readNonBlankOpaqueIdentifier(skill.id);
+        const key = suppliedId ?? skill.name.trim().toLowerCase();
         if (seen.has(key)) continue;
         const label = skill.displayName ?? skill.name;
         // Same precedence the deleted bespoke row used, so consolidation is not a
@@ -221,7 +223,7 @@ async function resolveSkillSuggestions(
         seen.add(key);
         out.push({
             kind: 'skill',
-            key: `skill-${skill.name}`,
+            key: `skill-${suppliedId ?? skill.name}`,
             text: formatComposerSuggestionToken('$', skill.name),
             label,
             description: subtitle,
@@ -302,7 +304,10 @@ async function resolveSessionSuggestions(
 async function resolveSlashCommandSuggestions(
     context: ComposerSuggestionResolveContext,
 ): Promise<readonly AutocompleteSuggestion[]> {
-    return await getCommandSuggestions(context.sessionId, context.scopedQuery, { limit: context.limit });
+    return await getCommandSuggestions(context.sessionId, context.scopedQuery, {
+        limit: context.limit,
+        ...(context.catalogs.commands ? { nativeCommands: context.catalogs.commands } : {}),
+    });
 }
 
 /**
@@ -370,6 +375,7 @@ const COMPOSER_SUGGESTION_KIND_DEFINITIONS = {
     },
     slashCommand: {
         id: 'slashCommand',
+        catalog: 'commands',
         limit: 8,
         sectionTitleKey: 'agentInput.suggestionGroups.commands',
         resolve: resolveSlashCommandSuggestions,

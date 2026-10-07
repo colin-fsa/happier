@@ -20,43 +20,8 @@ export interface CommandItem {
 interface SearchOptions {
     limit?: number;
     threshold?: number;
+    nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
 }
-
-// Commands to ignore/filter out
-export const IGNORED_COMMANDS = [
-    "add-dir",
-    "agents",
-    "config",
-    "statusline",
-    "bashes",
-    "settings",
-    "cost",
-    "doctor",
-    "exit",
-    "help",
-    "ide",
-    "init",
-    "install-github-app",
-    "mcp",
-    "memory",
-    "migrate-installer",
-    "model",
-    "pr-comments",
-    "release-notes",
-    "resume",
-    "status",
-    "bug",
-    "review",
-    "security-review",
-    "terminal-setup",
-    "upgrade",
-    "vim",
-    "permissions",
-    "hooks",
-    "export",
-    "logout",
-    "login"
-];
 
 // Default commands always available
 const DEFAULT_COMMANDS: CommandItem[] = [
@@ -171,10 +136,12 @@ const COMMAND_DESCRIPTIONS: Record<string, string> = {
 };
 
 // Get commands from session metadata.
-// `sessionId` is null before a session exists (the new-session composer): built-in, action and
-// default commands are all still available, and only the session-published ones are absent —
-// which is the truth, not a degraded case.
-function getCommandsFromSession(sessionId: string | null): CommandItem[] {
+// Before a session exists, built-in, action and default commands remain available. A host
+// can supply the native catalog observed for its selected machine/provider/workspace.
+function getCommandsFromSession(
+    sessionId: string | null,
+    nativeCommands: readonly Pick<CommandItem, 'command' | 'description'>[] = [],
+): CommandItem[] {
     const state = storage.getState();
     const session = sessionId ? state.sessions?.[sessionId] : undefined;
     // Built-in core slash commands (e.g. /happier-diagnose) are always available
@@ -190,38 +157,21 @@ function getCommandsFromSession(sessionId: string | null): CommandItem[] {
         if (commands.find((c) => c.command === invocation.command)) continue;
         commands.push(invocation);
     }
-    if (!session || !session.metadata) {
-        return commands;
-    }
-
     // Prefer richer metadata when available
-    const details = (session.metadata as any).slashCommandDetails as Array<{ command?: unknown; description?: unknown }> | undefined;
-    if (Array.isArray(details) && details.length > 0) {
-        for (const d of details) {
-            const cmd = typeof d.command === 'string' ? d.command : null;
-            if (!cmd) continue;
-            if (IGNORED_COMMANDS.includes(cmd)) continue;
-            if (commands.find(c => c.command === cmd)) continue;
-            commands.push({
-                command: cmd,
-                description: typeof d.description === 'string' && d.description.trim().length > 0
-                    ? d.description
-                    : COMMAND_DESCRIPTIONS[cmd]
-            });
-        }
-        return commands;
-    }
-
-    // Fallback: commands from metadata.slashCommands (filter with ignore list)
-    if (session.metadata.slashCommands) {
-        for (const cmd of session.metadata.slashCommands) {
-            if (IGNORED_COMMANDS.includes(cmd)) continue;
-            if (commands.find(c => c.command === cmd)) continue;
-            commands.push({
-                command: cmd,
-                description: COMMAND_DESCRIPTIONS[cmd]
-            });
-        }
+    const details = session?.metadata?.slashCommandDetails;
+    const publishedCommands: readonly { command?: unknown; description?: unknown }[] = Array.isArray(details) && details.length > 0
+        ? details
+        : (session?.metadata?.slashCommands ?? []).map((command) => ({ command }));
+    for (const d of [...publishedCommands, ...nativeCommands]) {
+        const cmd = typeof d.command === 'string' ? d.command : null;
+        if (!cmd) continue;
+        if (commands.find(c => c.command === cmd)) continue;
+        commands.push({
+            command: cmd,
+            description: typeof d.description === 'string' && d.description.trim().length > 0
+                ? d.description
+                : COMMAND_DESCRIPTIONS[cmd]
+        });
     }
     
     return commands;
@@ -236,7 +186,7 @@ export async function searchCommands(
     const { limit = 10, threshold = 0.3 } = options;
     
     // Get commands from session metadata (no caching)
-    const commands = getCommandsFromSession(sessionId);
+    const commands = getCommandsFromSession(sessionId, options.nativeCommands);
     
     // If query is empty, return all commands
     if (!query || query.trim().length === 0) {
