@@ -1,8 +1,14 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { getPriority, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Scheduling priority is an OS boundary; exercise the real governor and launch composition.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, getPriority: vi.fn(() => 0) };
+});
 
 const mocks = vi.hoisted(() => ({
   systemdResourceGovernorExecFile: vi.fn(async () => ({ stdout: '', stderr: '' })),
@@ -12,6 +18,10 @@ import { buildCgroupSelfMigratingHappyCliLaunchSpec } from './buildCgroupSelfMig
 
 describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
   let sandboxDir: string | null = null;
+
+  beforeEach(() => {
+    vi.mocked(getPriority).mockReturnValue(0);
+  });
 
   afterEach(async () => {
     if (!sandboxDir) return;
@@ -91,6 +101,7 @@ describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
   });
 
   it('uses the provisioned lower-weight jobs slice instead of the daemon control-plane slice', async () => {
+    vi.mocked(getPriority).mockReturnValue(19);
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', {
       configurable: true,
@@ -117,7 +128,7 @@ describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
         '--user',
         '--scope',
         '--slice=happier-jobs.slice',
-        '--nice=10',
+        '--nice=19',
         '--',
         'codex',
       ]));
