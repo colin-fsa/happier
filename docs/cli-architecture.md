@@ -1198,6 +1198,13 @@ requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+In development source, Claude prompt staging and consumption wait under the existing
+session cancellation signal, rather than the terminal transport's write deadline.
+An overloaded TUI can display a successful paste late. The shared terminal verifier
+waits for that exact prompt before sending Enter once, and re-observes its consumption
+without resubmitting. Individual transport commands retain their own timeouts.
+The arbiter's existing accepted/retired delivery state also ends verification, so a
+manual submission or cancelled Pending row cannot leave the injection waiting forever.
 The Herdr client stages large text in sequential Unicode-safe requests within
 Herdr's 1 MiB serialized JSON-line limit, including escape expansion and envelope
 bytes. Submission still belongs to the existing verifier: it sends Enter only

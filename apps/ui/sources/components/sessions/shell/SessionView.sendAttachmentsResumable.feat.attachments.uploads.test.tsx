@@ -579,26 +579,6 @@ vi.mock('@/utils/system/versionUtils', () => ({
     MINIMUM_CLI_VERSION: '0.0.0',
 }));
 
-vi.mock('@/agents/catalog/catalog', async (importOriginal) => {
-    const actual = await importOriginal<any>();
-    return {
-        ...actual,
-        getAgentCore: () => ({
-            model: { defaultMode: 'default' },
-            cli: { spawnAgent: 'codex' },
-            localControl: { supported: true },
-            resume: {
-                vendorResumeIdField: 'codexSessionId',
-                supportsVendorResume: true,
-                experimental: true,
-            },
-            uiConnectedService: { serviceId: null, label: 'Provider', connectRoute: null },
-        }),
-        resolveAgentIdFromFlavor: () => 'codex',
-        DEFAULT_AGENT_ID: 'codex',
-    };
-});
-
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: () => ({ resumeCapabilityOptions: { accountSettings: { codexBackendMode: 'acp' } } }),
 }));
@@ -2174,6 +2154,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             modalAlertSpy.mockClear();
             pendingFireAndForget.length = 0;
             armSecondAgent();
+            armedContinuationState.intent.selection.sessionConfigOptionOverrides = {
+                v: 1, updatedAt: 1, overrides: { reasoning_effort: { value: 'high', updatedAt: 1 } },
+            };
 
             let tree: renderer.ReactTestRenderer | undefined;
             try {
@@ -2197,7 +2180,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                         sessionId: 's1',
                         expectedCurrentAgentId: 'codex',
                         selection: { agentId: 'claude' },
-                        input: { localId: 'armed-local-id' },
+                        input: { localId: 'armed-local-id', meta: { reasoningEffort: 'high' } },
                     },
                 });
                 expect(String((transitionInput as any)?.request?.input?.text ?? '')).toContain('a.txt');

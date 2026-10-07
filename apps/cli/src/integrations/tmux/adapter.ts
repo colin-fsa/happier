@@ -228,6 +228,8 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
       const result = await pasteTextViaTmuxBuffer({
         target: targetFromHandle(handle),
         text: input.text,
+        signal: input.signal,
+        resolveDeliveryState: input.resolveDeliveryState,
         bufferName: createTmuxPromptBufferName(),
         submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
         postSubmitSettleMs: resolveTmuxPromptSubmitDelayMs(),

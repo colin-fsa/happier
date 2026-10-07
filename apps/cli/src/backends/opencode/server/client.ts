@@ -92,11 +92,8 @@ function resolveOpenCodeServerHttpTimeoutMs(env: NodeJS.ProcessEnv): number | nu
   if (typeof raw !== 'string') return defaultTimeoutMs;
   const parsed = Number.parseInt(raw.trim(), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return defaultTimeoutMs;
-  // Fail closed on absurdly low timeouts: these tend to create flakey control-plane polling and
-  // false-negative health probes under normal load.
-  const clamped = Math.min(120_000, Math.trunc(parsed));
-  if (clamped < 1000) return defaultTimeoutMs;
-  return clamped;
+  // Pre-session probes pass their remaining deadline, which may be less than one second.
+  return Math.min(120_000, Math.trunc(parsed));
 }
 
 export function resolveOpenCodeSseReadIdleTimeoutMs(env: NodeJS.ProcessEnv): number | null {

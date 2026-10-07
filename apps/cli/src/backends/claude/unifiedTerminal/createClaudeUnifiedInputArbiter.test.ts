@@ -2,8 +2,60 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createClaudeUnifiedInputArbiter } from './createClaudeUnifiedInputArbiter';
 import { createClaudeUnifiedInFlightSteerEvaluator } from './createClaudeUnifiedInFlightSteerEvaluator';
+import { createClaudeUnifiedPromptInjector } from './createClaudeUnifiedPromptInjector';
+import { runTerminalPromptSubmission, resolveTerminalPromptSubmissionFailureReason } from '@/integrations/terminalHost/promptSubmitVerification';
 
 describe('createClaudeUnifiedInputArbiter', () => {
+  it.each(['accepted', 'retired'] as const)('releases a waiting terminal submission when its canonical delivery is %s', async settledState => {
+    let state: 'pending' | 'accepted' | 'retired' = 'pending';
+    const acceptedTexts: string[] = [];
+    const failures: unknown[] = [];
+    let enterCount = 0;
+    const lifetime = new AbortController();
+    const injector = createClaudeUnifiedPromptInjector({
+      // External terminal boundary; keep the arbiter, injector and submission owner real.
+      inputInjection: {
+        hostKind: 'tmux',
+        injectUserPrompt: async input => {
+          const result = await runTerminalPromptSubmission({
+            promptText: input.text,
+            signal: lifetime.signal,
+            resolveDeliveryState: input.resolveDeliveryState,
+            verifyStagedBeforeSubmit: async () => false,
+            submitEnter: async () => { enterCount += 1; return 'success'; },
+            wait: async () => { state = settledState; },
+          });
+          return result.success
+            ? { status: 'injected', at: Date.now(), bytesWritten: input.text.length }
+            : { status: 'failed', reason: resolveTerminalPromptSubmissionFailureReason(result.reason), phase: result.phase, duplicateRisk: result.duplicateRisk, recoverable: true };
+        },
+      },
+    });
+    const arbiter = createClaudeUnifiedInputArbiter({
+      quietPeriodMs: 0,
+      injectPrompt: injector.injectPrompt,
+      resolvePromptDeliveryState: () => state,
+      onPromptAccepted: async batch => { acceptedTexts.push(batch.message); },
+      onInjectionFailure: failure => { failures.push(failure); },
+    });
+    try {
+      arbiter.observeLifecycle({ type: 'turn_state', state: 'idle' });
+      arbiter.observeLifecycle({ type: 'output' });
+      await arbiter.enqueueUiMessage({
+        message: 'manually settled prompt', origin: { kind: 'ui_pending' }, userMessageLocalIds: ['waiting-row'],
+      });
+      await arbiter.drainWhenSafe();
+      expect(enterCount).toBe(0);
+      expect(acceptedTexts).toEqual(settledState === 'accepted' ? ['manually settled prompt'] : []);
+      expect(failures).toEqual([]);
+      expect(arbiter.snapshot().queuedCount).toBe(0);
+      expect(arbiter.snapshot().headInputState).toBe(settledState === 'accepted' ? 'submitted' : null);
+    } finally {
+      lifetime.abort();
+      await arbiter.dispose();
+    }
+  });
+
   it.each(['steer', 'send'] as const)('steers a live generating terminal even when recorded turn state says idle (action=%s)', async (pendingProviderAction) => {
     const wiring = createClaudeUnifiedInFlightSteerEvaluator({
       hostAdapter: {
@@ -46,7 +98,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
       await arbiter.drainWhenSafe();
       expect(injectPrompt).toHaveBeenCalledWith(expect.objectContaining({
         userMessageLocalIds: ['recorded-idle-steer'],
-      }), { inFlightSteer: true });
+      }), expect.objectContaining({ inFlightSteer: true }));
       expect(onProviderAcceptancePending).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
         acceptedAs: 'in_flight_steer',
       }), expect.any(Number));
@@ -319,7 +371,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(evaluateInFlightSteer).toHaveBeenCalledTimes(1);
     expect(injectPrompt).toHaveBeenLastCalledWith(
       expect.objectContaining({ pendingProviderAction: 'steer' }),
-      { inFlightSteer: true },
+      expect.objectContaining({ inFlightSteer: true }),
     );
     expect(onInjectionFailure).not.toHaveBeenCalled();
   });
@@ -440,7 +492,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
           bytesWritten: 11,
         }),
       onInjectionFailure: vi.fn(async () => ({ action: 'claimed_pending_delivery' as const })),
-      resolvePromptDeliveryState: () => deliveryState,
+      resolvePromptDeliveryState: batch => batch.userMessageLocalIds?.includes('discarded-local') ? deliveryState : 'pending',
     });
 
     arbiter.observeLifecycle({ type: 'turn_state', state: 'idle', observedAtMs: 10_000 });
@@ -772,7 +824,7 @@ describe('createClaudeUnifiedInputArbiter', () => {
     expect(injectPrompt).toHaveBeenLastCalledWith(expect.objectContaining({
       message: 'continue the completed turn',
       userMessageLocalIds: ['steer-after-stop'],
-    }), undefined);
+    }), expect.objectContaining({ resolveDeliveryState: expect.any(Function) }));
     expect(onInjectionFailure).not.toHaveBeenCalled();
     await arbiter.dispose();
   });

@@ -1215,6 +1215,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
     predictiveSoftSwitchMode: credentialLifecycleDescriptor.predictiveSoftSwitch.mode,
     quotaProbeDeadlineAtMs: params.quotaProbeDeadlineAtMs,
   });
+  params.signal?.throwIfAborted();
 
   const resolvedCredentials = await resolveConnectedServiceCredentialsWithRevisions({
       credentials: params.credentials,

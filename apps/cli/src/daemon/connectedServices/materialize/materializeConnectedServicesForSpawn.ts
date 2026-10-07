@@ -13,6 +13,7 @@ import type {
 import type { CatalogAgentId } from '@/backends/types';
 import { getConnectedServiceMaterializer } from '@/backends/catalog';
 import { replaceDirectoryAtomically } from '@/utils/fs/replaceDirectoryAtomically';
+import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
@@ -78,7 +79,13 @@ export class ConnectedServiceMaterializationSupersededError extends Error {
 
 function bestEffortCleanupDirectory(path: string): () => Promise<void> {
   let cleanup: Promise<void> | undefined;
-  return () => cleanup ??= rm(path, { recursive: true, force: true }).catch(() => {});
+  return () => {
+    if (!cleanup) {
+      cleanup = rm(path, { recursive: true, force: true });
+      void cleanup.catch((error) => logger.warn('Could not remove connected-service materialization artifacts', error));
+    }
+    return cleanup;
+  };
 }
 
 function forgetActiveAttemptIfCurrent(rootDir: string, attemptId: string): void {
@@ -367,13 +374,13 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     });
     assertOpen();
   } catch (error) {
-    cleanupRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
+    await cleanupRoot();
     throw error;
   }
   if (!materialized) {
-    cleanupRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
+    await cleanupRoot();
     return null;
   }
   const materializedEnv = rewriteEnvRoot(materialized.env, attemptRoot, rootDir);

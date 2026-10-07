@@ -1001,7 +1001,14 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
       try {
         result = await opts.injectPrompt(
           next,
-          injectAsInFlightSteer ? { inFlightSteer: true } : undefined,
+          {
+            ...(injectAsInFlightSteer ? { inFlightSteer: true } : {}),
+            resolveDeliveryState: () => {
+              if (providerAcceptanceObservedDuringInjection === injectionAcceptance) return 'accepted';
+              const state = readPromptDeliveryState(next);
+              return state === 'pending' ? null : state;
+            },
+          },
         );
       } catch (error) {
         clearInjectionAcceptanceForBatch(next);
@@ -1011,7 +1018,15 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         injectingProviderAcceptance = null;
       }
       const providerAcceptedDuringInjection =
-        providerAcceptanceObservedDuringInjection === injectionAcceptance;
+        providerAcceptanceObservedDuringInjection === injectionAcceptance
+        || readPromptDeliveryState(next) === 'accepted';
+      if (readPromptDeliveryState(next) === 'retired') {
+        if (queue[0] === next) queue.shift();
+        forgetRetiredBatchDelivery(next);
+        clearCurrentHeadBlocker();
+        headInputState = queue.length > 0 ? 'waiting_for_readiness' : terminalCustody.length > 0 ? 'terminal_custody' : null;
+        continue;
+      }
       if (result.status === 'injected') {
         lastDeferredReason = null;
         lastFailureReason = null;

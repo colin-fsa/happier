@@ -54,6 +54,7 @@ export type ResolveConnectedServicesAuthLabelParams = Readonly<{
     resolveServiceTitle: (serviceId: string) => string;
     nativeLabel: string;
     formatConnectedCountLabel: (count: number) => string;
+    bindingPresentation?: 'effective' | 'requested';
 }>;
 
 export function resolveConnectedServicesAuthWarningTranslationKey(
@@ -116,6 +117,9 @@ function resolveConnectedBindingState(
             requestedSource: 'connected',
             requestedSelection,
             effectiveSource: 'native',
+            ...(binding.selection === 'group'
+                ? { groupId: readOptionalString(binding.groupId) || undefined }
+                : { profileId: readOptionalString(binding.profileId) || undefined }),
             warningCode: requestedSelection === 'group'
                 ? 'connected_group_unavailable'
                 : 'connected_profile_unavailable',
@@ -210,13 +214,15 @@ function resolveConnectedBindingLabel(
     serviceId: string,
     state: ConnectedServicesAuthServiceState,
 ): string | null {
-    if (state.effectiveSource !== 'connected') return null;
+    const requested = params.bindingPresentation === 'requested';
+    if ((requested ? state.requestedSource : state.effectiveSource) !== 'connected') return null;
+    const selection = requested ? state.requestedSelection : state.effectiveSelection;
 
-    if (state.effectiveSelection === 'group' && state.groupId) {
+    if (selection === 'group' && state.groupId) {
         const group = (params.accountGroupOptionsByServiceId?.[serviceId] ?? []).find((option) =>
             option.groupId === state.groupId
         );
-        if (!group) return null;
+        if (!group) return requested ? `${params.resolveServiceTitle(serviceId)}: ${state.groupId}` : null;
         const identity = resolveConnectedServiceGroupIdentityDisplay({
             group,
             profiles: params.profileOptionsByServiceId[serviceId] ?? [],
@@ -224,12 +230,12 @@ function resolveConnectedBindingLabel(
         return `${params.resolveServiceTitle(serviceId)}: ${identity.compactLabel}`;
     }
 
-    if (state.effectiveSelection === 'profile' && state.profileId) {
+    if (selection === 'profile' && state.profileId) {
         const profile = (params.profileOptionsByServiceId[serviceId] ?? [])
-            .find((option) => isConnectedServiceProfileOptionSelectable(option) && option.profileId === state.profileId);
+            .find((option) => (requested || isConnectedServiceProfileOptionSelectable(option)) && option.profileId === state.profileId);
         return profile
             ? `${params.resolveServiceTitle(serviceId)}: ${resolveConnectedServiceProfileIdentityDisplay(profile).primaryLabel}`
-            : null;
+            : requested ? `${params.resolveServiceTitle(serviceId)}: ${state.profileId}` : null;
     }
 
     return null;

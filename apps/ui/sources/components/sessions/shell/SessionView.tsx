@@ -4739,7 +4739,10 @@ function SessionViewLoaded({
             updatedAt,
         }), { tag: 'SessionView.updateSessionConfigOptionOverride' });
     }, [session.metadata, sessionId]);
-    const buildNextMessageMetaOverrides = React.useCallback((metaOverrides?: Record<string, unknown>) => {
+    const buildNextMessageMetaOverrides = React.useCallback((
+        metaOverrides: Record<string, unknown> | undefined,
+        _destination: SessionComposerSendDestination,
+    ) => {
         return buildSessionComposerNextMessageMetaOverridesFromUiState({
             agentId: liveComposerState.agentId,
             configOptionOverrides: optimisticSessionConfigOptionOverrides,
@@ -5277,17 +5280,22 @@ function SessionViewLoaded({
             intentionalRestartSourceEvents,
             session.lastRuntimeIssue,
         ]);
+        const armedContinuationAgentId = resolveAgentIdFromFlavor(armedContinuationTarget?.agentId);
         const sessionConnectedServicesAuthSwitch = useSessionConnectedServicesAuthSwitch({
             sessionId,
             agentId: liveComposerState.agentId,
             machineId: controlMachineTarget?.machineId ?? null,
             serverId: capabilityServerId,
             agentCore: getAgentCore(liveComposerState.agentId),
+            armedContinuationAgent: armedContinuationAgentId
+                ? { agentId: armedContinuationAgentId, agentCore: getAgentCore(armedContinuationAgentId) }
+                : null,
             sessionMetadata: session.metadata,
             settings: {
                 connectedServicesProfileLabelByKey: settings.connectedServicesProfileLabelByKey,
                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
                 connectedServicesProviderStateSharingSettingsV1: settings.connectedServicesProviderStateSharingSettingsV1,
+                connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
             },
             switchingDisabledReason: connectedServicesAuthSwitchDisabledReason,
             sessionActive: session.active === true,
@@ -5322,14 +5330,14 @@ function SessionViewLoaded({
             const chips = [
                 ...(sessionGoalActionChip ? [sessionGoalActionChip] : []),
                 ...(extraActionChips ?? []),
-                ...(sessionMcpChip ? [sessionMcpChip] : []),
+                ...(sessionMcpChip && !armedContinuationTarget ? [sessionMcpChip] : []),
                 ...(sessionConnectedServicesAuthSwitch.connectedServicesAuthChip
                     ? [sessionConnectedServicesAuthSwitch.connectedServicesAuthChip]
                     : []),
                 ...(routingControls.extraActionChips ?? []),
             ];
             return chips.length > 0 ? chips : undefined;
-        }, [extraActionChips, routingControls.extraActionChips, sessionConnectedServicesAuthSwitch.connectedServicesAuthChip, sessionGoalActionChip, sessionMcpChip]);
+        }, [armedContinuationTarget, extraActionChips, routingControls.extraActionChips, sessionConnectedServicesAuthSwitch.connectedServicesAuthChip, sessionGoalActionChip, sessionMcpChip]);
 
     const openFileViewer = React.useCallback(() => {
         openSessionTarget({ kind: 'fileBrowser' });
@@ -5389,12 +5397,24 @@ function SessionViewLoaded({
             const nonSteerableSendPrompt = storage.getState().settings.sessionNonSteerableSendPrompt;
             const sessionInactiveResumePolicy = storage.getState().settings.sessionInactiveResumePolicy;
             const forceImmediateSend = sendIntent?.forceImmediate === true;
-            const providerNonSteerablePayloadReason = getSessionComposerNonSteerablePayloadReasonFromUiState({
+            const armedContinuationTargetLabel = armedContinuationTarget?.label ?? '';
+            const resolveSendDestination = (
+                route: SessionComposerSendRoute,
+            ): SessionComposerSendDestination => resolveSessionComposerSendDestination({
+                route,
+                armedContinuation: inSessionAgentPicker.armedContinuation,
+                armedContinuationLocalId: inSessionAgentPicker.armedContinuationLocalId,
+                machineId: typeof machineId === 'string' ? machineId : null,
+                pendingTransitionOutcome,
+            });
+            const sessionAgentSendDestination = resolveSendDestination('sessionAgent');
+            const providerNonSteerablePayloadReason = sessionAgentSendDestination.kind === 'sessionAgent'
+                ? getSessionComposerNonSteerablePayloadReasonFromUiState({
                 agentId: liveComposerState.agentId,
                 session,
                 configOptionOverrides: optimisticSessionConfigOptionOverrides,
                 metaOverrides: sendIntent?.structuredInputMetaOverrides,
-            });
+                }) : null;
 
             const additionalMessage = messageToSend;
             const trimmedText = messageToSend.trim();
@@ -5407,7 +5427,8 @@ function SessionViewLoaded({
             let nonSteerableApplyConfigAndSteer = false;
             let nonSteerableSteerWithoutConfig = false;
             if (
-                nonSteerableSendPrompt === 'ask'
+                sessionAgentSendDestination.kind === 'sessionAgent'
+                && nonSteerableSendPrompt === 'ask'
                 && !forceImmediateSend
                 && sendIntent?.deliveryIntent !== 'server_pending'
             ) {
@@ -5569,16 +5590,6 @@ function SessionViewLoaded({
             //
             // The armed value is produced only behind the `sessions.agentSwitching`
             // gate, so this inherits that decision rather than re-deriving it.
-            const armedContinuationTargetLabel = armedContinuationTarget?.label ?? '';
-            const resolveSendDestination = (
-                route: SessionComposerSendRoute,
-            ): SessionComposerSendDestination => resolveSessionComposerSendDestination({
-                route,
-                armedContinuation: inSessionAgentPicker.armedContinuation,
-                armedContinuationLocalId: inSessionAgentPicker.armedContinuationLocalId,
-                machineId: typeof machineId === 'string' ? machineId : null,
-                pendingTransitionOutcome,
-            });
             const presentRefusedArmedSend = (
                 refused: Extract<SessionComposerSendDestination, { kind: 'refused' }>,
             ): void => {
@@ -5766,6 +5777,7 @@ function SessionViewLoaded({
                             };
                         outbound.metaOverrides = buildNextMessageMetaOverrides(
                             mergeMessageMetaOverrides(outbound.metaOverrides, sendIntent?.structuredInputMetaOverrides),
+                            attachmentSendDestination,
                         );
 
                         attachmentDraftsForRestore = readSubmittedAttachmentDraftsFromCurrent();
@@ -5988,6 +6000,7 @@ function SessionViewLoaded({
             }
             outbound.metaOverrides = buildNextMessageMetaOverrides(
                 mergeMessageMetaOverrides(outbound.metaOverrides, sendIntent?.structuredInputMetaOverrides),
+                sessionAgentSendDestination,
             );
 
             if (executionRunSend) {

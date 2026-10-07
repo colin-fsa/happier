@@ -304,6 +304,7 @@ export function createClaudeUnifiedPromptInjector<Mode = unknown>(opts: Readonly
       const input = {
         text,
         multiline,
+        resolveDeliveryState: options?.resolveDeliveryState,
         origin: {
           // The terminal-host boundary classifies where the write came from; keep its generic RPC
           // vocabulary while the Claude arbiter retains the goal-control semantic needed for custody.
