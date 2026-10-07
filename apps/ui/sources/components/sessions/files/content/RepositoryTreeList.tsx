@@ -25,6 +25,7 @@ import { WebDropTargetView } from '@/components/sessions/files/repositoryTree/We
 import { isWebFileDragEvent } from '@/utils/files/isWebFileDragEvent';
 import { useSessionFileTransferAvailabilityResolver } from '@/components/sessions/files/useSessionFileTransferAvailability';
 import { Icon } from '@/components/ui/icons/Icon';
+import type { WorkspaceFileTransferResult } from '@/hooks/session/files/useWorkspaceFileTransfers';
 
 export type RepositoryTreeWebDropTarget = Readonly<{
     destinationDir: string;
@@ -43,7 +44,7 @@ type RepositoryTreeListProps = {
     onGitIgnoreAvailableChange?: (available: boolean | undefined) => void;
     writeActionsEnabled?: boolean;
     onRequestRefresh?: (() => void) | null;
-    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<{ ok: true } | { ok: false; error: string }>) | null;
+    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<WorkspaceFileTransferResult>) | null;
     onWebDropTargetChange?: ((target: RepositoryTreeWebDropTarget) => void) | null;
     webDropHoverPath?: string | null;
     expandedPaths: readonly string[];

@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import { Platform, View } from 'react-native';
+import { downloadThemeJson } from './themeProfileFileExport';
+import { View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { StyleSheet } from 'react-native-unistyles';
@@ -37,30 +36,6 @@ const resolveExportMode = (profile: ThemeProfileV1): ThemeProfileMode => {
     return resolveThemePresetSourcePreferredMode(profile);
 };
 
-async function downloadThemeJson(fileName: string, json: string): Promise<void> {
-    if (
-        Platform.OS === 'web'
-        && typeof document !== 'undefined'
-        && typeof Blob !== 'undefined'
-        && typeof URL !== 'undefined'
-        && typeof URL.createObjectURL === 'function'
-    ) {
-        const href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-        const anchor = document.createElement('a');
-        anchor.href = href;
-        anchor.download = fileName;
-        anchor.click();
-        setTimeout(() => URL.revokeObjectURL(href), 1000);
-        return;
-    }
-
-    const file = new File(Paths.cache, fileName);
-    file.write(json);
-    await Sharing.shareAsync(file.uri, {
-        mimeType: 'application/json',
-        dialogTitle: t('settingsAppearance.themeProfiles.exportProfile'),
-    });
-}
 
 export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportScreen() {
     const { theme } = useUnistyles();

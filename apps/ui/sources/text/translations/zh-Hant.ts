@@ -6040,6 +6040,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 copyPath: '複製路徑',
                 download: '下載',
                 downloadAsZip: '以 ZIP 下載',
+                openWith: '開啟方式',
+                share: '分享',
             },
             dropToUpload: '拖放檔案以上傳',
             rename: {
@@ -6261,6 +6263,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         stagedChanges: ({ count }: { count: number }) => `已暫存的更改 (${count})`,
         unstagedChanges: ({ count }: { count: number }) => `未暫存的更改 (${count})`,
         fileReadFailed: '讀取檔案失敗',
+        androidFileActionsUnavailable: "此應用版本不支援 Android 檔案操作。請更新 Happier 後重試。",
+        fileSharingUnavailable: "此裝置不支援檔案分享。",
+        fileCleanupFailed: "無法刪除暫存檔案",
         fileTooLargeToPreview: '檔案過大，無法預覽',
         fileWriteFailed: '寫入檔案失敗',
         fileEditor: {
@@ -6329,6 +6334,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         loadingFile: ({ fileName }: { fileName: string }) => `正在載入 ${fileName}...`,
         binaryFile: '二進位檔案',
+        videoPreview: '影片預覽',
         imagePreviewTooLarge: '圖片預覽太大，無法顯示',
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `開啟生成的圖片 ${name}`,

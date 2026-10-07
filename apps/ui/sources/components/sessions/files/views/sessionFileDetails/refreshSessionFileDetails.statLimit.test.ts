@@ -42,11 +42,6 @@ installSessionFileDetailsCommonModuleMocks({
     }),
 });
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    isBinaryContent: () => false,
-    isKnownBinaryPath: () => false,
-    getImageMimeTypeFromPath: () => null,
-}));
 
 vi.mock('@/scm/diff/fallbackUnifiedDiff', () => ({
     buildAddedFileUnifiedDiff: () => 'diff --git a/src/big.txt b/src/big.txt\n--- a/src/big.txt\n+++ b/src/big.txt\n@@\n+big\n',

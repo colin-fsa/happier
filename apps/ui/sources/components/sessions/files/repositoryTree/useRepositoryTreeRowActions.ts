@@ -5,6 +5,7 @@ import { t } from '@/text';
 import { resolveKeepBothTargetPath } from '@/sync/domains/files/resolveKeepBothTargetPath';
 import { sessionDeletePath, sessionRenamePath, sessionStatFile } from '@/sync/ops';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import type { WorkspaceFileTransferResult } from '@/hooks/session/files/useWorkspaceFileTransfers';
 
 import type { RepositoryTreeRowActionMenuItemId } from './RepositoryTreeRowActionsMenu';
 import { deletePathConfirm } from './deletePathConfirm';
@@ -62,7 +63,7 @@ export function useRepositoryTreeRowActions(params: Readonly<{
     expandedPaths: readonly string[];
     onExpandedPathsChange: (paths: string[]) => void;
     onRequestRefresh?: (() => void) | null;
-    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<{ ok: true } | { ok: false; error: string }>) | null;
+    onRequestDownload?: ((params: Readonly<{ path: string; asZip: boolean }>) => Promise<WorkspaceFileTransferResult>) | null;
     onCopyPathSuccess?: ((path: string) => void) | null;
 }>): Readonly<{
     onSelectRowMenuItem: (node: RepositoryTreeNodeLike, itemId: RepositoryTreeRowActionMenuItemId) => Promise<void>;
@@ -155,7 +156,7 @@ export function useRepositoryTreeRowActions(params: Readonly<{
         if (itemId === 'repository-tree-menuitem-download' || itemId === 'repository-tree-menuitem-zip') {
             if (!onRequestDownload) return;
             const res = await onRequestDownload({ path: node.path, asZip: itemId === 'repository-tree-menuitem-zip' });
-            if (!res.ok) {
+            if (!res.ok && !res.canceled) {
                 Modal.alert(t('common.error'), res.error);
             }
         }

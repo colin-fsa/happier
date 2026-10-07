@@ -26,11 +26,6 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
 
 installSessionFileDetailsCommonModuleMocks();
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    getImageMimeTypeFromPath: () => null,
-    isBinaryContent: () => false,
-    isKnownBinaryPath: () => false,
-}));
 
 describe('refreshSessionFileDetails (fallback diff)', () => {
     it('returns a synthesized diff for untracked/added files when backend returns empty diff', async () => {

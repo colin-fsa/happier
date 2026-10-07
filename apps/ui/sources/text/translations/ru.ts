@@ -7227,6 +7227,8 @@ export const ru: TranslationStructure = {
 	        copyPath: "Копировать путь",
 	        download: "Скачать",
 	        downloadAsZip: "Скачать как ZIP",
+	        openWith: 'Открыть с помощью',
+	        share: 'Поделиться',
 	      },
 	      dropToUpload: "Перетащите файлы для загрузки",
 	      rename: {
@@ -7489,6 +7491,9 @@ export const ru: TranslationStructure = {
         `Неподготовленные изменения (${count})`,
 	      // File viewer strings
 	      fileReadFailed: "Не удалось прочитать файл",
+	      androidFileActionsUnavailable: "Действия с файлами Android недоступны в этой версии приложения. Обновите Happier и повторите попытку.",
+	      fileSharingUnavailable: "Обмен файлами недоступен на этом устройстве.",
+	      fileCleanupFailed: "Не удалось удалить временный файл",
 	      fileTooLargeToPreview: "Файл слишком большой для предварительного просмотра",
 	      fileWriteFailed: "Не удалось записать файл",
 	      fileEditor: {
@@ -7566,6 +7571,7 @@ export const ru: TranslationStructure = {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `Загрузка ${fileName}...`,
         binaryFile: "Бинарный файл",
+        videoPreview: 'Предпросмотр видео',
         imagePreviewTooLarge: "Предпросмотр изображения слишком большой для отображения",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `Открыть сгенерированное изображение ${name}`,

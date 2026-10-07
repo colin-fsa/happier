@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getFileLanguageFromPath } from '@/utils/code/fileLanguage';
-import { isBinaryContent, isKnownBinaryPath } from './filePresentation';
+import { getVideoMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from './filePresentation';
 
 describe('getFileLanguageFromPath', () => {
     it('maps known file extensions to syntax highlighter languages', () => {
@@ -49,6 +49,18 @@ describe('isKnownBinaryPath', () => {
         expect(isKnownBinaryPath('build/app.exe')).toBe(true);
         expect(isKnownBinaryPath('src/app.ts')).toBe(false);
         expect(isKnownBinaryPath('assets/icon.svg')).toBe(false);
+    });
+});
+
+describe('getVideoMimeTypeFromPath', () => {
+    it('recognizes supported video containers case-insensitively on POSIX and Windows paths', () => {
+        expect(getVideoMimeTypeFromPath('media/demo.MP4')).toBe('video/mp4');
+        expect(getVideoMimeTypeFromPath('C:\\media\\demo.mov')).toBe('video/quicktime');
+        expect(getVideoMimeTypeFromPath('media/demo.webm')).toBe('video/webm');
+        expect(getVideoMimeTypeFromPath('media/demo.m4v')).toBe('video/x-m4v');
+        expect(getVideoMimeTypeFromPath('folder.mp4/notes.txt')).toBeNull();
+        expect(getVideoMimeTypeFromPath('folder.mp4\\notes.txt')).toBeNull();
+        expect(getVideoMimeTypeFromPath('media/demo.avi')).toBeNull();
     });
 });
 

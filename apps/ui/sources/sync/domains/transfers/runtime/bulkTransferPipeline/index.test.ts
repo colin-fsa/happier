@@ -114,6 +114,65 @@ describe('bulkTransferPipeline', () => {
         expect(cleanup).not.toHaveBeenCalled();
     });
 
+    it.each(['init', 'close'])('cleans up a destination after a thrown %s failure while preserving the original error', async (phase) => {
+        const originalError = new Error(`${phase} failed`);
+        const buffered: Uint8Array[] = [];
+        let destinationExists = true;
+        let recipientPublicKeyBase64 = '';
+        const result = downloadBulkPayloadToFile({
+            destination: {
+                writeBytes: async bytes => { buffered.push(bytes); },
+                close: async () => { if (phase === 'close') throw originalError; },
+                cleanup: async () => { buffered.length = 0; destinationExists = false; },
+            },
+            init: async request => {
+                if (phase === 'init') throw originalError;
+                recipientPublicKeyBase64 = request.recipientPublicKeyBase64;
+                return { success: true, downloadId: 'failed-download', chunkSizeBytes: 3, sizeBytes: 3, name: 'video.mp4' };
+            },
+            readChunk: async request => ({
+                success: true,
+                ...await createEncryptedTransferChunkEnvelope({
+                    transferId: request.downloadId, sequence: request.index, payload: new Uint8Array([1, 2, 3]),
+                    recipientPublicKeyBase64, randomBytes: length => new Uint8Array(length).fill(29),
+                }),
+                isLast: true,
+            }),
+            finalize: async () => ({ success: true }),
+        });
+        await expect(result).rejects.toBe(originalError);
+        expect(buffered).toEqual([]);
+        expect(destinationExists).toBe(false);
+    });
+
+    it('reports cleanup failure alongside the original close failure', async () => {
+        const originalError = new Error('Disk close failed');
+        const cleanupError = new Error('File delete failed');
+        let recipientPublicKeyBase64 = '';
+        const result = downloadBulkPayloadToFile({
+            destination: {
+                writeBytes: async () => {},
+                close: async () => { throw originalError; },
+                cleanup: async () => { throw cleanupError; },
+            },
+            init: async request => {
+                recipientPublicKeyBase64 = request.recipientPublicKeyBase64;
+                return { success: true, downloadId: 'failed-cleanup', chunkSizeBytes: 3, sizeBytes: 3, name: 'video.mp4' };
+            },
+            readChunk: async request => ({
+                success: true,
+                ...await createEncryptedTransferChunkEnvelope({
+                    transferId: request.downloadId, sequence: request.index, payload: new Uint8Array([1, 2, 3]),
+                    recipientPublicKeyBase64, randomBytes: length => new Uint8Array(length).fill(31),
+                }),
+                isLast: true,
+            }),
+            finalize: async () => ({ success: true }),
+        });
+        await expect(result).rejects.toMatchObject({ errors: [originalError, cleanupError] });
+        await expect(result).rejects.toThrow(/Disk close failed.*File delete failed/);
+    });
+
     it('uploads a JSON payload through the shared bulk upload surface and parses the finalized response', async () => {
         const init = vi.fn(async (request: { sizeBytes: number }) => ({
             success: true as const,

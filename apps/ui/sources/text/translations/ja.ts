@@ -7491,6 +7491,8 @@ localTailscale: {
 	        copyPath: "パスをコピー",
 	        download: "ダウンロード",
 	        downloadAsZip: "ZIPでダウンロード",
+	        openWith: 'アプリで開く',
+	        share: '共有',
 	      },
 	      dropToUpload: "ファイルをドロップしてアップロード",
 	      rename: {
@@ -7755,6 +7757,9 @@ localTailscale: {
         `未ステージの変更 (${count})`,
       // File viewer strings
       fileReadFailed: "ファイルを読み込めませんでした",
+      androidFileActionsUnavailable: "このアプリのバージョンではAndroidのファイル操作を利用できません。Happierを更新して再試行してください。",
+      fileSharingUnavailable: "このデバイスではファイルを共有できません。",
+      fileCleanupFailed: "一時ファイルを削除できませんでした",
       fileTooLargeToPreview: "ファイルが大きすぎてプレビューできません",
       fileWriteFailed: "ファイルを書き込めませんでした",
       fileEditor: {
@@ -7831,6 +7836,7 @@ localTailscale: {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `${fileName}を読み込み中...`,
         binaryFile: "バイナリファイル",
+        videoPreview: '動画プレビュー',
         imagePreviewTooLarge: "画像プレビューが大きすぎて表示できません",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `生成画像 ${name} を開く`,

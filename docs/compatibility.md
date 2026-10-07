@@ -153,6 +153,20 @@ native code through OTA. Remove the guard only when no supported binary eligible
 for these updates can lack the SDK. Native renderer fixes and app-link entitlement
 changes still require a native app build.
 
+### Android file actions native runtime (development)
+
+The development UI's Android Save As, Open With, and Share actions require the
+compiled `HappierFileActions` Expo module. Released binaries on the
+`0.2.7-native` OTA runtime do not include it. Non-publicdev lanes use the new
+`0.2.8-native` runtime train for this native surface; publicdev continues to use
+the existing Expo fingerprint policy. Publish a new native build before updates
+for this train, and do not force this JavaScript bundle onto older native runtimes
+using the maintenance override.
+
+This changes the local Android handoff only. Encrypted workspace transfers and
+their daemon-owned limits retain their existing wire contracts. Web and iOS
+downloads keep their existing platform actions.
+
 ### Herdr terminal metadata (development)
 
 The released stable UI `ui-web-v0.2.12` and preview

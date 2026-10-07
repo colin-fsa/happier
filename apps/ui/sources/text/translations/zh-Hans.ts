@@ -7009,6 +7009,8 @@ export const zhHans: TranslationStructure = {
 	        copyPath: "复制路径",
 	        download: "下载",
 	        downloadAsZip: "以 ZIP 下载",
+	        openWith: '打开方式',
+	        share: '分享',
 	      },
 	      dropToUpload: "拖放文件以上传",
 	      rename: {
@@ -7264,6 +7266,9 @@ export const zhHans: TranslationStructure = {
         `未暂存的更改 (${count})`,
       // File viewer strings
       fileReadFailed: "读取文件失败",
+      androidFileActionsUnavailable: "此应用版本不支持 Android 文件操作。请更新 Happier 后重试。",
+      fileSharingUnavailable: "此设备不支持文件分享。",
+      fileCleanupFailed: "无法删除临时文件",
       fileTooLargeToPreview: "文件过大，无法预览",
       fileWriteFailed: "写入文件失败",
       fileEditor: {
@@ -7339,6 +7344,7 @@ export const zhHans: TranslationStructure = {
       loadingFile: ({ fileName }: { fileName: string }) =>
         `正在加载 ${fileName}...`,
         binaryFile: "二进制文件",
+        videoPreview: '视频预览',
         imagePreviewTooLarge: "图片预览过大，无法显示",
         sessionMedia: {
           generatedImageA11y: ({ name }: { name: string }) => `打开生成的图片 ${name}`,
