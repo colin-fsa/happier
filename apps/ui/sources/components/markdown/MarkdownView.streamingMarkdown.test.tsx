@@ -131,6 +131,9 @@ describe('MarkdownView (streaming markdown)', () => {
         const [optionButton] = screen.findAllByType('Pressable');
         expect(optionButton).toBeTruthy();
 
+        const optionText = optionButton!.findByType('Text');
+        expect(optionText.props.selectable).toBe(true);
+
         await act(async () => {
             await optionButton!.props.onLongPress?.();
         });
