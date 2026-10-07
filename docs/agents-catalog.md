@@ -320,6 +320,8 @@ probe. A cancelled caller leaves a shared launch running for its remaining calle
 awaits cleanup of native resources and authentication materialization already acquired. A fresh
 request can start a new ephemeral launch while an aborted launch finishes cleanup. Malformed
 connected-account bindings fail at catalog ingress rather than falling back to ambient credentials.
+A selected connected account also fails before native discovery when its adapter cannot materialize
+that scope; explicit native-only bindings continue to use native authentication.
 
 The new-session composer demands discovery only for `/` or `$` suggestions and scopes that snapshot to the selected machine,
 server/account, backend, project, profile, and authentication context. Local slash rows remain
@@ -334,11 +336,13 @@ launch retains its configured installation policy.
 Gemini readiness-only backends set the native `CI` control to suppress OAuth browser launch;
 cached authentication remains usable, while missing authentication reports discovery unavailable.
 
-OpenCode V2 cold pre-session discovery is unavailable in development source: its public API does
-not expose a plugin-activation completion barrier that makes a cold command/skill inventory
-authoritative. Discovery must report that limitation rather than submit a bootstrap prompt or
-publish an unverified empty catalog. Existing-session V2 command and skill dispatch is a separate
-runtime contract.
+In development source, the OpenCode V2 native catalog client waits for the selected project's
+plugin activation through `GET /api/integration` before reading commands or skills. The released
+2.0.15 and 2.0.20 integration-list handlers await activation; command and skill readers alone can
+return a cold, empty registry. Pre-session discovery, existing-session catalogs, refresh, and legacy
+skill lookup use that same client owner. Discovery creates no Happier session and sends no native
+prompt or inference request; readiness failures propagate instead of publishing an unverified empty
+catalog. OpenCode V1 retains its direct native catalog reads.
 
 In development source, an existing OpenCode server session publishes its native command catalog
 through the same slash-command metadata owner. Known names execute through OpenCode's command
@@ -355,9 +359,8 @@ turn, a subtask, or no inference. Actual provider status and assistant events ke
 work visible and steerable through the existing stream and transcript owners. Built-in V2 config
 subtasks deliver their completion into the parent as internal synthetic input and resume its
 normal assistant continuation.
-The same catalog is refreshed after a real prompt is accepted. A cold V2 session can still lack
-project commands until that prompt activates native plugins; Happier does not submit a hidden
-prompt to warm the registry.
+The same catalog is also refreshed after a real prompt is accepted. V2 catalog reads await the
+same read-only activation barrier before the first prompt and after refresh.
 
 ## Adding a new agent/provider (end-to-end)
 

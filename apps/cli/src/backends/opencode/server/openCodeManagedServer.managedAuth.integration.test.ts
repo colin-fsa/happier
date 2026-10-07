@@ -52,6 +52,7 @@ if (!Number.isFinite(port) || port <= 0) {
 const environmentPassword = process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD || '';
 const password = environmentPassword || randomBytes(32).toString('base64url');
 const expected = 'Basic ' + Buffer.from('opencode:' + password, 'utf8').toString('base64');
+let catalogsReady = false;
 
 const server = http.createServer((req, res) => {
   if ((req.headers.authorization || '') !== expected) {
@@ -70,17 +71,25 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ version: '2.0.15', pid: process.pid, urls: [], paths: {} }));
     return;
   }
+  // V2 2.0.20: integration.list awaits Plugin.awaitActivation for this location;
+  // command.list and skill.list read the registry without waiting themselves.
+  if (req.url && req.url.startsWith('/api/integration')) {
+    if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
+    catalogsReady = true;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [] })); return;
+  }
   if (req.url && (req.url.startsWith('/api/command') || req.url.startsWith('/command'))) {
     if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(process.env.OPENCODE_TEST_LEGACY_API ? [] : { data: [] })); return;
+    res.end(JSON.stringify(process.env.OPENCODE_TEST_LEGACY_API ? [] : { data: catalogsReady ? [{ name: 'review' }] : [] })); return;
   }
   if (req.url && req.url.startsWith('/skill')) {
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify([])); return;
   }
   if (req.url && req.url.startsWith('/api/skill')) {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ data: [] }));
+    res.end(JSON.stringify({ data: catalogsReady ? [{ id: 'native-reviewer', name: 'reviewer', path: '/fixture/SKILL.md' }] : [] }));
     return;
   }
   res.writeHead(404);
@@ -165,14 +174,14 @@ describe('startManagedOpenCodeServer managed credential', () => {
     }
   }, 30_000);
 
-  it('reports unavailable when native V2 has no read-only catalog activation barrier', async () => {
+  it('discovers cold V2 catalogs after native activation without creating a session', async () => {
     const { root } = await prepareManagedServerEnv();
     await expect(openCodePreflightSessionControlsProbeAdapter.probeCatalogsRaw?.({
       cwd: root, timeoutMs: 15_000, processEnv: { ...process.env },
-    })).rejects.toThrow('OpenCode V2 catalog readiness is unavailable');
+    })).resolves.toMatchObject({ commands: [{ name: 'review' }], skills: [{ id: 'native-reviewer', name: 'reviewer' }] });
   }, 30_000);
 
-  it('bounds native catalog reads by the caller deadline after a slow server startup', async () => {
+  it.each(['v1', 'v2'] as const)('bounds %s native catalog readiness/reads by the caller deadline after a slow server startup', async (generation) => {
     const { root } = await prepareManagedServerEnv();
     const pidPath = join(root, 'catalog-native-pid');
     TEST_NATIVE_PIDS.add(pidPath);
@@ -190,7 +199,7 @@ describe('startManagedOpenCodeServer managed credential', () => {
     const pending = openCodePreflightSessionControlsProbeAdapter.probeCatalogsRaw?.({
       cwd: root, timeoutMs: 10_000,
       processEnv: { ...process.env, OPENCODE_TEST_PID_FILE: pidPath,
-        OPENCODE_TEST_READY_FILE: readyPath, OPENCODE_TEST_HANG_COMMANDS: '1', OPENCODE_TEST_LEGACY_API: '1', HAPPIER_OPENCODE_CLI_GENERATION: 'stable', OPENCODE_SERVER_PASSWORD: 'deadline-fixture-password' },
+        OPENCODE_TEST_READY_FILE: readyPath, OPENCODE_TEST_HANG_COMMANDS: '1', ...(generation === 'v1' ? { OPENCODE_TEST_LEGACY_API: '1' } : {}), HAPPIER_OPENCODE_CLI_GENERATION: 'stable', OPENCODE_SERVER_PASSWORD: 'deadline-fixture-password' },
     });
     try {
       await expect(pending).rejects.toThrow(/timed out/i);

@@ -137,7 +137,7 @@ export function createPiConnectedServicesMaterializer(): ConnectedServicesProvid
     const claudeSubscription = params.recordsByServiceId.get('claude-subscription') ?? null;
     if (!openaiCodex && !openai && !anthropic && !claudeSubscription) return null;
 
-    const materialized = await materializePiConnectedServiceAuth({
+    const write = () => materializePiConnectedServiceAuth({
       rootDir: params.rootDir,
       openaiCodex,
       openai,
@@ -145,6 +145,7 @@ export function createPiConnectedServicesMaterializer(): ConnectedServicesProvid
       anthropic,
       ...(params.selectionsByServiceId ? { selectionsByServiceId: params.selectionsByServiceId } : {}),
     });
+    const materialized = await (params.writeArtifacts ? params.writeArtifacts(write) : write());
 
     const requestedStateMode = resolvePiStateSharingMode(params.accountSettings);
     const cwd = asNonEmptyString(params.sessionDirectory);
@@ -175,7 +176,7 @@ export function createPiConnectedServicesMaterializer(): ConnectedServicesProvid
     // That recovery is deliberately out of scope here — see
     // .reviews/2026-05-29-connected-services-deep-qa-audit (PI resume RCA).
     const manifest = await readConnectedServiceStateSharingManifest(params.rootDir);
-    const applyResult = await applyConnectedServiceStateSharingDescriptor({
+    const applyState = () => applyConnectedServiceStateSharingDescriptor({
       descriptor: piConnectedServiceStateSharingDescriptor,
       nativeSourceContext: {
         sourceRoot: nativeSourceRoot,
@@ -200,7 +201,9 @@ export function createPiConnectedServicesMaterializer(): ConnectedServicesProvid
       resolveVendorResumeIdFromImportedFile: resolveVendorResumeIdFromImportedPiSessionFile,
       providerLabel: 'Pi',
     });
-    await writeConnectedServiceStateSharingManifest(params.rootDir, applyResult.manifest);
+    const applyResult = await (params.writeArtifacts ? params.writeArtifacts(applyState) : applyState());
+    const writeManifest = () => writeConnectedServiceStateSharingManifest(params.rootDir, applyResult.manifest);
+    await (params.writeArtifacts ? params.writeArtifacts(writeManifest) : writeManifest());
 
     return {
       env: { ...materialized.env, PI_CODING_AGENT_SESSION_DIR: targetSessionDir, ...applyResult.envOverrides },

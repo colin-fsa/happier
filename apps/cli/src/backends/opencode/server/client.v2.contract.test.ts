@@ -30,7 +30,8 @@ function stubReleasedV2Server(
     if (url.pathname === '/api/health' || url.pathname === '/global/health' || url.pathname === '/mcp') {
       return new Response('{}', { status: 404 });
     }
-    return handle(call, url) ?? new Response(null, { status: 204 });
+    return handle(call, url) ?? (url.pathname === '/api/integration'
+      ? Response.json({ data: [] }) : new Response(null, { status: 204 }));
   }));
   return { calls };
 }
@@ -265,9 +266,11 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
     }
   });
 
-  it.each(['v1', 'v2'] as const)('discovers commands from the %s directory-scoped endpoint', async (generation) => {
+  it.each(['v1', 'v2'] as const)('discovers catalogs from the %s directory-scoped endpoint after native readiness', async (generation) => {
     const calls: Call[] = [];
     const commands = [{ name: 'review', description: 'Review the current change' }];
+    const skills = [{ id: 'native-review', name: 'reviewer', path: '/repo/SKILL.md' }];
+    let ready = false;
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(input));
       calls.push({ path: url.pathname, method: init?.method ?? 'GET', search: url.search });
@@ -278,17 +281,39 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
         return Response.json({ version: '2.0.15', pid: 4242, urls: ['http://127.0.0.1:9999'], paths: { tmp: '/tmp' } });
       }
       if (url.pathname === '/command' && generation === 'v1') return Response.json(commands);
-      if (url.pathname === '/api/command' && generation === 'v2') return Response.json({ location: { directory: '/repo' }, data: commands });
+      if (url.pathname === '/skill' && generation === 'v1') return Response.json(skills);
+      if (url.pathname === '/api/integration' && generation === 'v2') {
+        expect(url.searchParams.get('location[directory]')).toBe('/repo');
+        ready = true;
+        return Response.json({ location: { directory: '/repo' }, data: [] });
+      }
+      if (url.pathname === '/api/command' && generation === 'v2') return Response.json({ data: ready ? commands : [] });
+      if (url.pathname === '/api/skill' && generation === 'v2') return Response.json({ data: ready ? skills : [] });
       return new Response(null, { status: 404 });
     }));
     const client = await makeReleasedV2Client();
     try {
       await expect(client.appCommands()).resolves.toEqual(commands);
+      // A directory-scoped read must still wait after a later native reload.
+      ready = false;
+      await expect(client.appSkills()).resolves.toEqual(skills);
       expect(calls.find((call) => call.path.endsWith('/command'))).toEqual({
         path: generation === 'v2' ? '/api/command' : '/command',
         method: 'GET',
         search: generation === 'v2' ? '?location%5Bdirectory%5D=%2Frepo' : '?directory=%2Frepo',
       });
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it('does not publish an empty catalog when V2 native readiness fails', async () => {
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/integration'
+      ? new Response(null, { status: 503 }) : Response.json({ data: [] }));
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.appSkills()).rejects.toThrow(/503/);
+      expect(calls.some((call) => call.path === '/api/skill')).toBe(false);
     } finally {
       await client.dispose();
     }

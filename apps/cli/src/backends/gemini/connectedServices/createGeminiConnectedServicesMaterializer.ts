@@ -18,7 +18,8 @@ export function createGeminiConnectedServicesMaterializer(): ConnectedServicesPr
   return async (params) => {
     const gemini = params.recordsByServiceId.get('gemini') ?? null;
     if (!gemini) return null;
-    const materialized = await materializeGeminiConnectedServiceAuth({ rootDir: params.rootDir, record: gemini });
+    const write = () => materializeGeminiConnectedServiceAuth({ rootDir: params.rootDir, record: gemini });
+    const materialized = await (params.writeArtifacts ? params.writeArtifacts(write) : write());
 
     // Native->connected (and re-homed) session continuity: Gemini CLI resolves ACP
     // `loadSession(resumeId)` against chat files inside the home it runs with, so the resumed
@@ -30,13 +31,14 @@ export function createGeminiConnectedServicesMaterializer(): ConnectedServicesPr
     if (vendorResumeId) {
       const targetHomeDir = asNonEmptyString(materialized.env.GEMINI_CLI_HOME) ?? join(params.rootDir, 'home');
       try {
-        const importResult = await importGeminiChatSessionForResume({
+        const importSession = () => importGeminiChatSessionForResume({
           targetHomeDir,
           sourceEnv: params.processEnv ?? process.env,
           cwd: asNonEmptyString(params.sessionDirectory),
           vendorResumeId,
           candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
         });
+        const importResult = await (params.writeArtifacts ? params.writeArtifacts(importSession) : importSession());
         if (!importResult.imported && importResult.reason && importResult.reason !== 'already_present') {
           diagnostics.push({
             code: 'gemini_chat_session_import_skipped',

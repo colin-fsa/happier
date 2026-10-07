@@ -950,6 +950,24 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
     });
   }
 
+  const readAppCatalog = async (path: '/command' | '/skill'): Promise<unknown[]> => {
+    const api = await ensureApiGeneration();
+    const directory = resolveDirectory();
+    const query = api.kind === 'v2' ? { 'location[directory]': directory } : { directory };
+    const read = (route: string) => fetchJson<unknown>({
+      url: buildUrl(baseUrl, route, query), method: 'GET', headers,
+      timeoutMs: httpTimeoutMs, signal: commandAbort.signal,
+    });
+    if (api.kind === 'v2') {
+      // OpenCode 2.0.15/2.0.20 integration.list awaits Plugin.awaitActivation;
+      // command.list and skill.list otherwise expose the cold, empty registry.
+      await read('/api/integration');
+    }
+    const raw = await read(api.kind === 'v2' ? `/api${path}` : path);
+    const items = api.kind === 'v2' ? readWrappedOpenCodeV2Data(raw) : raw;
+    return Array.isArray(items) ? items : [];
+  };
+
   const client: OpenCodeServerRuntimeClient = {
     getApiGeneration: async () => (await ensureApiGeneration()).kind,
     supportsInFlightSteer: () => apiGeneration?.kind === 'v2',
@@ -1163,28 +1181,8 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
       const agents = api.kind === 'v2' ? readWrappedOpenCodeV2Data(raw) : raw;
       return Array.isArray(agents) ? agents as Array<{ id?: string; name: string; description?: string }> : [];
     },
-    appCommands: async () => {
-      const api = await ensureApiGeneration();
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, api.kind === 'v2' ? '/api/command' : '/command', api.kind === 'v2' ? { 'location[directory]': resolveDirectory() } : { directory: resolveDirectory() }),
-        method: 'GET',
-        headers,
-        timeoutMs: httpTimeoutMs,
-      });
-      const commands = api.kind === 'v2' ? readWrappedOpenCodeV2Data(raw) : raw;
-      return Array.isArray(commands) ? commands : [];
-    },
-    appSkills: async () => {
-      const api = await ensureApiGeneration();
-      const raw = await fetchJson<unknown>({
-        url: buildUrl(baseUrl, api.kind === 'v2' ? '/api/skill' : '/skill', api.kind === 'v2' ? { 'location[directory]': resolveDirectory() } : { directory: resolveDirectory() }),
-        method: 'GET',
-        headers,
-        timeoutMs: httpTimeoutMs,
-      });
-      const skills = api.kind === 'v2' ? readWrappedOpenCodeV2Data(raw) : raw;
-      return Array.isArray(skills) ? skills : [];
-    },
+    appCommands: () => readAppCatalog('/command'),
+    appSkills: () => readAppCatalog('/skill'),
     providersList: async () => {
       const api = await ensureApiGeneration();
       if (api.kind !== 'v2') {

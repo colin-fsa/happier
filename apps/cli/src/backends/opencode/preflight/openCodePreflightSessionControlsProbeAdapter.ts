@@ -49,11 +49,6 @@ export const openCodePreflightSessionControlsProbeAdapter: PreflightSessionContr
           await client.dispose();
           lifecycle.signal.throwIfAborted();
         }
-        if (await client.getApiGeneration() === 'v2') {
-          // Released V2 reads precede asynchronous plugin activation, and its public
-          // lifecycle API supplies no read-only activation barrier for this temporary owner.
-          throw new Error('OpenCode V2 catalog readiness is unavailable: the native API has no read-only plugin activation barrier');
-        }
         remainingCatalogProbeMs(lifecycle);
         const [commands, skills] = await Promise.all([client.appCommands(), client.appSkills()]);
         return { commands, skills: normalizeOpenCodeAppSkills(skills) };

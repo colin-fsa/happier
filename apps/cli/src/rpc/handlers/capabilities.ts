@@ -271,6 +271,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     accountSettings: Record<string, unknown> | null;
     requiresMaterializedAuth: boolean;
     processEnv: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+    onCleanup?: RegisterNativeCatalogCleanup;
 }>): Promise<ConnectedServiceProbeEnvironment> {
     if (!params.requiresMaterializedAuth || !params.connectedServices) {
         return {
@@ -301,6 +303,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
         // group or trigger credential refresh. Actual spawn owns those lifecycle transitions.
         authGroupSwitchCoordinator: null,
         credentialRefreshService: null,
+        signal: params.signal,
+        onCleanup: params.onCleanup,
     });
     if (!resolved) {
         throw new Error('The selected connected-service account could not be materialized for this preflight probe');
@@ -420,10 +424,20 @@ async function prepareAndInvokeCliProbeMethod(
         ? await entry.getPreflightSessionControlsProbeAdapter().catch(() => null)
         : null;
     if (lifecycle) remainingCatalogProbeMs(lifecycle);
-    const requiresMaterializedAuth = (preflightAdapter?.connectedServiceAuth === 'materialized-env'
-        || (method === 'probeCatalogs' && preflightAdapter?.connectedServiceAuth === 'materialized-env-for-catalogs'))
-        && Boolean(connectedServices && Object.values(connectedServices.bindingsByServiceId)
-            .some((binding) => binding.source === 'connected'));
+    const hasSelectedConnectedAccount = Boolean(connectedServices && Object.values(connectedServices.bindingsByServiceId)
+        .some((binding) => binding.source === 'connected'));
+    const supportsMaterializedAuth = preflightAdapter?.connectedServiceAuth === 'materialized-env'
+        || (method === 'probeCatalogs' && preflightAdapter?.connectedServiceAuth === 'materialized-env-for-catalogs');
+    if (method === 'probeCatalogs' && hasSelectedConnectedAccount && !supportsMaterializedAuth) {
+        return {
+            ok: false,
+            error: {
+                code: 'connected-service-preflight-failed',
+                message: 'This adapter cannot prepare the selected connected-service account for native catalog discovery.',
+            },
+        };
+    }
+    const requiresMaterializedAuth = supportsMaterializedAuth && hasSelectedConnectedAccount;
     const probeContext = await resolveProbeBackendContext(
         { ...params, agentId },
         { requireCredentials: requiresMaterializedAuth },
@@ -479,6 +493,8 @@ async function prepareAndInvokeCliProbeMethod(
                 accountSettings: probeContext.accountSettings,
                 requiresMaterializedAuth,
                 processEnv: profileProcessEnv,
+                signal: probeLifecycle?.signal,
+                onCleanup: registerNativeCleanup,
             });
         } catch {
             probeLifecycle?.signal.throwIfAborted();

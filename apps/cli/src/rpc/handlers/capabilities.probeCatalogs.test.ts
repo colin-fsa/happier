@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { readFile, writeFile } from 'node:fs/promises';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { registerCapabilitiesHandlers } from './capabilities';
@@ -14,8 +15,191 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration } from '@/configuration';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveAccountSettingsCachePath } from '@/settings/accountSettings/accountSettingsCache';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
 
 describe('capabilities.invoke pre-session catalogs', () => {
+  it.each(['mkdir', 'write', 'promote', 'credential-http'] as const)('settles acquired selected-account artifacts before returning a catalog deadline: %s', async (boundary) => {
+    await withTempDir('catalog-auth-custody-', async (cwd) => {
+      const overrides = {
+        happyHomeDir: cwd, activeServerDir: cwd,
+        privateKeyFile: join(cwd, 'access.key'), legacyPrivateKeyFile: join(cwd, 'legacy.key'),
+        apiServerUrl: 'http://catalog-auth-boundary.test', clientEncryptionRequirement: 'follow_account',
+      };
+      const descriptors = Object.fromEntries(Object.keys(overrides).map((key) => [key, Object.getOwnPropertyDescriptor(configuration, key)!]));
+      Object.defineProperties(configuration, Object.fromEntries(Object.entries(overrides).map(([key, value]) => [key, { value, configurable: true }])));
+      await writeFile(configuration.privateKeyFile, JSON.stringify({ token: 'catalog-auth-fixture', secret: Buffer.alloc(32, 7).toString('base64') }));
+      vi.stubEnv('CODEX_HOME', join(cwd, 'native-codex-home'));
+      vi.stubEnv('CODEX_SQLITE_HOME', join(cwd, 'native-codex-home'));
+      resetInMemoryAccountSettingsContextForTests();
+      const record = buildConnectedServiceCredentialRecord({
+        now: Date.now(), serviceId: 'openai-codex', profileId: 'work', kind: 'oauth', expiresAt: null,
+        oauth: { accessToken: 'fixture-access', refreshToken: 'fixture-refresh', idToken: 'fixture-id',
+          scope: null, tokenType: null, providerAccountId: 'fixture-account', providerEmail: null },
+      });
+      const originalAdapter = axios.defaults.adapter;
+      let releaseFilesystem!: () => void;
+      const heldFilesystem = new Promise<void>((resolve) => { releaseFilesystem = resolve; });
+      let acquiredAttempt: string | undefined;
+      let held = false;
+      let armed = false;
+      const requests: string[] = [];
+      const adapter: AxiosAdapter = async (config) => {
+        const path = new URL(config.url!).pathname;
+        requests.push(path);
+        if (armed && boundary === 'credential-http' && path === '/v3/connect/openai-codex/profiles/work/credential') {
+          held = true;
+          await heldFilesystem;
+        }
+        const data = path === '/v2/account/settings'
+          ? { content: { t: 'plain', v: { schemaVersion: 6, codexBackendMode: 'appServer' } }, version: 1 }
+          : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
+          : path === '/v3/connect/openai-codex/profiles/work/credential'
+            ? { content: { t: 'plain', v: record }, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS' }
+          : path === '/v2/connect/openai-codex/profiles' ? { serviceId: 'openai-codex', profiles: [] }
+          : null;
+        if (!data) throw new Error(`Unexpected fixture HTTP request: ${path}`);
+        return { config, status: 200, statusText: 'OK', headers: {}, data };
+      };
+      axios.defaults.adapter = adapter;
+      const originalMkdir = fsPromises.mkdir;
+      const mkdir = vi.spyOn(fsPromises, 'mkdir').mockImplementation(async (path, options) => {
+        const result = await originalMkdir(path, options);
+        const location = String(path);
+        if (armed && !held && boundary === 'mkdir' && location.includes(`${join('materialized', '.attempts')}${sep}`)) {
+          acquiredAttempt = location;
+          held = true;
+          await heldFilesystem;
+        }
+        return result;
+      });
+      const originalWriteFile = fsPromises.writeFile;
+      const write = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (path, data, options) => {
+        await originalWriteFile(path, data, options);
+        const location = String(path);
+        if (armed && !held && boundary === 'write' && location.includes(`${join('materialized', '.attempts')}${sep}`) && String(data).includes('fixture-access')) {
+          acquiredAttempt = dirname(dirname(location));
+          held = true;
+          await heldFilesystem;
+        }
+      });
+      const originalRename = fsPromises.rename;
+      const rename = vi.spyOn(fsPromises, 'rename').mockImplementation(async (source, target) => {
+        await originalRename(source, target);
+        if (armed && !held && boundary === 'promote' && String(source).includes(`${join('materialized', '.attempts')}${sep}`)
+          && !String(target).includes(`${join('materialized', '.attempts')}${sep}`)) {
+          acquiredAttempt = String(target);
+          held = true;
+          await heldFilesystem;
+        }
+      });
+      syncBuiltinESMExports();
+      const startupPath = join(cwd, 'native-startups');
+      const { call } = createEncryptedRpcTestClient({ scopePrefix: 'catalog-auth-custody', registerHandlers: registerCapabilitiesHandlers });
+      let response: unknown;
+      let pending: Promise<unknown> | undefined;
+      try {
+        await call(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+        // Resolve lazy provider imports and establish that the external credential fixture is valid.
+        const warm = await call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.codex', method: 'probeCatalogs', params: {
+          cwd, timeoutMs: 10_000, runtimeKindOverride: 'appServer',
+          connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' } } },
+          environmentVariables: {
+            HAPPIER_CODEX_APP_SERVER_BIN: fileURLToPath(new URL('../../backends/codex/preflight/__fixtures__/fakeCodexAppServer.mjs', import.meta.url)),
+          },
+        } });
+        expect(warm, JSON.stringify({ warm, requests })).toMatchObject({ ok: true });
+        armed = true;
+        pending = call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.codex', method: 'probeCatalogs', params: {
+          cwd, timeoutMs: 1_000, runtimeKindOverride: 'appServer',
+          connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' } } },
+          environmentVariables: {
+            HAPPIER_CODEX_APP_SERVER_BIN: fileURLToPath(new URL('../../backends/codex/preflight/__fixtures__/fakeCodexAppServer.mjs', import.meta.url)),
+            HAPPIER_TEST_CATALOG_START_FILE: startupPath,
+          },
+        } }).then((value) => { response = value; return value; });
+        await vi.waitFor(() => expect(held).toBe(true), { timeout: 5_000 });
+        if (acquiredAttempt) expect(existsSync(acquiredAttempt)).toBe(true);
+        await new Promise<void>((resolve) => setTimeout(resolve, 1_250));
+        // Only acquired OS work delays the response; unknown credential HTTP does not.
+        if (boundary === 'credential-http') expect(response).toMatchObject({ ok: false, error: { code: 'preflight-catalog-unavailable' } });
+        else expect(response).toBeUndefined();
+        releaseFilesystem();
+        await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'preflight-catalog-unavailable' } });
+        if (acquiredAttempt) expect(existsSync(acquiredAttempt)).toBe(false);
+        expect(existsSync(startupPath)).toBe(false);
+      } finally {
+        releaseFilesystem();
+        await pending;
+        // The unfixed owner can return early; let its already-started OS work finish before teardown.
+        if (acquiredAttempt) await vi.waitFor(() => expect(existsSync(acquiredAttempt!)).toBe(false), { timeout: 5_000 });
+        mkdir.mockRestore();
+        write.mockRestore();
+        rename.mockRestore();
+        syncBuiltinESMExports();
+        axios.defaults.adapter = originalAdapter;
+        vi.unstubAllEnvs();
+        resetInMemoryAccountSettingsContextForTests();
+        Object.defineProperties(configuration, descriptors);
+      }
+    });
+  }, 30_000);
+
+  it.each(['connected', 'native'] as const)('admits only native authentication when the catalog adapter cannot materialize a selected account: %s', async (source) => {
+    await withTempDir('catalog-unsupported-account-', async (cwd) => {
+      const credentialKeys = ['privateKeyFile', 'legacyPrivateKeyFile'] as const;
+      const credentialDescriptors = credentialKeys.map((key) => Object.getOwnPropertyDescriptor(configuration, key)!);
+      credentialKeys.forEach((key) => Object.defineProperty(configuration, key, { value: join(cwd, key), configurable: true }));
+      try {
+        const startupPath = join(cwd, 'native-startup');
+        const executable = await writeExecutableShim({
+          dir: cwd, fileName: 'cursor-fixture.mjs', contents: `#!${process.execPath}\n
+            import {writeFileSync} from 'node:fs';
+            writeFileSync(${JSON.stringify(startupPath)}, String(process.pid));
+            const send = message => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...message})+'\\n');
+            let buffer = '';
+            process.stdin.on('data', chunk => {
+              buffer += chunk;
+              const lines = buffer.split('\\n'); buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (!line.trim()) continue;
+                const request = JSON.parse(line);
+                if (request.method === 'initialize') send({id:request.id,result:{protocolVersion:1,
+                  agentCapabilities:{sessionCapabilities:{close:{}}},authMethods:[{id:'cursor_login',name:'Native login'}]}});
+                else if (request.method === 'session/new') {
+                  send({method:'session/update',params:{sessionId:'native-session',update:{sessionUpdate:'available_commands_update',
+                    availableCommands:[{name:'review',description:'Review the project'}]}}});
+                  send({id:request.id,result:{sessionId:'native-session'}});
+                } else if (request.id !== undefined) send({id:request.id,result:{}});
+              }
+            });
+          `,
+        });
+        const { call } = createEncryptedRpcTestClient({ scopePrefix: 'catalog-unsupported-account', registerHandlers: registerCapabilitiesHandlers });
+        const result = await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+          id: 'cli.cursor', method: 'probeCatalogs', params: {
+            cwd, timeoutMs: 5_000,
+            connectedServices: { v: 1, bindingsByServiceId: {
+              'openai-codex': source === 'connected'
+                ? { source, selection: 'profile', profileId: 'selected-fixture' }
+                : { source },
+            } },
+            environmentVariables: { HAPPIER_CURSOR_PATH: executable },
+          },
+        });
+        if (source === 'connected') {
+          expect(result).toMatchObject({ ok: false, error: { code: 'connected-service-preflight-failed' } });
+          expect(existsSync(startupPath)).toBe(false);
+        } else {
+          expect(result).toMatchObject({ ok: true, result: { commands: { supported: true, items: [{ command: 'review' }] } } });
+          const pid = Number(await readFile(startupPath, 'utf8'));
+          expect(() => process.kill(pid, 0)).toThrow();
+        }
+      } finally {
+        credentialKeys.forEach((key, index) => Object.defineProperty(configuration, key, credentialDescriptors[index]));
+      }
+    });
+  }, 30_000);
+
   it.each([false, true])('cancels a native catalog waiter and preserves a shared healthy waiter: %s', async (shared) => {
     await withTempDir('catalog-cancellation-', async (cwd) => {
       const credentialKeys = ['privateKeyFile', 'legacyPrivateKeyFile'] as const;
