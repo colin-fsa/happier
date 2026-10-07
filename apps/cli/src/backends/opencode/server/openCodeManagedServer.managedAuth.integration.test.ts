@@ -33,7 +33,7 @@ import {
 const FAKE_OPEN_CODE_V2_SERVE = `#!/usr/bin/env node
 const http = require('node:http');
 const { randomBytes } = require('node:crypto');
-const { writeFileSync } = require('node:fs');
+const { appendFileSync, writeFileSync } = require('node:fs');
 if (process.env.OPENCODE_TEST_PID_FILE) writeFileSync(process.env.OPENCODE_TEST_PID_FILE, String(process.pid));
 
 function parseArg(name) {
@@ -74,12 +74,14 @@ const server = http.createServer((req, res) => {
   // V2 2.0.20: integration.list awaits Plugin.awaitActivation for this location;
   // command.list and skill.list read the registry without waiting themselves.
   if (req.url && req.url.startsWith('/api/integration')) {
+    if (process.env.OPENCODE_TEST_CATALOG_READ_FILE) appendFileSync(process.env.OPENCODE_TEST_CATALOG_READ_FILE, '/api/integration;');
     if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
     catalogsReady = true;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ data: [] })); return;
   }
   if (req.url && (req.url.startsWith('/api/command') || req.url.startsWith('/command'))) {
+    if (process.env.OPENCODE_TEST_CATALOG_READ_FILE) appendFileSync(process.env.OPENCODE_TEST_CATALOG_READ_FILE, req.url.split('?')[0] + ';');
     if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(process.env.OPENCODE_TEST_LEGACY_API ? [] : { data: catalogsReady ? [{ name: 'review' }] : [] })); return;
@@ -186,6 +188,7 @@ describe('startManagedOpenCodeServer managed credential', () => {
     const pidPath = join(root, 'catalog-native-pid');
     TEST_NATIVE_PIDS.add(pidPath);
     const readyPath = join(root, 'catalog-native-ready');
+    const catalogReadPath = join(root, 'catalog-native-read');
     const startedAt = Date.now();
     const realNow = Date.now.bind(Date);
     let readinessObservedAt: number | undefined;
@@ -199,10 +202,18 @@ describe('startManagedOpenCodeServer managed credential', () => {
     const pending = openCodePreflightSessionControlsProbeAdapter.probeCatalogsRaw?.({
       cwd: root, timeoutMs: 10_000,
       processEnv: { ...process.env, OPENCODE_TEST_PID_FILE: pidPath,
-        OPENCODE_TEST_READY_FILE: readyPath, OPENCODE_TEST_HANG_COMMANDS: '1', ...(generation === 'v1' ? { OPENCODE_TEST_LEGACY_API: '1' } : {}), HAPPIER_OPENCODE_CLI_GENERATION: 'stable', OPENCODE_SERVER_PASSWORD: 'deadline-fixture-password' },
+        OPENCODE_TEST_READY_FILE: readyPath, OPENCODE_TEST_CATALOG_READ_FILE: catalogReadPath,
+        OPENCODE_TEST_HANG_COMMANDS: '1', ...(generation === 'v1' ? { OPENCODE_TEST_LEGACY_API: '1' } : {}),
+        HAPPIER_OPENCODE_CLI_GENERATION: generation === 'v1' ? 'stable' : 'v2', OPENCODE_SERVER_PASSWORD: 'deadline-fixture-password' },
     });
     try {
       await expect(pending).rejects.toThrow(/timed out/i);
+      expect(existsSync(readyPath)).toBe(true);
+      expect(await readFile(catalogReadPath, 'utf8')).toContain(generation === 'v1' ? '/command' : '/api/integration');
+      expect(readinessObservedAt).toBeDefined();
+      // The remaining 500ms may include real process cleanup. This generous observation
+      // window still distinguishes a fresh 10s read budget from the containing budget.
+      expect(realNow() - readinessObservedAt!).toBeLessThan(2_000);
     } finally {
       const pid = Number(await readFile(pidPath, 'utf8').catch(() => ''));
       if (pid > 0) { try { process.kill(pid, 'SIGKILL'); } catch {} }

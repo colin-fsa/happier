@@ -92,7 +92,7 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
         vi.useRealTimers();
     });
 
-    it('treats too-small timeout overrides as invalid to avoid flaking managed OpenCode calls', async () => {
+    it('honors a positive subsecond timeout instead of renewing the remaining request budget', async () => {
         process.env.HAPPIER_OPENCODE_SERVER_URL = 'http://127.0.0.1:9999';
         process.env.HAPPIER_OPENCODE_SERVER_HTTP_TIMEOUT_MS = '25';
 
@@ -137,9 +137,8 @@ describe('createOpenCodeServerRuntimeClient sessionMessagesList managed retry', 
         });
 
         const statusPromise = client.sessionStatusList();
-        const assertion = expect(statusPromise).resolves.toEqual({});
-        await vi.advanceTimersByTimeAsync(50);
-        await assertion;
+        const assertion = expect(statusPromise).rejects.toThrow(/timed out/i);
+        await Promise.all([assertion, vi.advanceTimersByTimeAsync(50)]);
         vi.useRealTimers();
     });
 

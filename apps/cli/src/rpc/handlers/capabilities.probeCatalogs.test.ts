@@ -125,8 +125,23 @@ describe('capabilities.invoke pre-session catalogs', () => {
         else expect(response).toBeUndefined();
         releaseFilesystem();
         await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'preflight-catalog-unavailable' } });
-        if (acquiredAttempt) expect(existsSync(acquiredAttempt)).toBe(false);
+        if (acquiredAttempt) {
+          expect(existsSync(acquiredAttempt)).toBe(false);
+          expect(await fsPromises.readdir(dirname(acquiredAttempt))).toEqual([]);
+        }
         expect(existsSync(startupPath)).toBe(false);
+        armed = false;
+        await expect(call(RPC_METHODS.CAPABILITIES_INVOKE, { id: 'cli.codex', method: 'probeCatalogs', params: {
+          cwd, timeoutMs: 5_000, runtimeKindOverride: 'appServer',
+          connectedServices: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' } } },
+          environmentVariables: {
+            HAPPIER_CODEX_APP_SERVER_BIN: fileURLToPath(new URL('../../backends/codex/preflight/__fixtures__/fakeCodexAppServer.mjs', import.meta.url)),
+            HAPPIER_TEST_CATALOG_START_FILE: startupPath,
+          },
+        } })).resolves.toMatchObject({ ok: true });
+        const pid = Number((await readFile(startupPath, 'utf8')).trim());
+        expect(() => process.kill(pid, 0)).toThrow();
+        if (acquiredAttempt) expect(await fsPromises.readdir(dirname(acquiredAttempt))).toEqual([]);
       } finally {
         releaseFilesystem();
         await pending;
