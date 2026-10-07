@@ -143,9 +143,14 @@ describe('Appearance settings loading indicator', () => {
         expect(shared.settingsState.loadingIndicatorStyle).toBe('radar');
 
         await act(async () => {
+            dropdown!.props.onSelect('hWave');
+        });
+        expect(shared.settingsState.loadingIndicatorStyle).toBe('hWave');
+
+        await act(async () => {
             dropdown!.props.onSelect('notAStyle');
         });
-        expect(shared.settingsState.loadingIndicatorStyle).toBe('radar');
+        expect(shared.settingsState.loadingIndicatorStyle).toBe('hWave');
     });
 
     it('chooses the speed and the pause between loops beside the style and saves them on this device', async () => {

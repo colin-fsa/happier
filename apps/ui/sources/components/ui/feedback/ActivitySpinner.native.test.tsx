@@ -123,21 +123,29 @@ async function renderDotSpinner(props: Record<string, unknown>) {
 }
 
 describe('ActivitySpinner (native)', () => {
-    it('draws the H with seven dots whose brightness the native driver reads from the frame table', async () => {
+    it('keeps the seven-dot H selectable while sharing the mark wave clock', async () => {
+        const mark = await renderDotSpinner({});
+        const h = await renderDotSpinner({ variant: 'hWave' });
+        expect(mark.dots).toHaveLength(8);
+        expect(h.dots).toHaveLength(7);
+        expect(await runningNativeLoops()).toBe(1);
+    });
+
+    it('draws the mark with eight dots whose brightness the native driver reads from the frame table', async () => {
         const { getDotSpinnerFrames, readDotSeries } = await import('./activitySpinner/dotSpinnerFrames');
         const { screen, dots, running } = await renderDotSpinner({});
         const { t } = await import('@/text');
         expect(screen.findHostByTestId('spinner')!.props.accessibilityLabel).toBe(t('common.loading'));
 
         expect(screen.findAllByType('ActivityIndicator' as never)).toHaveLength(0);
-        expect(dots).toHaveLength(7);
+        expect(dots).toHaveLength(8);
         expect(running).toBe(1);
         const firstDot = flattenStyle(dots[0]!.props.style);
         expect(firstDot.backgroundColor).toBe('theme-secondary-text');
         expect(firstDot.width).toBe(3);
 
         const frames = getDotSpinnerFrames('wave', { speed: 'normal', pause: 'short' });
-        const series = readDotSeries(frames.opacity, 0, frames.frameCount);
+        const series = readDotSeries(frames, frames.opacity, 0);
         const opacity = firstDot.opacity as InterpolationStub;
         expect(opacity.config.outputRange).toEqual([...series, series[0]]);
         expect(opacity.config.inputRange[0]).toBe(0);
@@ -168,18 +176,18 @@ describe('ActivitySpinner (native)', () => {
         );
         mountedScreens.push(screen);
 
-        expect(findDots(screen)).toHaveLength(14);
+        expect(findDots(screen)).toHaveLength(16);
         expect(await runningNativeLoops()).toBe(1);
 
         await unmountAll();
         expect(await runningNativeLoops()).toBe(0);
     });
 
-    it('runs no loop and holds the full H when ambient motion is paused', async () => {
+    it('runs no loop and holds the full mark when ambient motion is paused', async () => {
         const { dots, running } = await renderDotSpinner({ animationEnabled: false });
 
         expect(running).toBe(0);
-        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+        expect(dots.map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
     });
 
     it('releases its loop while the app is in the background and takes it back on return', async () => {
@@ -255,7 +263,7 @@ describe('ActivitySpinner (native)', () => {
         expect(color.config.outputRange).toEqual(expect.arrayContaining(['accent-indigo', 'accent-purple', 'accent-orange']));
     });
 
-    it('breathes the still H from one shared loop under reduced motion', async () => {
+    it('breathes the still mark from one shared loop under reduced motion', async () => {
         const { DotSpinnerNative } = await import('./activitySpinner/DotSpinnerNative');
         const screen = await renderScreen(
             <DotSpinnerNative styleId="wave" timing={{ speed: 'normal', pause: 'short' }} size={18} ink={{ color: 'ink' }} motion="breathe" hidden={false} viewProps={{ testID: 'spinner' }} />,
@@ -263,7 +271,7 @@ describe('ActivitySpinner (native)', () => {
         mountedScreens.push(screen);
 
         expect(await runningNativeLoops()).toBe(1);
-        expect(findDots(screen).map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(7).fill(0.85));
+        expect(findDots(screen).map((dot) => flattenStyle(dot.props.style).opacity)).toEqual(Array(8).fill(0.85));
         const layer = screen.findAllByType('Animated.View' as never).find((node) => (node.props as { testID?: string }).testID === 'spinner');
         expect((flattenStyle(layer!.props.style).opacity as InterpolationStub).config.outputRange).toEqual([1, 0.45]);
     });

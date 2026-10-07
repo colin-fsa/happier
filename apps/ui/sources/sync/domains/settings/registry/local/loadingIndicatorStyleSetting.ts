@@ -3,7 +3,7 @@ import { z } from 'zod';
 /**
  * Which loading indicator `ActivitySpinner` draws.
  *
- * Every id except `classicRing` is a dot style: the H of Happier on a 3 × 3 grid with light moving
+ * Every id except `classicRing` is a dot style: the Happier mark or H on a 3 × 3 grid with light moving
  * through it. `classicRing` keeps the original rotating ring for people who prefer it.
  */
 export const LOADING_INDICATOR_STYLE_IDS = [
@@ -18,6 +18,17 @@ export const LOADING_INDICATOR_STYLE_IDS = [
     'radar',
     'ripple',
     'aurora',
+    'hWave',
+    'hHandwritten',
+    'hBuildAndRelease',
+    'hRelay',
+    'hTwinStems',
+    'hSlowBreath',
+    'hStarfield',
+    'hSweep',
+    'hRadar',
+    'hRipple',
+    'hAurora',
     'classicRing',
 ] as const;
 

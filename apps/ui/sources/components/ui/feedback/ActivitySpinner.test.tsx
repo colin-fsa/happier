@@ -114,7 +114,7 @@ describe('ActivitySpinner (web)', () => {
         }
     });
 
-    it('draws the H wave by default as a frame strip stepped by one transform animation', async () => {
+    it('draws the mark wave by default as a frame strip stepped by one transform animation', async () => {
         const { screen, spinner, strip } = await renderSpinner({ size: 12, color: 'red' });
 
         expect(screen.findAllByType('ActivityIndicator' as never)).toHaveLength(0);
@@ -130,6 +130,16 @@ describe('ActivitySpinner (web)', () => {
         expect(stripStyle.animationTimingFunction).toBe('steps(30, end)');
         expect(stripStyle.width).toBe('3000%');
         expect(frameSheetFor(strip)).toContain('fill="red"');
+        expect(frameSheetFor(strip).match(/<circle /g)).toHaveLength(30 * 8);
+    });
+
+    it('keeps the H wave in its own frame sheet and uses theme accents for H Aurora', async () => {
+        const mark = await renderSpinner({});
+        const h = await renderSpinner({ variant: 'hWave' });
+        expect(frameSheetFor(h.strip).match(/<circle /g)).toHaveLength(30 * 7);
+        expect(h.strip?.props['data-happier-activity-spinner']).not.toBe(mark.strip?.props['data-happier-activity-spinner']);
+        const aurora = await renderSpinner({ variant: 'hAurora' });
+        expect(frameSheetFor(aurora.strip)).toContain('fill="accent-indigo"');
     });
 
     it('shares one frame sheet between every spinner drawn in the same style and ink', async () => {
@@ -257,7 +267,7 @@ describe('ActivitySpinner (web)', () => {
         expect(frameSheetFor(strip)).toContain('fill="theme-secondary-text"');
     });
 
-    it('holds a still, fully drawn H without scheduling any animation when ambient motion is paused', async () => {
+    it('holds a still, fully drawn mark without scheduling any animation when ambient motion is paused', async () => {
         const { spinner, strip } = await renderSpinner({ size: 12, animationEnabled: false });
 
         expect(flattenStyle(spinner.props.style).animationName).toBeUndefined();
@@ -280,7 +290,7 @@ describe('ActivitySpinner (web)', () => {
         expect(flattenStyle(ring.spinner.props.style).animationName).toBeUndefined();
     });
 
-    it('replaces the travelling light with a slow breath of the still H under reduced motion', async () => {
+    it('replaces the travelling light with a slow breath of the still chosen mark under reduced motion', async () => {
         reducedMotionMatches = true;
         const { spinner, strip } = await renderSpinner({ size: 12 });
 
