@@ -108,6 +108,8 @@ export async function runTerminalPromptSubmission(params: Readonly<{
           break;
         }
       } catch {
+        const settled = settledResult();
+        if (settled) return settled;
         return {
           success: false,
           reason: 'verification_failed',
