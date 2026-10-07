@@ -79,6 +79,8 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
   requestLogPath: string;
   /** Optional provider-boundary fixture, reread on each model/list request. */
   modelListStatePath?: string;
+  /** Emit the provider's quota notification while processing a real source turn. */
+  emitRateLimitsOnTurnStart?: boolean;
   /**
    * Test-only strict resume boundary. When set, the fake app-server must reject
    * a `thread/resume` request that names any other native thread.
@@ -104,6 +106,7 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     'import readline from "node:readline";',
     `const requestLogPath = ${JSON.stringify(params.requestLogPath)};`,
     `const modelListStatePath = ${JSON.stringify(params.modelListStatePath ?? null)};`,
+    `const emitRateLimitsOnTurnStart = ${JSON.stringify(params.emitRateLimitsOnTurnStart === true)};`,
     `const expectedResumeThreadId = ${JSON.stringify(expectedResumeThreadId)};`,
     `const goalStatePath = ${JSON.stringify(join(params.dir, 'fake-codex-app-server.goal.json'))};`,
     `const accountStatePath = ${JSON.stringify(join(params.dir, 'fake-codex-app-server.account.json'))};`,
@@ -405,6 +408,7 @@ export async function writeFakeCodexAppServerScript(params: Readonly<{
     '    continue;',
     '  }',
     '  if (msg.method === "turn/start") {',
+    '    if (emitRateLimitsOnTurnStart) process.stdout.write(JSON.stringify({ method: "account/rateLimits/updated", params: buildRateLimitsReadResponse() }) + "\\n");',
     '    turnCounter += 1;',
     '    const threadId = msg.params?.threadId ?? "thread-started";',
     '    const input = Array.isArray(msg.params?.input) ? msg.params.input : [];',

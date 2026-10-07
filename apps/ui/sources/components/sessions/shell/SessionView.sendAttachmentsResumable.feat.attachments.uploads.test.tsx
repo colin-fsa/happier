@@ -64,6 +64,7 @@ const runSessionAgentTransitionSpy = vi.hoisted(() => vi.fn(async (..._args: any
 const chooseSubmitModeState = vi.hoisted(() => ({
     mode: 'agent_queue',
 }));
+const permissionApplyTimingState = vi.hoisted(() => ({ value: 'immediate' as 'immediate' | 'next_prompt' }));
 const reviewCommentDraftsState = vi.hoisted(() => ({
     current: [] as any[],
 }));
@@ -297,6 +298,12 @@ vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => ({ serverId: 'server-1' }),
     subscribeActiveServer: () => () => {},
 }));
+// Machine RPC is the network boundary; capability parsing remains real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async () => ({ protocolVersion: 1, results: {
+        'tool.sessionAgentTransition': { ok: true, checkedAt: 1, data: { supportsInputPermissionIntent: true } },
+    } }),
+}));
 vi.mock('@/voice/session/voiceSession', () => ({
     useVoiceSessionSnapshot: () => ({ status: 'disconnected' }),
     voiceSessionManager: {},
@@ -309,11 +316,14 @@ const machineEncryptionState = { available: false };
 
 const ensureSessionVisibleSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => ({ kind: 'available' })));
 const refreshSessionMessagesSpy = vi.hoisted(() => vi.fn(async (..._args: any[]) => {}));
-vi.mock('@/sync/sync', () => ({
+vi.mock('@/sync/sync', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/sync')>();
+    return {
     sync: {
         markSessionViewed: async () => {},
         fetchPendingMessages: async () => {},
         publishSessionPermissionModeToMetadata: async () => {},
+        publishNextPromptPermissionModeAfterAdmission: actual.sync.publishNextPromptPermissionModeAfterAdmission.bind(actual.sync),
         publishSessionAcpSessionModeOverrideToMetadata: async () => {},
         publishSessionAcpConfigOptionOverrideToMetadata: async () => {},
         publishSessionModelOverrideToMetadata: async () => {},
@@ -334,7 +344,8 @@ vi.mock('@/sync/sync', () => ({
             getMachineEncryption: () => machineEncryptionState.available ? {} : null,
         },
     },
-}));
+    };
+});
 
 const resumeSessionSpy = vi.fn(async (..._args: any[]) => ({ type: 'success' }));
 const ensureSessionRuntimeForPendingInputSpy = vi.fn(async (..._args: any[]) => ({ type: 'success' }));
@@ -484,9 +495,15 @@ installSessionShellCommonModuleMocks({
     storage: async () => {
         const { createStorageModuleStub, createStorageStoreStub } = await import('@/dev/testkit/mocks/storage');
         const { settingsDefaults } = await import('@/sync/domains/settings/settings');
-        return createStorageModuleStub({
+        const module = createStorageModuleStub({
             storage: createStorageStoreStub(() => ({
+                    profileScope: TEST_SERVER_ACCOUNT_SCOPE,
                     sessions: { s1: sessionState.session },
+                    getActiveSessions: () => sessionState.session.active ? [sessionState.session] : [],
+                    applySessions: (sessions) => {
+                        const next = sessions.find((session) => session.id === 's1');
+                        if (next) Object.assign(sessionState.session, next);
+                    },
                     sessionPending: sessionPendingStoreState.current,
                     sessionMessages: {},
                     machines: {
@@ -513,6 +530,7 @@ installSessionShellCommonModuleMocks({
                     settings: {
                         ...settingsDefaults,
                         sessionMessageSendMode: 'agent_queue',
+                        sessionPermissionModeApplyTiming: permissionApplyTimingState.value,
                     },
                     deleteWorkspaceReviewCommentDraft: deleteWorkspaceReviewCommentDraftSpy,
             })),
@@ -567,6 +585,9 @@ installSessionShellCommonModuleMocks({
             useLocalSettingMutable: () => [null, vi.fn()],
             useSettingMutable: () => [null, vi.fn()],
         });
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        registerStorageStateReader(() => module.storage.getState());
+        return module;
     },
 });
 
@@ -667,6 +688,7 @@ vi.mock('@/sync/domains/automations/automationSessionLink', () => ({
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { getInactiveSessionUiState } = await import('@/components/sessions/model/inactiveSessionUi');
 const { SessionView } = await import('./SessionView');
+const { buildStructuredInputMetaOverrides } = await import('../agentInput/structuredInputMentions');
 
 describe('SessionView (attachments.uploads resumable send)', () => {
     beforeEach(async () => {
@@ -678,6 +700,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         // agent queue whose runtime is known not to support durable pending input.
         // Pending delivery has explicit cases below.
         chooseSubmitModeState.mode = 'agent_queue';
+        permissionApplyTimingState.value = 'immediate';
         enqueuePendingMessageSpy.mockClear();
         updatePendingMessageSpy.mockClear();
         ensureSessionRuntimeForPendingInputSpy.mockClear();
@@ -698,6 +721,9 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         sessionTranscriptIdsState.current = [];
         draftHookState.valuesBySessionId.clear();
         clearSessionAttachmentDrafts('s1');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        registerStorageStateReader(() => storage.getState());
         await deleteSessionDraft({ scope: TEST_SERVER_ACCOUNT_SCOPE, address: TEST_SESSION_DRAFT_ADDRESS });
     });
 
@@ -2109,7 +2135,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             armedContinuationState.submissionIntent = null;
         };
 
-        async function sendOneAttachment(tree: renderer.ReactTestRenderer) {
+        async function sendOneAttachment(tree: renderer.ReactTestRenderer, structuredInputMetaOverrides?: Record<string, unknown>) {
             const agentInput = findTestInstanceByTypeWithProps(tree, 'AgentInput' as any, {}) as any;
             await act(async () => {
                 invokeTestInstanceHandler(agentInput, 'onAttachmentsAdded', [
@@ -2117,7 +2143,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 ], 'AgentInput');
             });
             await act(async () => {
-                invokeTestInstanceHandler(agentInput, 'onSend', undefined, 'AgentInput');
+                invokeTestInstanceHandler(agentInput, 'onSend', structuredInputMetaOverrides ? { structuredInputMetaOverrides } : undefined, 'AgentInput');
             });
             expect(pendingFireAndForget.length).toBe(1);
             await pendingFireAndForget[0];
@@ -2188,6 +2214,83 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 act(() => {
                     tree?.unmount();
                 });
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('freezes the Session permission intent into the retained continuation input', async () => {
+            const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+            expect(getActiveServerAccountScope()).toEqual(TEST_SERVER_ACCOUNT_SCOPE);
+            armSecondAgent();
+            const sourceMetadata = sessionState.session.metadata;
+            sessionState.session.permissionMode = 'yolo';
+            sessionState.session.permissionModeUpdatedAt = 2;
+            sessionState.session.metadata = { ...sourceMetadata, permissionMode: 'default', permissionModeUpdatedAt: 1 };
+            const originalEncryptionMode = sessionState.session.encryptionMode;
+            sessionState.session.encryptionMode = 'plain';
+            permissionApplyTimingState.value = 'next_prompt';
+            const { apiSocket } = await import('@/sync/api/session/apiSocket');
+            const publication = vi.spyOn(apiSocket, 'emitWithAck').mockImplementation(async <T,>(_event: string, data: unknown) => ({
+                result: 'success', version: 1, metadata: (data as { metadata: string }).metadata,
+            }) as T);
+            const screen = await renderScreen(<AppPaneProvider><SessionView id="s1" /></AppPaneProvider>);
+            try {
+                pendingFireAndForget.length = 0;
+                if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+                await sendOneAttachment(screen.tree);
+                const [transitionInput] = runSessionAgentTransitionSpy.mock.calls[0] ?? [];
+                expect(transitionInput).toMatchObject({ request: { input: { meta: { permissionMode: 'yolo' } } } });
+                expect(armedContinuationState.submission?.input.meta.permissionMode).toBe('yolo');
+                const writes = publication.mock.calls.filter(([event]) => event === 'update-metadata');
+                expect(writes).toHaveLength(1);
+                expect(JSON.parse((writes[0][1] as { metadata: string }).metadata)).toMatchObject({ permissionMode: 'yolo' });
+                expect(sessionState.session.metadata.permissionMode).toBe('yolo');
+            } finally {
+                await screen.unmount();
+                sessionState.session.metadata = sourceMetadata;
+                delete sessionState.session.permissionMode;
+                delete sessionState.session.permissionModeUpdatedAt;
+                sessionState.session.encryptionMode = originalEncryptionMode;
+                permissionApplyTimingState.value = 'immediate';
+                publication.mockRestore();
+                pendingFireAndForget.length = 0;
+            }
+        });
+
+        it('keeps mentions and attachments while excluding source Claude extras from a Codex continuation', async () => {
+            armSecondAgent();
+            const sourceMetadata = sessionState.session.metadata;
+            sessionState.session.metadata = {
+                ...sourceMetadata,
+                flavor: 'claude',
+                sessionConfigOptionOverridesV1: {
+                    v: 1, updatedAt: 1, overrides: {
+                        reasoning_effort: { value: 'high', updatedAt: 1 },
+                        ultracode: { value: 'true', updatedAt: 1 },
+                    },
+                },
+            };
+            armedContinuationState.intent.sourceAgentId = 'claude';
+            armedContinuationState.intent.selection = { v: 1, agentId: 'codex' };
+            const structuredInputMetaOverrides = buildStructuredInputMetaOverrides({ mentions: [{
+                kind: 'session', tokenText: '@session:context', sessionId: 'other-session', label: 'Context',
+            }] });
+            const screen = await renderScreen(<AppPaneProvider><SessionView id="s1" /></AppPaneProvider>);
+            try {
+                pendingFireAndForget.length = 0;
+                if (!screen.tree) throw new Error('SessionView test renderer did not mount');
+                await sendOneAttachment(screen.tree, structuredInputMetaOverrides);
+                const [transitionInput] = runSessionAgentTransitionSpy.mock.calls[0] ?? [];
+                expect(transitionInput).toMatchObject({ request: {
+                    expectedCurrentAgentId: 'claude', selection: { agentId: 'codex' },
+                    input: { meta: { ...structuredInputMetaOverrides, happier: { kind: 'attachments.v1' } } },
+                } });
+                const inputMeta = transitionInput?.request?.input?.meta;
+                expect(inputMeta).not.toHaveProperty('reasoningEffort');
+                expect(inputMeta).not.toHaveProperty('ultracode');
+            } finally {
+                await screen.unmount();
+                sessionState.session.metadata = sourceMetadata;
                 pendingFireAndForget.length = 0;
             }
         });
@@ -2450,7 +2553,7 @@ describe('SessionView (attachments.uploads resumable send)', () => {
             expect((transitionDispatch as any)?.request?.input).toEqual({
                 text,
                 localId: 'armed-local-id',
-                meta: {},
+                meta: { permissionMode: 'default' },
             });
             return screen;
         }
@@ -2538,6 +2641,17 @@ describe('SessionView (attachments.uploads resumable send)', () => {
         // while leaving the message in the composer is the same duplicate one
         // tap away.
         it('compare-clears the unchanged submitted draft when custody only lands later', async () => {
+            const sourceMetadata = sessionState.session.metadata;
+            const originalEncryptionMode = sessionState.session.encryptionMode;
+            sessionState.session.metadata = { ...sourceMetadata, permissionMode: 'default', permissionModeUpdatedAt: 1 };
+            sessionState.session.permissionMode = 'default';
+            sessionState.session.permissionModeUpdatedAt = 2;
+            sessionState.session.encryptionMode = 'plain';
+            permissionApplyTimingState.value = 'next_prompt';
+            const { apiSocket } = await import('@/sync/api/session/apiSocket');
+            let finishPublication: (value: unknown) => void = () => {};
+            const metadataAck = new Promise<unknown>((resolve) => { finishPublication = resolve; });
+            const publication = vi.spyOn(apiSocket, 'emitWithAck').mockImplementation(async <T,>() => await metadataAck as T);
             const screen = await sendArmedText(
                 { type: 'outcome_unknown', localId: 'armed-local-id' },
                 'switch and send this',
@@ -2547,14 +2661,27 @@ describe('SessionView (attachments.uploads resumable send)', () => {
                 expect(draftHookState.valuesBySessionId.get('s1')).toBe('switch and send this');
 
                 syncPendingRowForLocalId('armed-local-id');
+                await act(async () => { await Promise.resolve(); });
 
                 expect(screen.getTextContent()).not.toContain('session.agentContinuation.transition.unknown');
                 expect(screen.findAllByTestId('session.agentTransitionOutcome.banner')).toHaveLength(0);
                 expect(draftHookState.valuesBySessionId.get('s1')).toBe('');
                 // The arm goes with the draft: this depth spends the switch.
                 expect(clearArmedContinuationSpy).toHaveBeenCalled();
+                // Publication is still waiting on the socket; cleanup already happened.
+                const writes = publication.mock.calls.filter(([event]) => event === 'update-metadata');
+                expect(writes).toHaveLength(1);
+                expect(JSON.parse((writes[0][1] as { metadata: string }).metadata)).toMatchObject({ permissionMode: 'default' });
             } finally {
+                finishPublication({ result: 'success' });
+                await Promise.all([...pendingFireAndForget]);
                 act(() => { screen.tree?.unmount(); });
+                sessionState.session.metadata = sourceMetadata;
+                sessionState.session.encryptionMode = originalEncryptionMode;
+                delete sessionState.session.permissionMode;
+                delete sessionState.session.permissionModeUpdatedAt;
+                permissionApplyTimingState.value = 'immediate';
+                publication.mockRestore();
                 pendingFireAndForget.length = 0;
             }
         });

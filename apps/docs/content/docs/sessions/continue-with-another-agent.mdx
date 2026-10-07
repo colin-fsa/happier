@@ -7,7 +7,7 @@ A Happier session normally runs under one coding Agent for its whole life. **Con
 
 ## Development status
 
-This capability exists in the current development source and is **not yet available in released Happier builds**. It has not passed an integrated live gate, so treat the behavior described below as the current development contract rather than as shipped behavior. Availability, copy, and failure handling can still change.
+This capability exists in the current development source and is **not yet available in released Happier builds**. Treat the behavior described below as the current development contract rather than as shipped behavior. Availability, copy, and failure handling can still change.
 
 The promise is narrow and worth stating exactly:
 
@@ -40,6 +40,23 @@ Selecting another Agent **arms** it. There is no separate confirm step:
 To cancel, reselect the Agent that is currently running the session. Leaving the session is not required, and nothing has been sent until you press send.
 
 An armed choice is scoped to this session and to the Agent that was running it when you armed. If the session's Agent changes underneath you, or the feature is turned off on your server, the arm is discarded rather than silently surviving.
+
+While another Agent is armed, the composer shows that Agent's permission choices
+and a read-only preview of its configured connected-service default. An
+unavailable account stays visible as unavailable. Change the target's model,
+mode or configuration in its picker detail; the running Agent's standalone
+editors are hidden until you cancel the armed choice. The session's profile and
+permission intent still belong to the same session.
+
+With [permission changes applied on the next prompt](/sessions/permissions#apply-permission-changes),
+the switch sends the permission intent selected for that message. Happier checks
+that the CLI can accept a changed intent before stopping the current Agent. If
+that capability is unavailable or cannot be established, your draft and armed
+choice stay available. A retry keeps the first submitted message and authored
+permission intent; a different next-prompt choice made afterwards remains pending
+for a later prompt. When that first intent already matches the session policy,
+an older compatible CLI may apply the latest session policy instead, including
+an immediate permission change made while the current Agent is stopping.
 
 ## When it is available
 

@@ -1265,13 +1265,13 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const armedComposerTarget = resolveArmedComposerContinuation({
         armedContinuationTarget: props.armedContinuationTarget,
     });
-    const hasArmedComposerTarget = armedComposerTarget !== null;
-    // The engine mark names the armed Agent; running-runtime metadata remains source-owned.
+    // Outbound controls describe the armed Agent; runtime status stays with the running Agent.
     const engineChipAgentId: AgentId = (
         armedComposerTarget && isAgentId(armedComposerTarget.agentId)
             ? armedComposerTarget.agentId
             : agentId
     );
+    const permissionMetadata = armedComposerTarget ? null : props.metadata ?? null;
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
         return getModelOptionsForSession(agentId, props.metadata ?? null, { selectedModelId: props.modelMode });
@@ -1860,8 +1860,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [props.maxPanelHeight, screenHeight]);
 
             const permissionModeOptions = React.useMemo(() => {
-                return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
-            }, [agentId, props.metadata]);
+                return getPermissionModeOptionsForSession(engineChipAgentId, permissionMetadata);
+            }, [engineChipAgentId, permissionMetadata]);
 
         const permissionModeOrder = React.useMemo(() => {
             return permissionModeOptions.map((o) => o.value);
@@ -1869,12 +1869,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const effectivePermissionPolicy = React.useMemo(() => {
                 return describeEffectivePermissionMode({
-                    agentType: agentId,
+                    agentType: engineChipAgentId,
                     selectedMode: props.permissionMode ?? 'default',
-                metadata: props.metadata ?? null,
+                metadata: permissionMetadata,
                 applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
             });
-    }, [agentId, props.metadata, props.permissionMode, sessionPermissionModeApplyTiming]);
+    }, [engineChipAgentId, permissionMetadata, props.permissionMode, sessionPermissionModeApplyTiming]);
 
     const effectiveModelPolicy = React.useMemo(() => {
         return describeEffectiveModelMode({
@@ -1966,7 +1966,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const acpConfigOptionsOverrideProbe = props.acpConfigOptionsOverrideProbe ?? null;
 
     const sessionModeChipControl = React.useMemo(() => {
-        if (hasArmedComposerTarget || !props.onAcpSessionModeChange) return null;
+        if (armedComposerTarget || !props.onAcpSessionModeChange) return null;
         if (sessionModePickerControl) {
             return {
                 options: sessionModePickerControl.options,
@@ -1989,7 +1989,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
         return null;
     }, [
-        hasArmedComposerTarget,
+        armedComposerTarget,
         preflightAcpSessionModeEffective.id,
         preflightAcpSessionModeEffective.name,
         preflightAcpSessionModeOptions,
@@ -2040,7 +2040,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [sessionModeChipControl]);
 
     const acpConfigOptionControls = React.useMemo(() => {
-        if (!props.onSessionConfigOptionChange) return null;
+        if (armedComposerTarget || !props.onSessionConfigOptionChange) return null;
         if (props.acpConfigOptionsOverride) {
             return computeSessionConfigOptionControlsForProvider({
                 providerId: agentId,
@@ -2053,6 +2053,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return computeSessionConfigOptionControls({ agentId, metadata: props.metadata ?? null });
     }, [
         agentId,
+        armedComposerTarget,
         modelOptions.length,
         props.acpConfigOptionsOverride,
         props.acpConfigOptionOverridesOverride,
@@ -2208,7 +2209,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ]);
 
     const hasInternalAgentPickerOptions = Boolean(
-        props.agentType
+        !armedComposerTarget
+        && props.agentType
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
@@ -2381,8 +2383,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     }, [onAgentPickerVisibilityChange, showAgentPicker]);
 
     const effectivePermissionLabel = React.useMemo(() => {
-        return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return getPermissionModeLabelForAgentType(engineChipAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [engineChipAgentId, effectivePermissionPolicy.effectiveMode]);
 
     const activeStatusBadge = React.useMemo(() => (
         activeStatusBadgeKey
@@ -2391,8 +2393,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     ), [activeStatusBadgeKey, props.statusBadges]);
 
     const permissionChipLabel = React.useMemo(() => {
-        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return getPermissionModeBadgeLabelForAgentType(engineChipAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [engineChipAgentId, effectivePermissionPolicy.effectiveMode]);
 
     const showPermissionChip = Boolean(props.onPermissionModeChange || props.onPermissionClick);
     const hasProfile = Boolean(props.onProfileClick || props.profilePopover);
@@ -3171,7 +3173,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     permissionChipAnchorRef={permissionChipAnchorRef}
                     onPermissionPopoverRequestClose={closePermissionPopover}
                     onPermissionSelect={handlePermissionSelect}
-                    agentId={agentId}
+                    agentId={engineChipAgentId}
                     permissionModeOptions={permissionModeOptions}
                     effectivePermissionMode={effectivePermissionPolicy.effectiveMode}
                     effectivePermissionLabel={effectivePermissionLabel}

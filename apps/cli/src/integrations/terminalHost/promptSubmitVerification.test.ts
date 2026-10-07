@@ -63,6 +63,20 @@ describe('runTerminalPromptSubmission', () => {
     expect(enterCount).toBe(0);
   });
 
+  it('honors canonical acceptance arriving during a failed staging capture without Enter', async () => {
+    let accepted = false;
+    let enterCount = 0;
+    const result = await runTerminalPromptSubmission({
+      promptText: 'manually accepted prompt',
+      signal: new AbortController().signal,
+      resolveDeliveryState: () => accepted ? 'accepted' : null,
+      verifyStagedBeforeSubmit: async () => { accepted = true; throw new Error('capture unavailable'); },
+      submitEnter: async () => { enterCount += 1; return 'success'; },
+    });
+    expect(result).toEqual({ success: true });
+    expect(enterCount).toBe(0);
+  });
+
   it('waits for exact prompt staging before sending Enter', async () => {
     const calls: string[] = [];
     let staged = false;

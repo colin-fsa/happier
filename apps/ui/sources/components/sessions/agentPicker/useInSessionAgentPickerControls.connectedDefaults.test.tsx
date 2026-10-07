@@ -59,6 +59,7 @@ describe('continuation target account discovery', () => {
                 settings, capabilityServerId: 'server-1', machineId: 'machine-1', cwd: '/repo',
                 accountProfileConnectedServicesV2: AccountProfileSchema.parse({ id: 'account-1', connectedServicesV2: [{ serviceId: 'openai-codex', profiles: [{
                     profileId: 'work', status: 'connected', kind: 'oauth', providerEmail: 'work@example.com',
+                    providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
                 }], groups: [] }] }).connectedServicesV2, connectedServicesFeatureEnabled: true, accountGroupsFeatureEnabled: true,
             },
         }));
