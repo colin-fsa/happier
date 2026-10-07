@@ -953,9 +953,12 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
   const readAppCatalog = async (path: '/command' | '/skill'): Promise<unknown[]> => {
     const api = await ensureApiGeneration();
     const directory = resolveDirectory();
+    // Activation and inventory must use the same server and credential despite managed refresh.
+    const catalogBaseUrl = baseUrl;
+    const catalogHeaders = { ...headers };
     const query = api.kind === 'v2' ? { 'location[directory]': directory } : { directory };
     const read = (route: string) => fetchJson<unknown>({
-      url: buildUrl(baseUrl, route, query), method: 'GET', headers,
+      url: buildUrl(catalogBaseUrl, route, query), method: 'GET', headers: catalogHeaders,
       timeoutMs: httpTimeoutMs, signal: commandAbort.signal,
     });
     if (api.kind === 'v2') {
