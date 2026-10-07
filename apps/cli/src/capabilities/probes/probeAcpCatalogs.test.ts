@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { Credentials } from '@/persistence';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
@@ -107,16 +108,22 @@ describe('probeAcpCatalogs with a real ACP SDK subprocess', () => {
     await withTempDir('acp-catalog-cancel-', async (dir) => {
       const fixture = createProbeFixture(dir, 'absent');
       const controller = new AbortController();
+      // Observe the real startup promise: the agent's request log precedes the host learning its session id.
+      const sessionStart = vi.spyOn(AcpBackend.prototype, 'startSession');
       const pending = probeAcpCatalogs({ ...fixture.params, signal: controller.signal });
       const rejection = expect(pending).rejects.toThrow(/abort|cancel/i);
       try {
-        await vi.waitFor(() => expect(readFileSync(fixture.evidencePath, 'utf8')).toContain('session/new'));
+        await vi.waitFor(() => expect(sessionStart.mock.results[0]?.type).toBe('return'));
+        const startup = sessionStart.mock.results[0];
+        if (startup.type !== 'return') throw new Error('ACP session startup did not return a promise');
+        await startup.value;
         controller.abort();
         await rejection;
         expect(readFileSync(fixture.evidencePath, 'utf8')).toContain('session/close');
       } finally {
         controller.abort();
         await pending.catch(() => undefined);
+        sessionStart.mockRestore();
       }
     });
   }, 90_000);
