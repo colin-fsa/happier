@@ -2450,6 +2450,14 @@ function SessionViewLoaded({
         openSessionTarget({ kind: 'agentRoster' });
     }, [openSessionTarget]);
     const accountProfile = useProfile();
+    const connectedServicesFeatureEnabled = useFeatureEnabled('connectedServices', {
+        scopeKind: 'spawn',
+        serverId: capabilityServerId,
+    });
+    const connectedServicesAccountGroupsFeatureEnabled = useFeatureEnabled('connectedServices.accountGroups', {
+        scopeKind: 'spawn',
+        serverId: capabilityServerId,
+    });
     const usageLimitRecoveryFeatureEnabled = useFeatureEnabled('sessions.usageLimitRecovery', {
         scopeKind: 'spawn',
         serverId: capabilityServerId,
@@ -3942,7 +3950,11 @@ function SessionViewLoaded({
         machineId: typeof machineId === 'string' && machineId.length > 0 ? machineId : null,
         cwd: (session.metadata?.path as string | undefined) ?? null,
         profileId: liveComposerState.profileId ?? null,
-    }), [capabilityServerId, liveComposerState.profileId, machineId, session.metadata?.path, settings]);
+        accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
+        connectedServicesFeatureEnabled,
+        accountGroupsFeatureEnabled: connectedServicesAccountGroupsFeatureEnabled,
+    }), [accountProfile?.connectedServicesV2, capabilityServerId, connectedServicesAccountGroupsFeatureEnabled,
+        connectedServicesFeatureEnabled, liveComposerState.profileId, machineId, session.metadata?.path, settings]);
     const resolveSessionModelDiscoveryContext = React.useCallback((): SessionModelDiscoveryContext => {
         const backendTarget = sessionActionDefaultBackend?.backendTarget
             ?? { kind: 'builtInAgent' as const, agentId: liveComposerState.agentId };
@@ -4741,11 +4753,12 @@ function SessionViewLoaded({
     }, [session.metadata, sessionId]);
     const buildNextMessageMetaOverrides = React.useCallback((
         metaOverrides: Record<string, unknown> | undefined,
-        _destination: SessionComposerSendDestination,
+        destination: SessionComposerSendDestination,
     ) => {
+        const targetSelection = destination.kind === 'armedAgentContinuation' ? destination.intent.selection : null;
         return buildSessionComposerNextMessageMetaOverridesFromUiState({
-            agentId: liveComposerState.agentId,
-            configOptionOverrides: optimisticSessionConfigOptionOverrides,
+            agentId: targetSelection ? resolveAgentIdFromFlavor(targetSelection.agentId) : liveComposerState.agentId,
+            configOptionOverrides: targetSelection ? targetSelection.sessionConfigOptionOverrides : optimisticSessionConfigOptionOverrides,
             metaOverrides,
         });
     }, [liveComposerState.agentId, optimisticSessionConfigOptionOverrides]);

@@ -2,11 +2,14 @@ import * as React from 'react';
 
 import {
     buildAcpConfigOptionOverridesV1FromConfigOptions,
+    type AccountProfile,
     type FeatureDecision,
     type SessionAgentTransitionSelectionV1,
 } from '@happier-dev/protocol';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getAgentCore } from '@/agents/catalog/catalog';
+import { resolveNewSessionConnectedServicesBindingsForAgent } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import {
     APPLIED_RUNTIME_MARKER_ICON,
     APPLIED_RUNTIME_MARKER_RAIL_SIZE,
@@ -169,6 +172,9 @@ export type SessionAgentPickerTargetDetailContext = Readonly<{
     machineId: string | null;
     cwd: string | null;
     profileId?: string | null;
+    accountProfileConnectedServicesV2?: AccountProfile['connectedServicesV2'];
+    connectedServicesFeatureEnabled?: boolean;
+    accountGroupsFeatureEnabled?: boolean;
 }>;
 
 /**
@@ -853,6 +859,19 @@ export function useInSessionAgentPickerControls(
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,
                         profileId: params.detail.profileId ?? null,
+                        connectedServices: resolveNewSessionConnectedServicesBindingsForAgent({
+                            agentId: entry.providerAgentId,
+                            agentCore: getAgentCore(entry.providerAgentId),
+                            agentOptionState: null,
+                            accountProfileConnectedServicesV2: params.detail.accountProfileConnectedServicesV2 ?? [],
+                            settings: {
+                                connectedServicesProfileLabelByKey: params.detail.settings.connectedServicesProfileLabelByKey ?? {},
+                                connectedServicesDefaultProfileByServiceId: params.detail.settings.connectedServicesDefaultProfileByServiceId ?? {},
+                                connectedServicesDefaultAuthByAgentIdV1: params.detail.settings.connectedServicesDefaultAuthByAgentIdV1,
+                            },
+                            connectedServicesFeatureEnabled: params.detail.connectedServicesFeatureEnabled === true,
+                            accountGroupsFeatureEnabled: params.detail.accountGroupsFeatureEnabled === true,
+                        }).connectedServicesBindingsPayload,
                         settings: params.detail.settings,
                         // The same disclosure, told truthfully for this Session:
                         // an empty transcript has no conversation to carry, so the

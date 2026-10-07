@@ -1262,6 +1262,16 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
     }, [hasComposerAttentionRequests]);
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
+    const armedComposerTarget = resolveArmedComposerContinuation({
+        armedContinuationTarget: props.armedContinuationTarget,
+    });
+    const hasArmedComposerTarget = armedComposerTarget !== null;
+    // The engine mark names the armed Agent; running-runtime metadata remains source-owned.
+    const engineChipAgentId: AgentId = (
+        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
+            ? armedComposerTarget.agentId
+            : agentId
+    );
     const modelOptions = React.useMemo(() => {
         if (props.modelOptionsOverride) return props.modelOptionsOverride;
         return getModelOptionsForSession(agentId, props.metadata ?? null, { selectedModelId: props.modelMode });
@@ -1956,7 +1966,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const acpConfigOptionsOverrideProbe = props.acpConfigOptionsOverrideProbe ?? null;
 
     const sessionModeChipControl = React.useMemo(() => {
-        if (!props.onAcpSessionModeChange) return null;
+        if (hasArmedComposerTarget || !props.onAcpSessionModeChange) return null;
         if (sessionModePickerControl) {
             return {
                 options: sessionModePickerControl.options,
@@ -1979,6 +1989,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         }
         return null;
     }, [
+        hasArmedComposerTarget,
         preflightAcpSessionModeEffective.id,
         preflightAcpSessionModeEffective.name,
         preflightAcpSessionModeOptions,
@@ -2421,32 +2432,6 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         closeSelectionOverlay,
         toggleSelectionOverlay,
     });
-    /**
-     * The armed Agent switch, as the composer is presenting it right now.
-     *
-     * One owner, shared with the send control, so the chip and the button cannot
-     * name different Agents: the picker showing a checkmark on Sonnet 4.6 while
-     * the chip still read GPT 5.6 Sol is the defect this removes. The chip reads
-     * the arm itself — selection is the arming, so it changes with the rail rather
-     * than waiting for a keystroke — while the button additionally requires that
-     * pressing it would take the switch.
-     */
-    const armedComposerTarget = resolveArmedComposerContinuation({
-        armedContinuationTarget: props.armedContinuationTarget,
-    });
-    /**
-     * The mark on the engine chip: the armed Agent while one is armed, otherwise
-     * the Agent running this Session.
-     *
-     * Scoped to the chip on purpose. `agentId` above still resolves the RUNNING
-     * Agent, because permission modes, model options and session modes are facts
-     * about what is running — only this one control is about what runs next.
-     */
-    const engineChipAgentId: AgentId = (
-        armedComposerTarget && isAgentId(armedComposerTarget.agentId)
-            ? armedComposerTarget.agentId
-            : agentId
-    );
     const engineChipLabel = React.useMemo(() => {
         // Selection IS the selection. An armed target with a model chosen names
         // that model; an armed target still on the Agent's own defaults names the

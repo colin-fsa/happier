@@ -1,12 +1,14 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { getPermissionModeBadgeLabelForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
-import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
+import { installAgentInputAssetLoader, installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
 installAgentInputCommonModuleMocks({
+    // Armed submit presentation consumes translated strings, not mock parameter bags.
+    text: () => vi.importActual('@/text'),
     storage: async () => {
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
@@ -20,14 +22,12 @@ installAgentInputCommonModuleMocks({
     },
 });
 
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
-}));
-
 vi.mock('expo-image', () => ({ Image: 'Image' }));
 vi.mock('react-native-svg', () => ({ SvgXml: 'SvgXml' }));
 
 const { AgentInput } = await import('./AgentInput');
+
+beforeEach(installAgentInputAssetLoader);
 
 describe('AgentInput armed continuation controls', () => {
     it('keeps Session safety intent but removes the source runtime mode editor while another Agent is armed', async () => {
@@ -61,6 +61,8 @@ describe('AgentInput armed continuation controls', () => {
         expect(permission).not.toBeNull();
         expect(permission?.findAll((node) => node.props.children === getPermissionModeBadgeLabelForAgentType('claude', 'yolo')).length).toBeGreaterThan(0);
         expect(onModeChange).not.toHaveBeenCalled();
+        await screen.update(<AgentInput {...props} />);
+        expect(screen.findByTestId('agent-input-session-mode-chip-label:build')).not.toBeNull();
         await screen.unmount();
     });
 });
