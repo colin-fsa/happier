@@ -2594,6 +2594,8 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
   const handlePrepareTargetRaw = async (raw: unknown) => {
     const parsed = SessionHandoffPrepareTargetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
+    const canFallbackToServerRouted =
+      parsed.data.allowServerRoutedFallback !== false && params.machineTransferChannel !== undefined;
 
     const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
@@ -2664,7 +2666,9 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
         }
       }
 
-      if (parsed.data.allowServerRoutedFallback === false) {
+      // Reject known-unusable input before acknowledging a job, even when fallback is
+      // permitted by the caller but no server-routed transport exists on this machine.
+      if (!canFallbackToServerRouted) {
         const availability = resolveDirectPeerPrepareAvailability({
           request: parsed.data,
           directPeerRequesterAvailable: typeof params.directPeerTransfer?.requestPayloadFile === 'function',
@@ -2807,8 +2811,6 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           actualTransportStrategy = parsed.data.negotiatedTransportStrategy;
           const requestHandoffMetadataV2 = parsed.data.handoffMetadataV2;
           const requestResolvedHandoffMetadataV2 = requestHandoffMetadataV2;
-          const allowServerRoutedFallback = parsed.data.allowServerRoutedFallback !== false;
-          const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
           const directPeerRequester = params.directPeerTransfer?.requestPayloadFile;
           const localSourceExport =
             preflightLocalSourceExport ?? await sourceExportStore.load(parsed.data.handoffId);

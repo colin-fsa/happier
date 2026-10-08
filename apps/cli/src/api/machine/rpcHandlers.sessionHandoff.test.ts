@@ -38,6 +38,7 @@ import {
 import { createSessionHandoffSourceExportStore } from '../../session/handoff/state/sessionHandoffSourceExportStore';
 import { registerMachineSessionHandoffRpcHandlers } from './rpcHandlers.sessionHandoff';
 import { withJsonOwnerFileLock } from '../../utils/fs/jsonOwnerFileLock';
+import { configuration } from '@/configuration';
 
 type ExportSessionBundle = NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['exportSessionBundle']>;
 type DirectPeerRequestPayloadFile = NonNullable<
@@ -4493,6 +4494,17 @@ function createLoopbackMachineTransferChannels() {
 
   it('returns direct_peer_transfer_unavailable for direct-peer prepare payloads that omit endpoint candidates', async () => {
     const registered = new Map<string, (params: unknown) => Promise<any>>();
+    const handoffId = `handoff_missing_transfer_source_${randomUUID()}`;
+    const jobId = `prepare_${handoffId}`;
+    // A live competing runner prevents the background job from supplying a fast-path error.
+    // Unusable input must be rejected before any accepted job is persisted.
+    const leaseAttempt = await tryAcquireSessionHandoffPrepareTargetJobLease({
+      activeServerDir: configuration.activeServerDir,
+      jobId,
+      ownerId: 'test-competing-handoff-runner',
+      nowMs: Date.now(),
+    });
+    if (!leaseAttempt.acquired) throw new Error('Expected isolated handoff runner lease');
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: unknown) => Promise<any>) => {
         registered.set(method, handler);
@@ -4509,28 +4521,42 @@ function createLoopbackMachineTransferChannels() {
     });
 
     const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
+    const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
     expect(prepare).toBeDefined();
 
-    await expect(prepare!({
-      handoffId: 'handoff_missing_transfer_source',
-      sourceMachineId: 'machine_source',
-      targetMachineId: 'machine_target',
-      negotiatedTransportStrategy: 'direct_peer',
-      sourceSessionStorageMode: 'persisted',
-      targetPath: '/repo',
-      handoffMetadataV2: {
-        providerBundleTransferPublication: {
-          transferId: 'session-handoff:handoff_missing_transfer_source:provider-bundle-file',
-          sizeBytes: 0,
-          manifestHash: `sha256:${'0'.repeat(64)}`,
-          // Intentionally omit endpointCandidates to force `direct_peer_transfer_unavailable`.
+    try {
+      await expect(prepare!({
+        handoffId,
+        sourceMachineId: 'machine_source',
+        targetMachineId: 'machine_target',
+        negotiatedTransportStrategy: 'direct_peer',
+        sourceSessionStorageMode: 'persisted',
+        targetPath: '/repo',
+        handoffMetadataV2: {
+          providerBundleTransferPublication: {
+            transferId: buildSessionHandoffProviderBundleTransferId(handoffId),
+            sizeBytes: 0,
+            manifestHash: `sha256:${'0'.repeat(64)}`,
+            // Intentionally omit endpointCandidates to force `direct_peer_transfer_unavailable`.
+          },
         },
-      },
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'direct_peer_transfer_unavailable',
-      error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
-    });
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'direct_peer_transfer_unavailable',
+        error: 'Direct peer transfer is unavailable and server-routed fallback is disabled',
+      });
+      await expect(statusGet!({ handoffId })).resolves.toEqual({
+        ok: false,
+        errorCode: 'not_found',
+      });
+    } finally {
+      await releaseSessionHandoffPrepareTargetJobLease({
+        activeServerDir: configuration.activeServerDir,
+        jobId,
+        ownerId: 'test-competing-handoff-runner',
+        leaseId: leaseAttempt.lease.leaseId,
+      });
+    }
   });
 
   it('omits inline bundles from the start response when server-routed transport is already negotiated', async () => {
