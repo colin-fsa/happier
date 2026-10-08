@@ -72,6 +72,7 @@ import {
 import {
   normalizeSessionHandoffTargetPathForLocalMachine,
   resolveSessionHandoffLocalHomeDir,
+  resolveSessionHandoffLocalDirectory,
 } from '../../session/handoff/paths/sessionHandoffPathNormalization';
 import { createSessionHandoffSourceExportStore } from '../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
@@ -1406,6 +1407,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       protocolVersion: 2,
       atomicTargetResume: params.spawnSessionForHandoff !== undefined,
       targetCleanup: params.stopSessionForHandoff !== undefined,
+      sameMachineHandoff: params.spawnSessionForHandoff !== undefined && params.stopSessionForHandoff !== undefined,
     } as const;
   });
 
@@ -1574,7 +1576,11 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(handoffId);
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(handoffId));
     params.directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId }));
-    await sourceExportStore.releaseTransferFiles(handoffId);
+    const sourceExport = await sourceExportStore.load(handoffId);
+    // A local source export is still needed by source cleanup (including the reverse sync baseline).
+    if (!sourceExport?.sourceMachineId || sourceExport.sourceMachineId !== sourceExport.targetMachineId) {
+      await sourceExportStore.releaseTransferFiles(handoffId);
+    }
   };
   const loadRemoteSessionMetadata =
     params.loadSessionMetadata ??
@@ -1968,6 +1974,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const metadata = await loadSessionMetadata(parsed.data.sessionId, parsed.data.sourceMachineId);
     if (!metadata) {
       return { ok: false, errorCode: 'session_not_found' } as const;
+    }
+    if (parsed.data.sourceMachineId === parsed.data.targetMachineId) {
+      const targetDirectory = await resolveSessionHandoffLocalDirectory({ path: parsed.data.targetPath ?? '', homeDir: localHandoffHomeDir });
+      const sourceDirectory = await resolveSessionHandoffLocalDirectory({ path: typeof metadata.path === 'string' ? metadata.path : '', homeDir: localHandoffHomeDir });
+      if (!targetDirectory || !sourceDirectory || targetDirectory === sourceDirectory) {
+        return { ok: false, errorCode: 'invalid_target_path', error: 'Choose a different working directory for same-machine handoff' } as const;
+      }
     }
     const workspaceTransferValidation = validateSessionHandoffWorkspaceTransferSourcePath({
       metadata,
@@ -2955,6 +2968,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
 		            targetPath: normalizeSessionHandoffTargetPathForLocalMachine({
 		              requestedTargetPath: parsed.data.targetPath,
 		              homeDir: localHandoffHomeDir,
+		              rebaseSourceHome: parsed.data.sourceMachineId !== parsed.data.targetMachineId,
 		            }),
 		            workspaceTransfer: resolvedWorkspaceTransfer,
 		            metadata: persistedWorkspaceReplicationMetadata,
@@ -3295,15 +3309,29 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     const parsed = SessionHandoffAbortRequestV2Schema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
     const job = await prepareJobStore.findByHandoffId(parsed.data.handoffId);
+    const sourceExport = await sourceExportStore.load(parsed.data.handoffId);
+    const localSourceMatches = sourceExport?.sessionId === parsed.data.sessionId
+      && sourceExport.sourceMachineId !== undefined
+      && sourceExport.sourceMachineId === sourceExport.targetMachineId;
+    // The existing prepare runner writes v1 until target-resume ownership is admitted. During
+    // that stage the v1 abort owner already cancels preparation and preserves retry semantics.
+    if (localSourceMatches && job?.schemaVersion === 1) {
+      return rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, {
+        handoffId: parsed.data.handoffId, reason: parsed.data.reason,
+      });
+    }
+    const localSourceOnly = (!job || (job.schemaVersion === 2 && job.recordKind === 'source_only'))
+      && localSourceMatches;
     if (
-      !job || job.schemaVersion !== 2 || job.recordKind !== 'prepared_target'
+      !localSourceOnly && (!job || job.schemaVersion !== 2 || job.recordKind !== 'prepared_target'
       || job.sessionId !== parsed.data.sessionId
+      )
     ) return { ok: false, errorCode: 'invalid_persisted_job' } as const;
     const result = await createUnregisteredSessionHandoffAbortV2FoundationHandler({
       activeServerDir: configuration.activeServerDir,
       stopSessionForHandoff: params.stopSessionForHandoff,
     })({ handoffId: parsed.data.handoffId, reason: parsed.data.reason });
-    if (job.workspaceReplicationJobId) {
+    if (job?.workspaceReplicationJobId) {
       await workspaceReplicationAdapter.abortWorkspaceReplicationJob({
         activeServerDir: configuration.activeServerDir,
         jobId: job.workspaceReplicationJobId,
@@ -3327,7 +3355,13 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     });
     const persistedSourceExport = await sourceExportStore.load(parsed.data.handoffId);
     const currentStatus = persistedJob?.status;
-    if (persistedJob?.schemaVersion === 2) {
+    const sameMachine = persistedSourceExport?.sourceMachineId !== undefined
+      && persistedSourceExport.sourceMachineId === persistedSourceExport.targetMachineId;
+    const completedLocalTarget = mode === 'source_cleanup' && sameMachine
+      && persistedJob?.schemaVersion === 2 && persistedJob.recordKind === 'prepared_target'
+      && persistedJob.sessionId === persistedSourceExport?.sessionId
+      && persistedJob.terminal.status === 'completed' && persistedJob.resume.status === 'confirmed';
+    if (persistedJob?.schemaVersion === 2 && !completedLocalTarget) {
       return {
         ok: false,
         errorCode: 'upgrade_required',
@@ -3352,7 +3386,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
     }
 
     if (mode === 'source_cleanup') {
-      if (persistedSourceExport?.sessionId && params.stopSessionForHandoff) {
+      if (!sameMachine && persistedSourceExport?.sessionId && params.stopSessionForHandoff) {
         try {
           const stopResult = await params.stopSessionForHandoff(persistedSourceExport.sessionId);
           if (stopResult === 'failed') {
@@ -3430,7 +3464,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
       status: 'completed',
       phase: 'finalizing',
     };
-    if (persistedJob) {
+    if (persistedJob && persistedJob.schemaVersion !== 2) {
       await prepareJobStore.write(buildPrepareJobRecord({
         jobId: persistedJob.jobId,
         handoffId: parsed.data.handoffId,
@@ -3446,7 +3480,7 @@ export function registerMachineSessionHandoffRpcHandlers(params: Readonly<{
           },
         } : {}),
       }));
-    } else if (persistedSourceExport) {
+    } else if (!persistedJob && persistedSourceExport) {
       const completedAtMs = Date.now();
       const jobId = buildSourceExportOnlyPrepareJobId(parsed.data.handoffId);
       const durableStatus: SessionHandoffStatus = { ...status, jobId };

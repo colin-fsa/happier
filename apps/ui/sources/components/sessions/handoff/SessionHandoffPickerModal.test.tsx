@@ -57,40 +57,11 @@ function makeReadyTargetMachine(overrides: Record<string, unknown> = {}): Record
     };
 }
 
-vi.mock('@happier-dev/protocol', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
-    return {
-        ...actual,
-        getActionSpec: () => ({ id: 'session.handoff', title: 'session.handoff.title', description: 'session.handoff.description' }),
-        evaluateSessionHandoffWorkspaceTransferSourcePathSafety: (params: {
-            sourcePath?: string;
-            sourceHomeDir?: string;
-            fallbackSourceHomeDir?: string;
-        }) => {
-            const rawSourcePath = String(params?.sourcePath ?? '').trim();
-            if (!rawSourcePath) {
-                return { allowed: false, reasonCode: 'missing_source_path' };
-            }
-            if (rawSourcePath === '~' || rawSourcePath === '~/') {
-                return { allowed: false, reasonCode: 'path_is_home_directory' };
-            }
-            const isAbsolute = rawSourcePath.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(rawSourcePath) || /^(\\\\|\/\/)[^\\/]+[\\/][^\\/]+(?:[\\/].*)?$/.test(rawSourcePath);
-            if (!isAbsolute) {
-                return { allowed: false, reasonCode: 'path_is_not_absolute' };
-            }
-            const sourceHomeDir = String(params?.sourceHomeDir ?? '').trim() || String(params?.fallbackSourceHomeDir ?? '').trim();
-            const samePath = rawSourcePath === sourceHomeDir;
-            return samePath
-                ? { allowed: false, reasonCode: 'path_is_home_directory' }
-                : { allowed: true, reasonCode: null };
-        },
-    };
-});
-
 installSessionHandoffCommonModuleMocks({
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createStorageStoreStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
+            storage: createStorageStoreStub(() => ({ sessions: sessionsByIdState, machines: Object.fromEntries(allMachinesState.map((machine) => [machine.id, machine])) })),
             useMachineListByServerId: () => machineListByServerIdState,
             useMachineRecordValues: () => allMachinesState,
             useSessions: () => sessionsState,
@@ -131,14 +102,6 @@ vi.mock('@/components/ui/forms/Switch', () => ({
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/utils/sessions/recentMachines', () => ({
-    getRecentMachinesFromSessions: () => [],
-}));
-
-vi.mock('@/utils/sessions/machineUtils', () => ({
-    isMachineOnline: () => true,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -205,6 +168,52 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+
+    it.each([
+        { sourcePath: '~/projects/happier', homeDir: '/Users/tester', equivalentPath: '/Users/tester//projects/happier/', destinationPath: '/Users/tester/projects/happier/child' },
+        { sourcePath: '~\\projects/happier', homeDir: 'C:\\Users\\tester\\', equivalentPath: 'c:/users/TESTER/projects\\happier/', destinationPath: 'C:\\Users\\tester2\\projects\\happier' },
+    ])('requires a distinct explicit directory for same-machine handoff ($homeDir)', async ({ sourcePath, homeDir, equivalentPath, destinationPath }) => {
+        const sourceMachine = makeReadyTargetMachine({ id: 'machine_source', metadata: { homeDir } });
+        machineListByServerIdState.server_a.push(sourceMachine);
+        allMachinesState.push(sourceMachine);
+        sessionsByIdState.sess_1.metadata.path = sourcePath;
+        sessionsByIdState.sess_1.metadata.homeDir = homeDir;
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={(next) => { chrome = next; }}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_target"
+            serverId="server_a"
+        />);
+        const selector = screen.tree.findByType('MachineSelector' as any);
+        expect(selector.props.machines).toContainEqual(sourceMachine);
+        expect(selector.props.recentMachines).toContainEqual(sourceMachine);
+        await act(async () => { invokeTestInstanceHandler(selector, 'onSelect', sourceMachine); });
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
+        expect(start().props.disabled).toBe(true);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', equivalentPath); });
+        expect(start().props.disabled).toBe(true);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath); });
+        expect(start().props.disabled).toBe(false);
+        expect(screen.tree.findByType('Switch' as any).props.value).toBe(false);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith({ targetMachineId: 'machine_source', targetPath: destinationPath, targetSessionStorageMode: 'persisted' });
+        onResolve.mockClear();
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType('Switch' as any), 'onValueChange', true); });
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath + '/other'); });
+        expect(screen.tree.findByType('Switch' as any).props.value).toBe(true);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ workspaceTransfer: expect.objectContaining({ enabled: true, strategy: 'transfer_snapshot' }) }));
     });
 
     it('does not load the target path browser until the user asks to choose a directory', async () => {
@@ -613,11 +622,12 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.machines).toEqual([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
 
-    it('prefers the current session machineId over a divergent sourceMachineId prop when filtering picker targets', async () => {
+    it('keeps both machines selectable when the sourceMachineId prop differs from the current session', async () => {
         sessionsByIdState = {
             sess_1: {
                 id: 'sess_1',
@@ -663,6 +673,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.machines).toEqual([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -862,6 +873,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType('MachineSelector' as any);
         expect(machineSelector.props.machines).toEqual([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -893,19 +905,13 @@ describe('SessionHandoffPickerModal', () => {
         vi.useRealTimers();
     });
 
-    it('keeps retrying machine refresh until a second online machine becomes visible', async () => {
+    it('keeps retrying machine refresh until a machine becomes visible', async () => {
         vi.useFakeTimers();
         credentialsReady = true;
 
         let refreshCount = 0;
-        machineListByServerIdState = {
-            server_a: [
-                { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
-            ],
-        };
-        allMachinesState = [
-            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
-        ];
+        machineListByServerIdState = { server_a: [] };
+        allMachinesState = [];
         refreshMachinesThrottledMock.mockImplementation(async () => {
             refreshCount += 1;
             if (refreshCount >= 2) {
@@ -951,7 +957,7 @@ describe('SessionHandoffPickerModal', () => {
 
         expect(refreshMachinesThrottledMock.mock.calls.length).toBeGreaterThanOrEqual(2);
         const machineSelector = tree.findByType('MachineSelector' as any);
-        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_target']);
+        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_source', 'machine_target']);
 
         vi.useRealTimers();
     });

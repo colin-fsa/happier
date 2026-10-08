@@ -74,6 +74,39 @@ function createHarness(overrides: Partial<Parameters<typeof createSessionHandoff
 }
 
 describe('sessionHandoffCoordinator', () => {
+  it('admits a local move only on a daemon that advertises same-machine lifecycle support', async () => {
+    const input = { ...baseInput, targetMachineId: baseInput.sourceMachineId, targetPath: '/workspace/my-app' };
+    const old = createHarness();
+    await expect(old.coordinator.admit(input)).rejects.toThrow('same-machine');
+    expect(old.port.startSource).not.toHaveBeenCalled();
+    const local = createHarness({ probeTargetCapability: async () => ({ protocolVersion: 2, atomicTargetResume: true, targetCleanup: true, sameMachineHandoff: true }) });
+    const result = await (await local.coordinator.admit(input)).execute({ update: local.update });
+    expect(result).toMatchObject({ ok: true });
+    expect(local.port.startSource).toHaveBeenCalledWith(expect.objectContaining({ targetPath: input.targetPath }));
+  });
+
+  it('cancels a same-machine handoff through a single daemon abort after source start', async () => {
+    const controller = new AbortController();
+    const local = createHarness({
+      probeTargetCapability: async () => ({ protocolVersion: 2, atomicTargetResume: true, targetCleanup: true, sameMachineHandoff: true }),
+      startSource: async () => { controller.abort(); return readyStart(); },
+    });
+    const admitted = await local.coordinator.admit({ ...baseInput, targetMachineId: baseInput.sourceMachineId, targetPath: '/workspace/my-app' });
+    await expect(admitted.execute({ update: local.update, signal: controller.signal })).resolves.toEqual({ kind: 'cancelled' });
+    expect(local.port.abortTarget).toHaveBeenCalledOnce();
+    expect(local.port.abortSource).not.toHaveBeenCalled();
+  });
+
+  it('uses local bundle reuse when no machine-transfer carrier is enabled', async () => {
+    const local = createHarness({
+      probeTargetCapability: async () => ({ protocolVersion: 2, atomicTargetResume: true, targetCleanup: true, sameMachineHandoff: true }),
+      readServerFeatures: async () => FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, handoff: { enabled: true } }, machines: { enabled: true, transfer: { enabled: false } } }, capabilities: {} }),
+      directPeerAvailable: false,
+    });
+    const result = await (await local.coordinator.admit({ ...baseInput, targetMachineId: baseInput.sourceMachineId, targetPath: '/workspace/my-app' })).execute({ update: local.update });
+    expect(result).toMatchObject({ ok: true });
+  });
+
   it('admits capability before source mutation and runs the complete existing primitive sequence', async () => {
     const { coordinator, port, calls, update } = createHarness();
     const admitted = await coordinator.admit(baseInput);
