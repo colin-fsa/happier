@@ -21,6 +21,7 @@ const RESULT_REQUIRED_BLOCKING_ACTION_IDS = [
   'session.status.get',
   'session.work_state.get',
   'session.goal.get',
+  'session.goal.clear',
   'session.terminalComposer.clear',
   'session.pendingInput.interruptAndRun',
   'session.usageLimit.checkNow',
@@ -59,7 +60,6 @@ const RESULT_NONE_DEFERRED_ACTION_IDS = [
   'session.permission_mode.set',
   'session.model.set',
   'session.goal.set',
-  'session.goal.clear',
   'session.usageLimit.waitResume.enable',
   'session.usageLimit.waitResume.cancel',
   'session.archive',
@@ -572,7 +572,7 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.work_state.get' as any).bindings?.mcpToolName).toBe('session_work_state_get');
     expect(getActionSpec('session.goal.get' as any).approval).toEqual({ result: 'required' });
     expect(getActionSpec('session.goal.set' as any).approval).toEqual({ result: 'none' });
-    expect(getActionSpec('session.goal.clear' as any).approval).toEqual({ result: 'none' });
+    expect(getActionSpec('session.goal.clear').approval).toEqual({ result: 'required' });
     expect(getActionSpec('session.vendor_plugin_catalog.list' as any).bindings?.mcpToolName).toBe('session_vendor_plugin_catalog_list');
     expect(getActionSpec('session.skill_catalog.list' as any).bindings?.mcpToolName).toBe('session_skill_catalog_list');
   });

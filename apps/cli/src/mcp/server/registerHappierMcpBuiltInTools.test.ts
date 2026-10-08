@@ -67,6 +67,13 @@ describe('registerHappierMcpBuiltInTools', () => {
     }).success).toBe(true);
     expect(memoryWindowSchema?.safeParse?.({ seqFrom: 1, seqTo: 2 }).success).toBe(false);
     expect(memoryWindowSchema?.safeParse?.({ sessionId: 'historical', seqFrom: 1, seqTo: 2 }).success).toBe(true);
+    expect(registrations.get('session_goal_get')?.inputSchema?.safeParse?.({}).success).toBe(true);
+    expect(registrations.get('session_goal_clear')?.inputSchema?.safeParse?.({}).success).toBe(true);
+    const goalSetSchema = registrations.get('session_goal_set')?.inputSchema;
+    expect(goalSetSchema?.safeParse?.({ objective: 'Replace blocked goal' }).success).toBe(true);
+    expect(goalSetSchema?.safeParse?.({ status: 'paused' }).success).toBe(true);
+    expect(goalSetSchema?.safeParse?.({ tokenBudget: null }).success).toBe(true);
+    expect(goalSetSchema?.safeParse?.({}).success).toBe(false);
   });
 
   it('derives approval origin metadata from MCP tool call context for session-agent tools', async () => {
