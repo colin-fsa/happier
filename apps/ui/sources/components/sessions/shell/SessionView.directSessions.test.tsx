@@ -211,6 +211,7 @@ const storageState = vi.hoisted(() => ({
   profile: {
     connectedServicesV2: [],
   } as any,
+  profileScope: null as { serverId: string; accountId: string } | null,
   settings: {} as Record<string, unknown>,
   sessionListViewDataByServerId: {} as Record<string, unknown>,
   sessionPending: {} as Record<string, any>,
@@ -522,29 +523,33 @@ vi.mock('@/voice/session/voiceSession', () => ({
   voiceSessionManager: {},
 }));
 
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    markSessionViewed: async () => {},
-    fetchPendingMessages: async () => {},
-    publishSessionPermissionModeToMetadata: async () => {},
-    publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
-    publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
-    publishSessionModelOverrideToMetadata: async () => {},
-    materializeExistingSessionDraft: async () => {},
-    ensureSessionVisibleForMessageRoute: async () => ({ kind: 'available' }),
-    refreshSessions: syncRefreshSessionsSpy,
-    refreshSessionMessages: syncRefreshSessionMessagesSpy,
-    refreshSessionForSubmit: async (sessionId: string) =>
-      storageState.sessions[sessionId as keyof typeof storageState.sessions] ?? null,
-    onSessionVisible: () => {},
-    markSessionLiveTailIntent: () => {},
-    sendMessage: syncSubmitMessageSpy,
-    enqueuePendingMessage: async () => {},
-    submitMessage: syncSubmitMessageSpy,
-    encryption: { getMachineEncryption: () => null },
-    onSessionViewportChange: () => {},
-  },
-}));
+vi.mock('@/sync/sync', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/sync/sync')>();
+  return {
+    sync: {
+      markSessionViewed: async () => {},
+      fetchPendingMessages: async () => {},
+      publishSessionPermissionModeToMetadata: async () => {},
+      publishNextPromptPermissionModeAfterAdmission: actual.sync.publishNextPromptPermissionModeAfterAdmission.bind(actual.sync),
+      publishSessionAcpSessionModeOverrideToMetadata: publishSessionAcpSessionModeOverrideToMetadataSpy,
+      publishSessionAcpConfigOptionOverrideToMetadata: publishSessionAcpConfigOptionOverrideToMetadataSpy,
+      publishSessionModelOverrideToMetadata: async () => {},
+      materializeExistingSessionDraft: async () => {},
+      ensureSessionVisibleForMessageRoute: async () => ({ kind: 'available' }),
+      refreshSessions: syncRefreshSessionsSpy,
+      refreshSessionMessages: syncRefreshSessionMessagesSpy,
+      refreshSessionForSubmit: async (sessionId: string) =>
+        storageState.sessions[sessionId as keyof typeof storageState.sessions] ?? null,
+      onSessionVisible: () => {},
+      markSessionLiveTailIntent: () => {},
+      sendMessage: syncSubmitMessageSpy,
+      enqueuePendingMessage: async () => {},
+      submitMessage: syncSubmitMessageSpy,
+      encryption: { getMachineEncryption: () => null },
+      onSessionViewportChange: () => {},
+    },
+  };
+});
 vi.mock('@/sync/ops', async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
@@ -683,6 +688,9 @@ describe('SessionView (direct sessions)', () => {
     async function submitSwitch(screen: Awaited<ReturnType<typeof renderSessionView>>) {
       await selectAgent(screen, 'claude');
       await act(async () => { findAgentInput(screen).props.onChangeText('switch and send this'); });
+      const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+      expect(getActiveServerAccountScope()).toEqual(operationAccountScope);
+      expect(findAgentInput(screen).props.value).toBe('switch and send this');
       await act(async () => { await findAgentInput(screen).props.onSend(); });
       await settleDirectSessionView();
       const dispatch = actionOperationRpcSpy.mock.calls.find(([params]) => (
@@ -728,6 +736,12 @@ describe('SessionView (direct sessions)', () => {
         metadata: { host: 'happy-host', homeDir: '/tmp', platform: 'darwin' },
       };
       actionOperationRpcSpy.mockImplementation(async (params: { method: string; payload: unknown }) => {
+        if (params.method === RPC_METHODS.CAPABILITIES_DETECT) {
+          return { protocolVersion: 1, results: {
+            'tool.sessionAgentTransition': { ok: true, checkedAt: 1,
+              data: { supportsInputPermissionIntent: true } },
+          } };
+        }
         if (params.method === RPC_METHODS.SESSION_CONTINUATION_INSPECT_BATCH) {
           const request = SessionContinuationInspectionBatchRequestV1Schema.parse(params.payload);
           return { v: 1, inspections: request.selections.map(() => ({
@@ -808,8 +822,12 @@ describe('SessionView (direct sessions)', () => {
 
   async function publishStorageFixture() {
     const { storage } = await import('@/sync/domains/state/storage');
+    // Bind after module setup: imperative scope guards and hooks share this store.
+    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+    registerStorageStateReader(storage.getState);
     storage.setState({
       ...storageState,
+      profileScope: operationAccountScope,
       settings: storage.getState().settings,
       sessionListViewDataByServerId: storage.getState().sessionListViewDataByServerId,
       sessions: { ...storageState.sessions },

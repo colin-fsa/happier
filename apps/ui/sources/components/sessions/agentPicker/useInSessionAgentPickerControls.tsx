@@ -295,7 +295,7 @@ export type InSessionAgentPickerControls = Readonly<{
      */
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
-    /** Clears exactly the persisted submission that canonical custody consumed. */
+    /** Spends the matching live and persisted submission once canonical custody consumes it. */
     clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /** Captures the exact canonical user-message request before transition dispatch. */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
@@ -602,19 +602,22 @@ export function useInSessionAgentPickerControls(
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
 
-    // The one way a retained submission leaves the draft. Clearing an arm keeps
-    // it on purpose, so this is what ends its custody once SessionView has
-    // seen canonical custody of its localId. The localId is the comparison:
-    // one is recorded per transition, and a newer arm never carries it.
+    // Custody spends both projections of the same submission, even before the
+    // target metadata arrives. Ordinary disarming retains submitted custody;
+    // this compare-clear is its sole spending owner and preserves a newer arm.
     const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
         expected: SessionArmedAgentContinuationSubmission,
     ): boolean => {
-        if (draftSessionId === null) {
-            return armed?.submission?.localId === expected.localId;
+        const persisted = draftSessionId === null
+            ? undefined
+            : readPersistedArmedContinuation(accountScope, draftSessionId);
+        const persistedMatches = persisted?.submission?.localId === expected.localId;
+        const liveMatches = armed?.submission?.localId === expected.localId;
+        if (!persistedMatches && !liveMatches) return false;
+        if (persistedMatches && draftSessionId !== null) {
+            clearPersistedArmedContinuation(accountScope, draftSessionId);
         }
-        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
-        if (persisted?.submission?.localId !== expected.localId) return false;
-        clearPersistedArmedContinuation(accountScope, draftSessionId);
+        setArmed((current) => current?.submission?.localId === expected.localId ? null : current);
         return true;
     }, [accountScope, armed?.submission?.localId, draftSessionId]);
 

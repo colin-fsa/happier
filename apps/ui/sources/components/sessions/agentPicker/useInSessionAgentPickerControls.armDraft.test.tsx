@@ -260,7 +260,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
     it('leaves the persisted arm unsubmitted when a legacy daemon cannot transfer permission intent', async () => {
         const hook = await renderControls();
-        await armTarget(hook, 'builtInAgent:codex');
+        await armTarget(hook, 'agent:codex');
         const localId = hook.getCurrent().armedContinuationLocalId;
         if (!localId) throw new Error('Expected an armed continuation identity');
         const input = { localId, text: 'continue', meta: { permissionMode: 'yolo' } };
@@ -444,7 +444,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
     // custody has consumed that localId the snapshot must go with it: left
     // behind, the picker offered only models after every successful switch,
     // across reloads, until an unrelated ordinary send cleared the whole draft.
-    it('offers the other Agents again once canonical custody consumes the submitted switch', async () => {
+    it.each([false, true])('offers the other Agents again once custody consumes the switch (target metadata landed: %s)', async (targetMetadataLanded) => {
         const hook = await renderControls();
         await armTarget(hook, 'agent:codex');
         const submittedLocalId = hook.getCurrent().armedContinuationLocalId as string;
@@ -465,14 +465,16 @@ describe('useInSessionAgentPickerControls arm draft', () => {
             expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
         });
 
-        // The daemon admitted the switch: Codex now runs the Session.
-        await hook.rerender({
-            currentAgentId: 'codex',
-            source: { ...supportedSource, currentBackendTargetKey: 'agent:codex' },
-        });
+        // Custody can arrive before the target runtime's metadata projection.
+        if (targetMetadataLanded) {
+            await hook.rerender({
+                currentAgentId: 'codex',
+                source: { ...supportedSource, currentBackendTargetKey: 'agent:codex' },
+            });
+        }
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
-        expect(readTargetOptionIds(hook)).toEqual([]);
+        if (targetMetadataLanded) expect(readTargetOptionIds(hook)).toEqual([]);
 
         await act(async () => {
             expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
@@ -481,7 +483,9 @@ describe('useInSessionAgentPickerControls arm draft', () => {
 
         expect(readPersistedArm()).toBeUndefined();
         expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
-        expect(readTargetOptionIds(hook)).toEqual(['agent:claude']);
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
+        expect(readTargetOptionIds(hook)).toEqual([targetMetadataLanded ? 'agent:claude' : 'agent:codex']);
     });
 
     it('leaves a newer arm alone when custody consumes the submission it replaced', async () => {
