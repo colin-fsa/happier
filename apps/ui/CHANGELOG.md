@@ -126,9 +126,14 @@ Opening and sharing use a cached copy, not a permanent saved download. Use **Sav
 - Modal lists keep their content height instead of collapsing inside a card.
 - Pet tiles stay inside narrow panes.
 - The desktop **Updates** button now sits next to back and forward navigation.
-- When you choose another Agent to continue a session, the composer shows that Agent's requested account defaults, and its model picker uses the configured connected account. The running Agent's mode and MCP controls are hidden while the switch is selected.
+- When you choose another Agent to continue a session, the composer shows that Agent's requested account defaults and permission choices, and its model picker uses the configured connected account. The running Agent's model, mode, configuration and MCP controls are hidden while the switch is selected.
+- With permission changes set to apply on the next prompt, continuing with another Agent carries the permission choice selected for that message. If an older daemon lacks support, or support cannot be confirmed, your draft and selected Agent stay available. A newer permission choice remains pending for a later prompt.
 - Messages sent with attachments to a replacement Agent retain that Agent's selected reasoning settings.
-- Claude terminal sessions now wait for a slow prompt paste to finish before submitting it, and stop waiting once the prompt is accepted, its queued message is canceled, or the session stops.
+- Claude terminal sessions now wait for a slow prompt paste to finish before submitting it, and stop waiting once the prompt is accepted, its queued message is canceled, or the session stops. An accepted prompt stays successful even if Happier cannot read the terminal to check the paste.
+- Linux Agent launches respect an inherited lower scheduling priority, avoiding launch failures when Happier cannot raise it.
+- If desktop setup fails, the headline names the failed step when it is known.
+- If Happier already knows it cannot fetch the session for a direct handoff, it refuses the handoff immediately instead of accepting it and failing later.
+- After switching Agents, you can choose another Agent again, including after reopening the session. A newer draft or Agent choice is preserved when the earlier switch finishes.
 
 ### Thank you
 
@@ -136,6 +141,7 @@ Opening and sharing use a cached copy, not a permanent saved download. Use **Sav
 - [@clemenssautter-ai](https://github.com/clemenssautter-ai) for `session send --local-id` and Codex hook continuity in [#436](https://github.com/happier-dev/happier/pull/436) and [#442](https://github.com/happier-dev/happier/pull/442).
 - [@Nul-led](https://github.com/Nul-led) for Android video preview and file actions in [#487](https://github.com/happier-dev/happier/pull/487).
 - [@sergedc](https://github.com/sergedc) for selectable AI option text in [#500](https://github.com/happier-dev/happier/pull/500).
+- [@AmT42](https://github.com/AmT42) for restoring Agent choices after a session switch in [#499](https://github.com/happier-dev/happier/pull/499).
 
 Thank you also to [@fredericrous](https://github.com/fredericrous) and [@emcp-dev](https://github.com/emcp-dev) for the adopted Mac and Windows installation diagnoses; [@TomySpagnoletti](https://github.com/TomySpagnoletti) for desktop pairing and shared account configuration; [@karolzlot](https://github.com/karolzlot) for terminal recovery; [@Kunde21](https://github.com/Kunde21) for Pi installation detection; [@alfdupont](https://github.com/alfdupont), [@wcollani](https://github.com/wcollani) and [@hazem3500](https://github.com/hazem3500) for Agent controls and authentication fixes; and Ash Berlin-Taylor for Codex direct-session attachment. Their incorporated contributions are credited in the relevant commits.
 
