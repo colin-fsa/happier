@@ -71,6 +71,16 @@ stable release:              stage:preview -> stage:stable
 
 Issues labeled after a snapshot wait for the next matching release. Failed or dry-run releases move nothing. A nightly resume or a manually selected non-`dev` source also moves nothing because its older candidate cannot safely represent the current source queue. Reconciliation is idempotent, preserves unrelated labels, tolerates an add-before-remove partial retry, and skips closed issues or issues whose stage was manually changed. It never comments, closes, reopens, assigns, or edits other fields.
 
+The pinned-candidate release-control follow-up bounds normal release snapshots
+to the exact pre-promotion target-base-to-candidate commit range, intersected
+with the still-open stage queue. Only issues named in a correction commit's
+`Refs`, `Fixes`, `Closes` or `Resolves` line qualify; qualified references must
+name this repository. Later dev commits and issues without a range reference
+remain queued. Preview uses the preview base, production the main base, and
+the combined release captures main-to-candidate once before either channel
+promotes. Current-dev nightlies retain their existing whole-queue contract.
+This follow-up is not available until its workflow controls are integrated.
+
 This also covers a channel bypass: a preview release can move a still-`stage:source` issue directly to `stage:preview`, and an authorized direct `dev` → `main` release can move any snapshotted earlier-stage issue to `stage:stable`. Higher-channel availability subsumes the skipped lower channel; it does not require a synthetic lower-channel release.
 
 The workflow's job-scoped token is a narrow pre-authorized exception to interactive GitHub mutation authority. It covers only these forward, pre-bound stage transitions after the owning release verifier succeeds. Interactive agents still use `.agents/skills/happier-github-ops` with either exact authorization or an explicit bounded standing grant for every other mutation.

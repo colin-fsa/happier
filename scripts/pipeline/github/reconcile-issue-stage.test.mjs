@@ -44,6 +44,35 @@ test('source snapshot paginates open issues and excludes pull requests', async (
   assert.equal(requests[0].init.headers.authorization, 'Bearer test-token');
 });
 
+test('candidate snapshots intersect the stage queue with references in the exact paginated release range', async () => {
+  const baseSha = 'a'.repeat(40);
+  const candidateSha = 'b'.repeat(40);
+  const compareUrl = `https://api.github.test/repos/happier-dev/happier/compare/${baseSha}...${candidateSha}?per_page=100`;
+  const requests = [];
+  const issues = await snapshotOpenIssueNumbers({
+    repository: 'happier-dev/happier', fromStage: 'stage:source', token: 'test-token',
+    baseSha, candidateSha, apiBaseUrl: 'https://api.github.test',
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      if (String(url).includes('/issues?')) return jsonResponse([{ number: 12 }, { number: 14 }, { number: 18 }, { number: 19 }]);
+      if (String(url) === compareUrl) return jsonResponse({
+        commits: [{ commit: { message: 'fix(cli): correction\n\nRefs #12, happier-dev/happier#14\nFixes other/project#18\nDiscussion of #19' } }],
+      }, { headers: { link: `<${compareUrl}&page=2>; rel="next"` } });
+      assert.equal(String(url), `${compareUrl}&page=2`);
+      return jsonResponse({ commits: [{ commit: { message: 'fix(ui): correction\n\nFixes https://github.com/happier-dev/happier/issues/14' } }] });
+    },
+  });
+  assert.deepEqual(issues, [12, 14], 'later fixes and references to another repository cannot advance');
+  assert.ok(requests.includes(compareUrl));
+  assert.ok(requests.includes(`${compareUrl}&page=2`));
+});
+
+test('candidate snapshots reject partial or malformed range inputs instead of taking the whole queue', async () => {
+  const input = { repository: 'happier-dev/happier', fromStage: 'stage:source', token: 'test-token', fetchImpl: async () => jsonResponse([{ number: 12 }]) };
+  await assert.rejects(snapshotOpenIssueNumbers({ ...input, candidateSha: 'a'.repeat(40) }), /range|base/i);
+  await assert.rejects(snapshotOpenIssueNumbers({ ...input, baseSha: 'main', candidateSha: 'a'.repeat(40) }), /SHA/i);
+});
+
 test('stage advancement re-reads targets and mutates only still-open issues at the expected stage', async () => {
   const mutations = [];
   const issues = new Map([

@@ -279,6 +279,7 @@ jobs:
       source_sha: ${{ steps.source.outputs.authorized_sha }}
       source_ref: ${{ steps.dispatch.outputs.source_ref }}
       base_ref: ${{ steps.dispatch.outputs.base_ref }}
+      base_sha: ${{ steps.issue_base.outputs.authorized_sha }}
       validation_profile: ${{ steps.profile.outputs.profile }}
       checks_profile: ${{ steps.profile.outputs.checks_profile }}
     steps:
@@ -335,6 +336,7 @@ jobs:
           fi
           args=(
             --source-ref "$source_ref"
+            --allow-source-ancestor
             --remote origin
             --github-output "$GITHUB_OUTPUT"
           )
@@ -342,6 +344,14 @@ jobs:
             args+=(--authorized-sha "$AUTHORIZED_PROMOTION_SOURCE_SHA")
           fi
           node scripts/pipeline/github/resolve-authorized-release-source.mjs "${args[@]}"
+      - name: Bind issue snapshot base before promotion
+        id: issue_base
+        env:
+          BASE_REF: ${{ steps.dispatch.outputs.base_ref }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "refs/heads/$BASE_REF" --remote origin --github-output "$GITHUB_OUTPUT"
       - name: Record explicit maintainer overrides
         if: ${{ inputs.waive_ci == true || inputs.waive_validation_suites != '' }}
         env:
@@ -370,7 +380,7 @@ jobs:
 
   snapshot_release_issues:
     name: Snapshot issues eligible for this channel release
-    needs: [release_actor_guard]
+    needs: [release_actor_guard, release_preflight]
     if: ${{ inputs.combined_preview_production != true }}
     continue-on-error: true
     runs-on: ubuntu-latest
@@ -400,6 +410,8 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ needs.release_preflight.outputs.base_sha }}
+          CANDIDATE_SHA: ${{ needs.release_preflight.outputs.source_sha }}
           INCLUDE_DEVELOPMENT_STAGES: ${{ inputs.environment == 'preview' || (inputs.environment == 'production' && (inputs.confirm == 'release dev to main' || inputs.confirm == 'reset main from dev')) }}
           INCLUDE_PREVIEW_STAGE: ${{ inputs.environment == 'production' && (inputs.confirm == 'release preview to main' || inputs.confirm == 'reset main from preview') }}
         run: |
@@ -415,11 +427,11 @@ jobs:
           dev_issues_json="[]"
           preview_issues_json="[]"
           if [ "$INCLUDE_DEVELOPMENT_STAGES" = "true" ]; then
-            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source")"
-            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev")"
+            source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:source" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
+            dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:dev" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
           fi
           if [ "$INCLUDE_PREVIEW_STAGE" = "true" ]; then
-            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview")"
+            preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage "stage:preview" --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
           fi
           echo "source_issues_json=$source_issues_json" >> "$GITHUB_OUTPUT"
           echo "dev_issues_json=$dev_issues_json" >> "$GITHUB_OUTPUT"
@@ -1700,3 +1712,4 @@ jobs:
       dry_run: false
       allow_reset: false
       confirm: promote dev from main
+      preserve_target_descendant: true

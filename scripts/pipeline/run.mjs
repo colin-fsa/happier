@@ -4167,6 +4167,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           mode: { type: 'string' },
           confirm: { type: 'string', default: '' },
           'allow-reset': { type: 'string', default: 'false' },
+          'preserve-target-descendant': { type: 'boolean', default: false },
           'summary-file': { type: 'string', default: '' },
           'allow-dirty': { type: 'string', default: 'false' },
           'dry-run': { type: 'boolean', default: false },
@@ -4236,6 +4237,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         mode,
         '--allow-reset',
         allowReset || 'false',
+        ...(values['preserve-target-descendant'] === true ? ['--preserve-target-descendant'] : []),
         '--confirm',
         confirm,
         ...(summaryFile ? ['--summary-file', summaryFile] : []),
@@ -4515,6 +4517,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 ? authorizedPromotionSourceSha
                 : `refs/heads/${promotionSourceBranch}`,
               authorizedSha: authorizedPromotionSourceSha,
+              allowSourceAncestor: true,
             });
 
           if (jsonOutput) {

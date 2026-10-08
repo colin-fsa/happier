@@ -3,6 +3,7 @@
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { resolveAuthorizedReleaseSource } from './resolve-authorized-release-source.mjs';
 
 const FULL_GIT_SHA = /^[a-f0-9]{40}$/;
 
@@ -150,7 +151,7 @@ function appendSummary(filePath, markdown) {
   fs.appendFileSync(filePath, markdown, 'utf8');
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
     options: {
       source: { type: 'string' },
@@ -159,6 +160,7 @@ function main() {
       mode: { type: 'string' },
       'dry-run': { type: 'boolean', default: false },
       'allow-reset': { type: 'string', default: 'false' },
+      'preserve-target-descendant': { type: 'boolean', default: false },
       confirm: { type: 'string', default: '' },
       'summary-file': { type: 'string', default: '' },
     },
@@ -220,10 +222,16 @@ function main() {
     return;
   }
 
-  const sourceSha = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim().toLowerCase();
-  if (!dryRun && sourceSha !== authorizedSourceSha) {
-    fail(`Source branch did not match the authorized SHA: ${source}.`);
-  }
+  const assertSourceStillAuthorized = () => resolveAuthorizedReleaseSource({
+    repoRoot: process.cwd(),
+    remoteUrl: 'origin',
+    sourceRef: `refs/heads/${source}`,
+    authorizedSha: authorizedSourceSha,
+    allowSourceAncestor: true,
+  });
+  const sourceSha = dryRun
+    ? run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv, dryRun }).trim().toLowerCase()
+    : (await assertSourceStillAuthorized()).sha;
   const mutationSourceSha = authorizedSourceSha || sourceSha;
 
   const compareApi = repo
@@ -272,6 +280,13 @@ function main() {
 
   if (mode === 'fast_forward') {
     const status = String(compare.status ?? '').trim();
+    // Syncing a published release back to dev must retain later dev commits.
+    // Release destinations do not opt in: they must equal the candidate.
+    if (!dryRun && status === 'behind' && values['preserve-target-descendant'] === true) {
+      console.log(`[pipeline] ${target} already contains the authorized source SHA; preserving newer target commits.`);
+      appendSummary(summaryFile, '- result: `candidate already included; newer target preserved`\n\n');
+      return;
+    }
     if (!dryRun && status !== 'ahead' && status !== 'identical') {
       fail(`Cannot fast-forward: compare status is '${status}'. Use mode=reset or resolve divergence first.`);
     }
@@ -281,20 +296,11 @@ function main() {
 
   if (!repo) fail('Missing repo for update operation.');
 
-  const assertSourceStillAuthorized = () => {
-    const sourceShaImmediatelyBeforeMutation = run('gh', ['api', sourceRefApi, '--jq', '.object.sha'], { env: ghEnv })
-      .trim()
-      .toLowerCase();
-    if (sourceShaImmediatelyBeforeMutation !== mutationSourceSha) {
-      fail('Source branch changed after authorization; refusing to mutate the target branch.');
-    }
-  };
-
   const updateApi = `repos/${repo}/git/refs/heads/${target}`;
   const force = mode === 'reset';
 
   try {
-    assertSourceStillAuthorized();
+    await assertSourceStillAuthorized();
     run('gh', ['api', '-X', 'PATCH', updateApi, '-F', `sha=${mutationSourceSha}`, '-F', `force=${force}`], { env: ghEnv });
   } catch (err) {
     if (!isGhNotFoundError(err)) {
@@ -303,11 +309,11 @@ function main() {
 
     // If ref doesn't exist yet, create it.
     const createApi = `repos/${repo}/git/refs`;
-    assertSourceStillAuthorized();
+    await assertSourceStillAuthorized();
     run('gh', ['api', '-X', 'POST', createApi, '-f', `ref=refs/heads/${target}`, '-f', `sha=${mutationSourceSha}`], {
       env: ghEnv,
     });
   }
 }
 
-main();
+main().catch((error) => fail(error instanceof Error ? error.message : String(error)));

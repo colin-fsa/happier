@@ -150,6 +150,33 @@ normal dispatcher.
 The profile contract describes self-hosted independent upgrade evidence; it
 does not require a fleet wait, global cutover, or synchronized deployment.
 
+### Preparing a pinned candidate (release-control follow-up)
+
+The follow-up conductor implementation accepts
+`hmaint release prepare --source-sha <full-40-character-sha>` alongside the
+existing prepare options. Omitting it selects the current source-branch tip.
+The selected commit must exist in the target repository and be reachable from
+the source branch. Later merges do not replace the saved candidate: revalidation,
+exact-SHA CI evidence (or the existing explicit waiver), promotion and resume
+continue using that SHA. Including newer work requires a new prepare operation.
+This source selection is separate from workflow-control authorization.
+
+Promotion fast-forwards the target branch to the candidate itself. A target
+already ahead of, or divergent from, that candidate still fails the existing
+fast-forward guard. Synchronizing a published candidate back into development
+is different: it preserves newer dev commits when dev already contains the
+candidate, but still rejects divergent history. Only this synchronization caller
+opts in; preview/main destinations remain exact. Post-promotion candidate
+binding and immutable publication keep their exact-equality checks.
+
+Normal release issue snapshots intersect the open stage queue with correction
+references in the exact pre-promotion target-base-to-candidate range. Use a
+`Refs`, `Fixes`, `Closes` or `Resolves` line naming the issue in correction
+commits; missing references remain queued for later reconciliation. The combined
+release uses the main-to-candidate range once for both channels. This follow-up
+must be integrated into the target workflow controls and the private conductor
+before pinned new releases are available.
+
 ### Preview release (dev → preview)
 
 When you want to publish/deploy a new preview build:

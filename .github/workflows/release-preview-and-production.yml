@@ -131,11 +131,19 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
+      - name: Bind issue snapshot base before either channel promotes
+        id: issue_base
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref refs/heads/main --remote origin --github-output "$GITHUB_OUTPUT"
       - name: Snapshot issues eligible for the exact dev candidate
         id: snapshot
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.issue_base.outputs.authorized_sha }}
+          CANDIDATE_SHA: ${{ inputs.authorized_promotion_source_sha }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = true ]; then
@@ -146,8 +154,8 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:source')"
-          dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:dev')"
+          source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:source' --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
+          dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:dev' --base-sha "$BASE_SHA" --candidate-sha "$CANDIDATE_SHA")"
           {
             echo "source_issues_json=$source_issues_json"
             echo "dev_issues_json=$dev_issues_json"
