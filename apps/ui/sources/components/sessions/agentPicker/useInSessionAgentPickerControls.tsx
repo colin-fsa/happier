@@ -295,6 +295,8 @@ export type InSessionAgentPickerControls = Readonly<{
      */
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
+    /** Clears exactly the persisted submission that canonical custody consumed. */
+    clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /** Captures the exact canonical user-message request before transition dispatch. */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
@@ -599,6 +601,22 @@ export function useInSessionAgentPickerControls(
     const clearArmedContinuation = React.useCallback(() => {
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
+
+    // The one way a retained submission leaves the draft. Clearing an arm keeps
+    // it on purpose, so this is what ends its custody once SessionView has
+    // seen canonical custody of its localId. The localId is the comparison:
+    // one is recorded per transition, and a newer arm never carries it.
+    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
+        expected: SessionArmedAgentContinuationSubmission,
+    ): boolean => {
+        if (draftSessionId === null) {
+            return armed?.submission?.localId === expected.localId;
+        }
+        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
+        if (persisted?.submission?.localId !== expected.localId) return false;
+        clearPersistedArmedContinuation(accountScope, draftSessionId);
+        return true;
+    }, [accountScope, armed?.submission?.localId, draftSessionId]);
 
     // The submission identity for the armed choice, derived from the choice
     // itself rather than minted at whichever affordance established it.
@@ -983,6 +1001,7 @@ export function useInSessionAgentPickerControls(
         armedContinuationSubmission: submissionArm?.submission ?? null,
         armedContinuationSubmissionIntent: submissionArm?.intent ?? null,
         clearArmedContinuation,
+        clearArmedContinuationSubmissionIfCurrent,
         recordArmedContinuationSubmission,
         onAgentPickerIntent: signalAgentPickerIntent,
         onAgentPickerVisibilityChange,

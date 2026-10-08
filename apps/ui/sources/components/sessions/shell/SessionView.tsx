@@ -4423,6 +4423,7 @@ function SessionViewLoaded({
         armedContinuationLocalId: liveArmedContinuationLocalId,
         armedContinuationSubmission: liveArmedContinuationSubmission,
         clearArmedContinuation,
+        clearArmedContinuationSubmissionIfCurrent: clearPersistedArmedContinuationSubmissionIfCurrent,
     } = inSessionAgentPicker;
     const clearArmedContinuationSubmissionDraftsIfCurrent = React.useCallback((
         submission: SessionArmedAgentContinuationSubmission,
@@ -4511,6 +4512,7 @@ function SessionViewLoaded({
         if (submission?.localId !== outcome.localId) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
         clearArmedContinuationSubmissionDraftsIfCurrent(submission);
+        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
         // Draft currentness controls only whether this exact text can be removed.
         // Canonical custody still spends the submitted transition: otherwise a
         // rewritten draft would retain its prior localId and could collide with
@@ -4530,6 +4532,7 @@ function SessionViewLoaded({
         armedContinuationDisposition,
         clearArmedContinuation,
         clearArmedContinuationSubmissionDraftsIfCurrent,
+        clearPersistedArmedContinuationSubmissionIfCurrent,
         liveArmedContinuationLocalId,
         liveArmedContinuation,
         liveArmedContinuationSubmission,
@@ -4555,6 +4558,7 @@ function SessionViewLoaded({
         if (appliedArmedContinuationDraftClearRef.current === clearKey) return;
         appliedArmedContinuationDraftClearRef.current = clearKey;
         clearArmedContinuationSubmissionDraftsIfCurrent(submission);
+        clearPersistedArmedContinuationSubmissionIfCurrent(submission);
         if (
             liveArmedContinuation !== null
             && liveArmedContinuationLocalId === submission.localId
@@ -4567,6 +4571,7 @@ function SessionViewLoaded({
         armedContinuationSubmissionCustody,
         clearArmedContinuation,
         clearArmedContinuationSubmissionDraftsIfCurrent,
+        clearPersistedArmedContinuationSubmissionIfCurrent,
         liveArmedContinuation,
         liveArmedContinuationLocalId,
         liveArmedContinuationSubmission,
