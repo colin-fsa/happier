@@ -394,7 +394,7 @@ export function useSessionListRowInteractions({
         sessionId: string;
         folderId: string | null;
     }>) => {
-        if (!folderActionsEnabledRef.current) return;
+        if (!folderActionsEnabledRef.current) return false;
         const resolved = await resolveSessionOrganizationMutationScope(assignment.serverId);
         if (!resolved.ok) throw new Error(`Missing ${FOLDER_ASSIGNMENT_SCOPE_REQUIREMENT_BY_REASON[resolved.reason]} for session folder assignment`);
         await setSessionFolderAssignment({
@@ -404,6 +404,7 @@ export function useSessionListRowInteractions({
             sessionId: assignment.sessionId,
             folderId: assignment.folderId,
         });
+        return true;
     }, []);
 
     const persistSessionFolderAssignment = React.useCallback(async (
@@ -412,26 +413,28 @@ export function useSessionListRowInteractions({
     ) => {
         const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
         const sessionId = typeof item.session?.id === 'string' ? item.session.id.trim() : '';
-        if (!serverId || !sessionId) return;
-        await persistSessionFolderAssignmentByIds({ serverId, sessionId, folderId });
+        if (!serverId || !sessionId) return false;
+        return persistSessionFolderAssignmentByIds({ serverId, sessionId, folderId });
     }, [persistSessionFolderAssignmentByIds]);
 
     const pendingFolderAssignmentRef = React.useRef<Readonly<{
         item: SessionFolderAssignableSessionItem;
         folderId: string | null;
+        onAssigned?: () => void;
     }> | null>(null);
     const [, runPendingFolderAssignment] = useHappyAction(async () => {
         const pending = pendingFolderAssignmentRef.current;
         pendingFolderAssignmentRef.current = null;
         if (!pending) return;
-        await persistSessionFolderAssignment(pending.item, pending.folderId);
+        if (await persistSessionFolderAssignment(pending.item, pending.folderId)) pending.onAssigned?.();
     }, { mode: 'drop' });
 
     const scheduleSessionFolderAssignment = React.useCallback((
         item: SessionFolderAssignableSessionItem,
         folderId: string | null,
+        onAssigned?: () => void,
     ) => {
-        pendingFolderAssignmentRef.current = { item, folderId };
+        pendingFolderAssignmentRef.current = { item, folderId, onAssigned };
         runPendingFolderAssignment();
     }, [runPendingFolderAssignment]);
 
@@ -485,7 +488,7 @@ export function useSessionListRowInteractions({
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
                 setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
-                setSessionFolderAssignment: persistSessionFolderAssignmentByIds,
+                setSessionFolderAssignment: async (assignment) => { await persistSessionFolderAssignmentByIds(assignment); },
             },
         });
     }, { mode: 'drop' });
@@ -533,7 +536,7 @@ export function useSessionListRowInteractions({
                 setSessionFoldersV1: setSessionFoldersV1Ref.current,
                 setSessionListGroupOrderV1: setSessionListGroupOrderV1Ref.current,
                 setSessionWorkspaceOrderV1: setSessionWorkspaceOrderV1Ref.current,
-                setSessionFolderAssignment: persistSessionFolderAssignmentByIds,
+                setSessionFolderAssignment: async (assignment) => { await persistSessionFolderAssignmentByIds(assignment); },
             },
         });
     }, { mode: 'drop' });
@@ -547,13 +550,9 @@ export function useSessionListRowInteractions({
 
     const resolveMoveSheetTargets = React.useCallback((sourceRowId: string): readonly SessionListMoveSheetTarget[] => {
         if (!folderActionsEnabled) return [];
-        try {
-            const tree = buildLatestGeometryFreeTree();
-            const source = buildSessionListDragSource({ tree, sourceRowId });
-            return buildSessionListMoveSheetTargets({ tree, source });
-        } catch {
-            return [];
-        }
+        const tree = buildLatestGeometryFreeTree();
+        const source = buildSessionListDragSource({ tree, sourceRowId });
+        return buildSessionListMoveSheetTargets({ tree, source });
     }, [buildLatestGeometryFreeTree, folderActionsEnabled]);
 
     const applyMoveSheetTarget = React.useCallback((sourceRowId: string, target: SessionListMoveSheetTarget) => {

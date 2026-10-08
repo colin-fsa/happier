@@ -28,6 +28,15 @@ vi.mock('@/text', async () => {
 });
 
 describe('useSessionListA11yAnnouncements', () => {
+    it('announces folder assignment without a tree drag result', async () => {
+        announceForAccessibilitySpy.mockClear();
+        const hook = await renderHook(() => useSessionListA11yAnnouncements());
+        hook.getCurrent().announceFolderAssignment({ label: 'Session', destinationLabel: 'Planning', folderId: 'planning' });
+        expect(announceForAccessibilitySpy).toHaveBeenCalledWith(expect.stringContaining('sessionsList.dragA11yDroppedNest'));
+        hook.getCurrent().announceFolderAssignment({ label: 'Session', destinationLabel: 'Root', folderId: null });
+        expect(announceForAccessibilitySpy).toHaveBeenLastCalledWith(expect.stringContaining('sessionsList.dragA11yDroppedRoot'));
+    });
+
     it('announces pickup and successful move outcomes through the native announcer', async () => {
         announceForAccessibilitySpy.mockClear();
         const hook = await renderHook(() => useSessionListA11yAnnouncements());

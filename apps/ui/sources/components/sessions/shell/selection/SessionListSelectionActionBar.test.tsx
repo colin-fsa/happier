@@ -226,6 +226,24 @@ describe('SessionListSelectionActionBarHost', () => {
         expect(count.props['data-selected-count']).toBe(1);
     });
 
+    it('reports destination lookup failures and keeps the selection for retry', async () => {
+        const target: SessionBulkActionTarget = { key: 'session-a', sessionId: 'session-a', serverId: 'server-a' };
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={['session-a']}>
+                <SelectionControls />
+                <SessionListSelectionActionBarHost
+                    targetsByKey={new Map([[target.key, target]])}
+                    onRequestMoveToFolder={async () => { throw new Error('Destination lookup failed'); }}
+                />
+            </SessionListSelectionProvider>,
+        );
+        await pressByTestId(screen, 'select-session-a');
+        await pressByTestId(screen, 'session-list-selection-action-session-move-to-folder');
+        const result = screen.findByTestId('session-list-selection-result');
+        expect(result?.props['data-failed-count']).toBe(1);
+        expect(screen.findByProps({ testID: 'session-list-selection-count' }).props['data-selected-count']).toBe(1);
+    });
+
     it('selects all visible sessions from the action bar', async () => {
         const screen = await renderScreen(<ActionBarHarness />);
 

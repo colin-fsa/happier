@@ -7,6 +7,7 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { collectBrowserDiagnostics, appendBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
 import { upsertPlainAccountSettingsV2 } from '../../src/testkit/accountSettings';
@@ -113,7 +114,7 @@ test.describe('ui e2e: session folders sidebar', () => {
       settings: {
         experiments: true,
         featureToggles: { 'sessions.folders': true },
-        sessionFolderViewModeV1: 'tree',
+        sessionFolderViewModeV1: 'off',
         sessionListActiveGroupingV1: 'project',
         sessionListInactiveGroupingV1: 'project',
         sessionListOrderingModeV1: 'custom',
@@ -181,7 +182,7 @@ test.describe('ui e2e: session folders sidebar', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('moves a synced session into a seeded folder', async ({ page }) => {
+  test('moves a synced session into a seeded folder with folder view off', async ({ page }) => {
     test.setTimeout(180_000);
     if (!server || !uiBaseUrl || !token || !seededServerId || !seededSessionId) {
       throw new Error('missing server/ui fixtures');
@@ -194,7 +195,7 @@ test.describe('ui e2e: session folders sidebar', () => {
     const firstSessionId = seededSessionId;
     await expect(page.getByTestId('session-list-item-' + firstSessionId)).toHaveCount(1, { timeout: 120_000 });
 
-    await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(1, { timeout: 120_000 });
+    await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
 
     await openSessionRowMenu({ page, sessionId: firstSessionId });
     await expect(page.getByTestId('dropdown-option-ui_session_move-to-folder')).toHaveCount(1, { timeout: 60_000 });
@@ -211,4 +212,40 @@ test.describe('ui e2e: session folders sidebar', () => {
     });
 
   });
+
+  test('bulk moves a mixed assignment selection with folder view off', async ({ page }) => {
+    test.setTimeout(180_000);
+    if (!server || !uiBaseUrl || !token || !seededServerId || !seededSessionId) {
+      throw new Error('missing server/ui fixtures');
+    }
+    const diagnostics = collectBrowserDiagnostics({ page });
+    try {
+      const secondSessionId = await createPlainSession({
+        baseUrl: server.baseUrl, token, title: 'bulk folder target ' + run.runId,
+        rootPath: repoRootDir(), machineId: SEEDED_MACHINE_ID, tagPrefix: 'session-folders-bulk',
+      });
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
+      await waitForInitialAppUi({ page, timeoutMs: 180_000 });
+      await expect(page.getByTestId(`session-folder-header-${FOLDER_ID}`)).toHaveCount(0);
+      const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+      for (const sessionId of [seededSessionId, secondSessionId]) {
+        const row = page.getByTestId(`session-list-item-${sessionId}`);
+        await expect(row).toHaveCount(1, { timeout: 120_000 });
+        await row.click({ modifiers: [modifier] });
+      }
+      await expect(page.getByTestId('session-list-selection-count')).toHaveAttribute('data-selected-count', '2');
+      await page.getByTestId('session-list-selection-action-session-move-to-folder').click();
+      const destination = page.getByTestId(`session-list-move-sheet:root:option:folder:${FOLDER_ID}`);
+      await expect(destination).toBeEnabled();
+      await destination.click();
+      await expect(page.getByTestId('session-list-selection-result')).toHaveAttribute('data-succeeded-count', '2', { timeout: 60_000 });
+      for (const sessionId of [seededSessionId, secondSessionId]) {
+        await expectFolderAssignment({ baseUrl: server.baseUrl, token, sessionId, folderId: FOLDER_ID });
+      }
+    } catch (error) {
+      throw appendBrowserDiagnostics(error, diagnostics());
+    }
+  });
+
 });

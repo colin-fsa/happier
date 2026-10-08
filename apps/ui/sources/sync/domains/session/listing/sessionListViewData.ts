@@ -13,6 +13,7 @@ import { resolveSessionWorkspacePresentation, type WorkspacePathDisplayModeV1 } 
 import {
     buildSessionFolderAssignmentKey,
     buildSessionFolderTree,
+    normalizeSessionFolderWorkspaceRef,
     resolveDurableWorkspaceRefForSessionListHeader,
     type SessionFoldersV1,
     type SessionFolderTreeNode,
@@ -186,6 +187,29 @@ function compareSessionsStableNewestUpdatedFirst(a: SessionListRenderableSession
     return a.id.localeCompare(b.id);
 }
 
+function resolveWorkspaceForSession(
+    session: SessionListRenderableSession,
+    params: Readonly<{
+        machines: Record<string, MachineDisplayRenderable>;
+        sessionTargetState?: SessionMachineTargetState;
+        workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
+    }>,
+) {
+    const target = params.sessionTargetState
+        ? resolveDisplayIdentityForSessionFromState({
+            state: params.sessionTargetState,
+            sessionId: session.id,
+            metadata: session.metadata ?? null,
+        })
+        : null;
+    return resolveSessionWorkspacePresentation({
+        metadata: session.metadata ?? null,
+        machines: params.machines,
+        target,
+        workspacePathDisplayModeV1: params.workspacePathDisplayModeV1,
+    });
+}
+
 function groupSessionsByProject(params: Readonly<{
     sessions: ReadonlyArray<SessionListRenderableSession>;
     machines: Record<string, MachineDisplayRenderable>;
@@ -193,25 +217,8 @@ function groupSessionsByProject(params: Readonly<{
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
 }>): ProjectGroup[] {
     const groups = new Map<string, ProjectGroup>();
-    const sessionTargetState = params.sessionTargetState;
-
     for (const session of params.sessions) {
-        // One resolution per session. Asking for the machine id and the path separately resolved
-        // the same display target — and re-read the same project — twice per row on the
-        // session-list build path, which the store runs for every list rebuild.
-        const target = sessionTargetState
-            ? resolveDisplayIdentityForSessionFromState({
-                state: sessionTargetState,
-                sessionId: session.id,
-                metadata: session.metadata ?? null,
-            })
-            : null;
-        const workspace = resolveSessionWorkspacePresentation({
-            metadata: session.metadata ?? null,
-            machines: params.machines,
-            target,
-            workspacePathDisplayModeV1: params.workspacePathDisplayModeV1,
-        });
+        const workspace = resolveWorkspaceForSession(session, params);
         const key = workspace.groupKey;
 
         const existing = groups.get(key);
@@ -282,6 +289,8 @@ function pushProjectGroupsToList(params: Readonly<{
             ...params.serverScopeMeta,
         };
 
+        const workspace = resolveDurableWorkspaceRefForSessionListHeader(projectHeader);
+
         if (hasGroupHeader) {
             params.listData.push(projectHeader);
         }
@@ -289,7 +298,6 @@ function pushProjectGroupsToList(params: Readonly<{
         const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
         const folderOptions = params.sessionFolders?.enabled === true && hasGroupHeader ? params.sessionFolders : null;
         if (folderOptions) {
-            const workspace = resolveDurableWorkspaceRefForSessionListHeader(projectHeader);
             if (workspace) {
                 pushFolderAwareProjectSessionsToList({
                     listData: params.listData,
@@ -314,6 +322,7 @@ function pushProjectGroupsToList(params: Readonly<{
                 groupKey,
                 groupKind: 'project',
                 variant,
+                workspace: workspace ?? undefined,
                 ...params.serverScopeMeta,
             });
         });
@@ -351,6 +360,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
                 variant: params.variant,
                 folderId: null,
                 folderDepth: 0,
+                workspace: params.workspace,
                 ...params.serverScopeMeta,
             });
         });
@@ -403,6 +413,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
                 variant: params.variant,
                 folderId: node.id,
                 folderDepth: sessionDepth,
+                workspace: params.workspace,
                 ...params.serverScopeMeta,
             });
         });
@@ -419,6 +430,7 @@ function pushFolderAwareProjectSessionsToList(params: Readonly<{
             variant: params.variant,
             folderId: null,
             folderDepth: 0,
+            workspace: params.workspace,
             ...params.serverScopeMeta,
         });
     });
@@ -686,6 +698,24 @@ export function buildSessionListViewData(
     const serverKey = normalizeServerIdForKey(options.serverScope?.serverId);
     const sectionMode = options.sectionModeV1 === 'single' ? 'single' : 'activity';
 
+    const completeSessionWorkspaces = () => {
+        for (const item of listData) {
+            if (item.type !== 'session' || item.workspace || !item.serverId) continue;
+            const presentation = resolveWorkspaceForSession(item.session, {
+                machines,
+                sessionTargetState: options.sessionTargetState,
+                workspacePathDisplayModeV1: options.workspacePathDisplayModeV1,
+            });
+            item.workspace = normalizeSessionFolderWorkspaceRef({
+                t: 'workspaceScope',
+                serverId: item.serverId,
+                machineId: presentation.machineId,
+                rootPath: presentation.pathKey,
+            }) ?? undefined;
+        }
+        return listData;
+    };
+
     if (sectionMode === 'single') {
         const allOwnedSessions = [...activeSessions, ...inactiveSessions].sort(compareSessionsStableNewestFirst);
         const allSharedSessions = [...activeSharedSessions, ...inactiveSharedSessions].sort(compareSessionsStableNewestFirst);
@@ -718,7 +748,7 @@ export function buildSessionListViewData(
                 sessionFolders: options.sessionFolders,
             });
         }
-        return listData;
+        return completeSessionWorkspaces();
     }
 
     if (activeSessions.length > 0 || activeSharedSessions.length > 0) {
@@ -769,5 +799,5 @@ export function buildSessionListViewData(
         });
     }
 
-    return listData;
+    return completeSessionWorkspaces();
 }

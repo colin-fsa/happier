@@ -419,7 +419,13 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
 
     const handleActionPress = React.useCallback(async (descriptor: SessionBulkActionDescriptor) => {
         if (runningAction) return;
-        const request = await resolveActionRequest(descriptor.id);
+        let request: SessionBulkActionRequest | null;
+        try {
+            request = await resolveActionRequest(descriptor.id);
+        } catch (error) {
+            setResult(buildFailureResult({ actionId: descriptor.id, targets: selectedTargets, reason: reasonFromUnknown(error) }));
+            return;
+        }
         if (!request) return;
         if (descriptor.requiresConfirmation) {
             setResult(null);

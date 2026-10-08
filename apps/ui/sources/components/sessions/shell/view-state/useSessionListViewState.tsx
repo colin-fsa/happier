@@ -55,7 +55,6 @@ import {
     type SessionListSelectedItem,
 } from '../sessionListSelectedItems';
 import {
-    buildSessionFolderMoveTargets,
     filterSessionListItemsByFocusedFolder,
     type SessionFolderViewModeV1,
 } from '../sessionFolderShellTypes';
@@ -497,11 +496,6 @@ export function useSessionListViewState({
     }, [visibleListItems]);
     sessionListIndexRef.current = sessionListIndex;
 
-    const folderMoveTargets = React.useMemo(
-        () => folderViewEnabled ? buildSessionFolderMoveTargets(folderPresentedData ?? []) : [],
-        [folderPresentedData, folderViewEnabled],
-    );
-
     return {
         pinnedKeyList,
         pinnedKeySet,
@@ -558,7 +552,7 @@ export function useSessionListViewState({
         reachabilityModels,
         hasMultipleMachines: reachabilityModels.hasMultipleMachines,
         reachableSessionDisplayByKey: reachabilityModels.reachableSessionDisplayByKey,
-        folderMoveTargets,
+        sessionFolderAssignmentsBySessionKey,
         folderBreadcrumbRootTitle,
         ...focusedFolderState,
     };

@@ -13,7 +13,6 @@ import {
     createSessionListRowStoreStateSelector,
     selectSessionListRowStateSnapshot,
 } from '@/sync/store/sessionListRowStateSnapshot';
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import type {
     RegisterSessionListTreeRowBounds,
@@ -45,14 +44,12 @@ import type { SessionListRowStoreSubscriptionMode } from './sessionListVisibleRo
 import type { SessionItemProps } from '../SessionItem';
 
 const EMPTY_SESSION_LIST_ROW_STORE_STATE: SessionListRowStoreState = Object.freeze({});
-const EMPTY_FOLDER_MOVE_MENU_ITEMS: readonly DropdownMenuItem[] = Object.freeze([]);
 
 type SessionListRowMoveActionHandlers = Readonly<{
     onMoveDown?: () => void;
     onMoveToFolder?: () => void;
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
-    onSelectFolderMoveMenuItem?: (itemId: string) => void;
 }>;
 
 export type SessionListRowModelBoundaryProps = Readonly<{
@@ -62,11 +59,10 @@ export type SessionListRowModelBoundaryProps = Readonly<{
     dataIndex: number;
     dragEnabled: boolean;
     draggingSessionKey: string | null;
-    folderMoveMenuItems?: readonly DropdownMenuItem[];
     folderViewEnabled: boolean;
+    folderActionsEnabled: boolean;
     forkActionContext?: SessionItemProps['forkActionContext'];
     getRowMoveActionHandlers: (input: Readonly<{
-        item: SessionListRowSessionItem;
         sourceLabel: string;
         sourceRowId: string;
     }>) => SessionListRowMoveActionHandlers;
@@ -293,7 +289,6 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
     const moveActionHandlers = props.getRowMoveActionHandlers({
         sourceRowId: rowModel.treeRowId,
         sourceLabel: props.item.session.id,
-        item: props.item,
     });
     const onDeleteDraft = React.useMemo(() => {
         const scope = props.draftScope;
@@ -344,13 +339,11 @@ const SessionListRowModelBoundaryContent = React.memo(function SessionListRowMod
             variant={rowModel.variant ?? undefined}
             activityTimeMode={rowModel.activity.mode === 'updatedAt' ? 'updatedAt' : undefined}
             folderDepth={rowModel.folder.depth}
-            folderMoveMenuItems={props.folderViewEnabled ? props.folderMoveMenuItems ?? EMPTY_FOLDER_MOVE_MENU_ITEMS : EMPTY_FOLDER_MOVE_MENU_ITEMS}
             forkActionContext={props.forkActionContext}
-            onMoveToFolder={props.folderViewEnabled ? moveActionHandlers.onMoveToFolder : undefined}
-            onMoveToWorkspaceRoot={props.folderViewEnabled ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
+            onMoveToFolder={props.folderActionsEnabled ? moveActionHandlers.onMoveToFolder : undefined}
+            onMoveToWorkspaceRoot={props.folderActionsEnabled ? moveActionHandlers.onMoveToWorkspaceRoot : undefined}
             onMoveUp={props.folderViewEnabled ? moveActionHandlers.onMoveUp : undefined}
             onMoveDown={props.folderViewEnabled ? moveActionHandlers.onMoveDown : undefined}
-            onSelectFolderMoveMenuItem={moveActionHandlers.onSelectFolderMoveMenuItem}
             secondaryLineMode={rowModel.secondaryLineMode}
             compact={rowModel.compact}
             compactMinimal={rowModel.compactMinimal}

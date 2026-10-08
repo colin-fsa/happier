@@ -68,7 +68,7 @@ export function listVisibleSessionActionIds(params: Readonly<{
         ids.push(SESSION_ACTION_DELETE_ID);
     }
 
-    if (surface === 'rowMenu' || surface === 'nativeContextMenu') {
+    if (target.canMoveToFolder && (surface === 'rowMenu' || surface === 'nativeContextMenu')) {
         ids.push(SESSION_ACTION_MOVE_TO_FOLDER_ID);
     }
 

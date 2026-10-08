@@ -1,4 +1,5 @@
 import React from 'react';
+import { JSDOM } from 'jsdom';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -44,6 +45,7 @@ const upsertSessionFolderSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const deleteSessionFolderSpy = vi.hoisted(() => vi.fn(async () => undefined));
 const routerPushSpy = vi.hoisted(() => vi.fn());
 
+let foldersFeatureEnabled = true;
 let sessionFolderViewModeV1: 'off' | 'tree' = 'tree';
 let sessionListFolderSortModeV1: 'foldersFirst' | 'mixed' = 'foldersFirst';
 let sessionListOrderingModeV1: 'custom' | 'created' | 'updated' = 'custom';
@@ -167,7 +169,7 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => ({ state: 'enabled' }),
+    useFeatureDecision: (featureId: string) => ({ state: featureId === 'sessions.folders' && !foldersFeatureEnabled ? 'disabled' : 'enabled' }),
 }));
 
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
@@ -394,6 +396,7 @@ function findFolderGesture(screen: Awaited<ReturnType<typeof renderSessionsList>
 
 describe('SessionsList session folders shell', () => {
     beforeEach(() => {
+        foldersFeatureEnabled = true;
         sessionFolderViewModeV1 = 'tree';
         sessionListFolderSortModeV1 = 'foldersFirst';
         sessionListOrderingModeV1 = 'custom';
@@ -627,7 +630,7 @@ describe('SessionsList session folders shell', () => {
         expect(setSessionListFolderSortModeV1).not.toHaveBeenCalled();
     });
 
-    it('passes folder indentation and move menu options to session rows', async () => {
+    it('passes folder indentation and resolves nested destinations on demand', async () => {
         mockVisibleSessionListViewData.splice(3, 0, {
             type: 'header',
             title: 'Execution',
@@ -661,24 +664,18 @@ describe('SessionsList session folders shell', () => {
 
         const folderRow = screen.findByTestId('session-list-session:sess_a');
         expect(folderRow?.props.folderDepth).toBe(1);
-        expect(folderRow?.props.folderMoveMenuItems).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({ id: 'move-to-folder:folder_a' }),
-                expect.objectContaining({ id: 'move-to-folder:null' }),
-            ]),
-        );
+        await act(async () => { folderRow?.props.onMoveToFolder(); });
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as { props?: { targets?: readonly { id: string; kind: string; disabled: boolean }[] } };
+        const targets = modalConfig.props?.targets ?? [];
+        expect(targets).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'folder:folder_a', disabled: true }),
+            expect.objectContaining({ id: 'folder:folder_b', disabled: false }),
+            expect.objectContaining({ kind: 'root', disabled: false }),
+        ]));
 
-        const moveMenuItems = folderRow?.props.folderMoveMenuItems ?? [];
-        const rootTarget = moveMenuItems.find((item: any) => item.id === 'move-to-folder:null');
-        const parentFolderTarget = moveMenuItems.find((item: any) => item.id === 'move-to-folder:folder_a');
-        const childFolderTarget = moveMenuItems.find((item: any) => item.id === 'move-to-folder:folder_b');
-        expect(rootTarget?.rowContainerStyle).toBeUndefined();
-        expect(parentFolderTarget?.rowContainerStyle).toMatchObject({ paddingLeft: expect.any(Number) });
-        expect(childFolderTarget?.rowContainerStyle).toMatchObject({ paddingLeft: expect.any(Number) });
-        expect(childFolderTarget.rowContainerStyle.paddingLeft).toBeGreaterThan(parentFolderTarget.rowContainerStyle.paddingLeft);
     });
 
-    it('keeps collapsed child folders available in the row move menu', async () => {
+    it('keeps collapsed child folders available in the row move picker', async () => {
         mockVisibleSessionListViewData.splice(3, 0, {
             type: 'header',
             title: 'Execution',
@@ -714,10 +711,13 @@ describe('SessionsList session folders shell', () => {
         expect(screen.findByTestId('session-folder-header-folder_b')).toBeNull();
 
         const rootRow = screen.findByTestId('session-list-session:sess_b');
-        const moveMenuItems = rootRow?.props.folderMoveMenuItems ?? [];
-        expect(moveMenuItems).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'move-to-folder:folder_b' }),
+        await act(async () => { rootRow?.props.onMoveToFolder(); });
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as { props?: { targets?: readonly { id: string; kind: string; disabled: boolean }[] } };
+        const targets = modalConfig.props?.targets ?? [];
+        expect(targets).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'folder:folder_b', disabled: false }),
         ]));
+
     });
 
     it('passes a real drag gesture into session rows', async () => {
@@ -777,6 +777,27 @@ describe('SessionsList session folders shell', () => {
         const screen = await renderSessionsList();
 
         expect(findGestureByKind(findSessionGesture(screen, 'sess_a'), 'pan')).toBeTruthy();
+    });
+
+    it('does not announce a successful assignment when the folder gate closes while the picker is open', async () => {
+        const screen = await renderSessionsList();
+        await act(async () => { screen.findByTestId('session-list-session:sess_b')?.props.onMoveToFolder(); });
+        const config = modalShowSpy.mock.calls[0]?.[0] as { props?: { targets?: readonly { id: string }[]; onSelectTarget?: (target: unknown) => void } };
+        const target = config.props?.targets?.find((candidate) => candidate.id === 'folder:folder_a');
+        expect(target).toBeTruthy();
+        foldersFeatureEnabled = false;
+        const { SessionsList } = await import('./SessionsList');
+        await screen.update(<SessionsList storageKind="all" />);
+        const dom = new JSDOM('<body></body>', { url: 'http://localhost' });
+        vi.stubGlobal('document', dom.window.document);
+        try {
+            await act(async () => { config.props?.onSelectTarget?.(target); });
+            expect(setSessionFolderAssignmentSpy).not.toHaveBeenCalled();
+            expect(dom.window.document.querySelector('[data-happier-live-region]') === null).toBe(true);
+        } finally {
+            vi.unstubAllGlobals();
+            dom.window.close();
+        }
     });
 
     it('persists a row menu move through the row server assignment op', async () => {

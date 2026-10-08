@@ -87,7 +87,7 @@ export function listSessionBulkActionDescriptors(params: Readonly<{
         }
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.tagsSet));
     }
-    if (params.moveEnabled) {
+    if (params.moveEnabled && targets.some((target) => target.canMoveToFolder !== false)) {
         descriptors.push(createBulkDescriptor(SESSION_BULK_ACTION_IDS.moveToFolder));
     }
 

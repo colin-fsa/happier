@@ -51,6 +51,31 @@ function makeMachine(partial: Partial<Machine> & Pick<Machine, 'id'>): Machine {
 }
 
 describe('buildSessionListViewData', () => {
+    it.each(['date', 'project'] as const)('projects producer-scoped workspaces for %s rows with folder view off', (grouping) => {
+        const rows = ['server-a', 'server-b'].flatMap((serverId) => {
+            const machineId = `${serverId}-machine`;
+            const rootPath = `/home/${serverId}/repo`;
+            const metadata = { machineId, path: rootPath, host: serverId, version: '0.0.0' };
+            const session = makeSession({ id: 'same-session-id', metadata });
+            const shared = makeSession({ id: 'shared', metadata, owner: 'friend' });
+            return buildSessionListViewData({ [session.id]: session, [shared.id]: shared }, {
+                [machineId]: makeMachine({ id: machineId }),
+            }, {
+                groupInactiveSessionsByProject: false,
+                inactiveGroupingV1: grouping,
+                serverScope: { serverId },
+                sessionTargetState: { sessions: { [session.id]: session, [shared.id]: shared } },
+                sessionFolders: { enabled: false, folders: { v: 1, folders: [] }, assignmentsBySessionKey: {} },
+            }).filter((item) => item.type === 'session');
+        });
+        expect(rows.map((row) => row.workspace)).toEqual([
+            { t: 'workspaceScope', serverId: 'server-a', machineId: 'server-a-machine', rootPath: '/home/server-a/repo' },
+            { t: 'workspaceScope', serverId: 'server-a', machineId: 'server-a-machine', rootPath: '/home/server-a/repo' },
+            { t: 'workspaceScope', serverId: 'server-b', machineId: 'server-b-machine', rootPath: '/home/server-b/repo' },
+            { t: 'workspaceScope', serverId: 'server-b', machineId: 'server-b-machine', rootPath: '/home/server-b/repo' },
+        ]);
+    });
+
     it('excludes hidden system sessions from the list view data', () => {
         const machine = makeMachine({
             id: 'm1',
