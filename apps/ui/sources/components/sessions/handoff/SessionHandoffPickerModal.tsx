@@ -28,6 +28,7 @@ import { resolveSessionHandoffPickerSourceMachineId } from '@/sync/domains/sessi
 import { useMachineListByServerId, useMachineRecordValues, useSession, useSessions, useSettingMutable } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useStableRecentPathsForMachine } from '@/utils/sessions/useStableRecentPathsForMachine';
@@ -129,23 +130,21 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         return allServerMachines.find((machine: any) => normalizeId(machine?.id) === resolvedSourceMachineId) ?? null;
     }, [allServerMachines, resolvedSourceMachineId]);
     const isDirectSession = Boolean((currentSession as any)?.metadata?.directSessionV1);
+    const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
+    const fallbackSourceHomeDir = sourceMachine?.metadata?.homeDir;
+    const sourcePath = resolveAbsolutePath(
+        String((currentSession as any)?.metadata?.path ?? '').trim(),
+        typeof (sourceHomeDir ?? fallbackSourceHomeDir) === 'string'
+            ? String(sourceHomeDir ?? fallbackSourceHomeDir).trim()
+            : undefined,
+    );
     const workspaceTransferPathSafety = React.useMemo(
-        () => {
-            const sourceHomeDir = (currentSession as any)?.metadata?.homeDir;
-            const fallbackSourceHomeDir = (sourceMachine as any)?.metadata?.homeDir;
-            const sourcePath = resolveAbsolutePath(
-                String((currentSession as any)?.metadata?.path ?? '').trim(),
-                typeof (sourceHomeDir ?? fallbackSourceHomeDir) === 'string'
-                    ? String(sourceHomeDir ?? fallbackSourceHomeDir).trim()
-                    : undefined,
-            );
-            return evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
-                sourcePath,
-                sourceHomeDir,
-                fallbackSourceHomeDir,
-            });
-        },
-        [currentSession, sourceMachine],
+        () => evaluateSessionHandoffWorkspaceTransferSourcePathSafety({
+            sourcePath,
+            sourceHomeDir,
+            fallbackSourceHomeDir,
+        }),
+        [fallbackSourceHomeDir, sourceHomeDir, sourcePath],
     );
 
     const machines = React.useMemo(() => {
@@ -153,10 +152,9 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
             const machineId = normalizeId(machine?.id);
             if (!machineId) return false;
             if (machine?.revokedAt) return false;
-            if (resolvedSourceMachineId && machineId === resolvedSourceMachineId) return false;
             return true;
         });
-    }, [allServerMachines, resolvedSourceMachineId]);
+    }, [allServerMachines]);
     const hasSelectableMachine = React.useMemo(
         () => machines.some((machine: any) => normalizeId(machine?.id).length > 0),
         [machines],
@@ -197,9 +195,8 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     }, [favoriteMachineIds, machines]);
 
     const recentMachines = React.useMemo(() => {
-        const allRecent = getRecentMachinesFromSessions({ machines, sessions });
-        return allRecent.filter((machine: any) => normalizeId(machine?.id) !== resolvedSourceMachineId);
-    }, [machines, resolvedSourceMachineId, sessions]);
+        return getRecentMachinesFromSessions({ machines, sessions });
+    }, [machines, sessions]);
 
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(null);
     const [targetPath, setTargetPath] = React.useState<string | null>(null);
@@ -225,7 +222,16 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const handleTargetPathChange = React.useCallback((path: string) => {
         setTargetPath(path.trim() || null);
     }, []);
-    const [workspaceTransferEnabled, setWorkspaceTransferEnabled] = React.useState(sessionHandoffDefaults.workspaceTransferEnabled);
+    const isSameMachine = Boolean(resolvedSourceMachineId && normalizeId(selectedMachineId) === resolvedSourceMachineId);
+    const normalizedSourcePath = normalizeLocalPathForComparison(sourcePath);
+    const normalizedTargetPath = targetPath
+        ? normalizeLocalPathForComparison(resolveAbsolutePath(targetPath, targetMachineHomeDir))
+        : null;
+    const canStart = Boolean(selectedMachine && canAttemptSelectedMachine
+        && (!isSameMachine || (normalizedSourcePath && normalizedTargetPath && normalizedTargetPath !== normalizedSourcePath)));
+    const [workspaceTransferOverride, setWorkspaceTransferEnabled] = React.useState<boolean | null>(null);
+    const workspaceTransferEnabled = workspaceTransferOverride
+        ?? (isSameMachine ? false : sessionHandoffDefaults.workspaceTransferEnabled);
     const [workspaceTransferStrategy, setWorkspaceTransferStrategy] = React.useState<'transfer_snapshot' | 'sync_changes'>(
         sessionHandoffDefaults.workspaceTransferStrategy,
     );
@@ -245,7 +251,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const handleStart = React.useCallback(() => {
         const targetMachineId = normalizeId(selectedMachineId);
         if (!targetMachineId) return;
-        if (!canAttemptSelectedMachine) return;
+        if (!canStart) return;
         const workspaceTransfer = buildSessionHandoffWorkspaceTransfer({
             workspaceTransferEnabled: effectiveWorkspaceTransferEnabled,
             workspaceTransferStrategy,
@@ -261,7 +267,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 : 'persisted',
             ...(workspaceTransfer ? { workspaceTransfer } : {}),
         });
-    }, [canAttemptSelectedMachine, conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onResolve, selectedMachineId, targetPath, workspaceTransferStrategy]);
+    }, [canStart, conflictPolicy, directTargetMode, effectiveWorkspaceTransferEnabled, ignoredIncludeGlobs, includeIgnoredMode, isDirectSession, onResolve, selectedMachineId, targetPath, workspaceTransferStrategy]);
 
     const footer = React.useMemo(() => (
         <View style={styles.footer}>
@@ -270,10 +276,10 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 testID="session-handoff-start"
                 title={actionSpec.title}
                 onPress={handleStart}
-                disabled={!selectedMachine || !canAttemptSelectedMachine}
+                disabled={!canStart}
             />
         </View>
-    ), [actionSpec.title, canAttemptSelectedMachine, handleCancel, handleStart, selectedMachine, styles.footer]);
+    ), [actionSpec.title, canStart, handleCancel, handleStart, styles.footer]);
 
     const chrome = React.useMemo(() => ({
         kind: 'card' as const,

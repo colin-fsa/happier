@@ -212,6 +212,12 @@ do not gain Herdr controls. Current readers normalize the development-only neste
 cannot revive it. Remove this development reader once retained nested development
 settings are no longer encountered.
 
+### Same-machine session handoff (development)
+
+Same-machine session handoff extends the existing tracked handoff operation and target-path field; it adds no session identity, storage format or transport strategy. The v2 daemon capability response adds `sameMachineHandoff`. Admission requires that field to be exactly `true` for a local move and continues to accept older capability responses for cross-machine handoff. Local preparation reuses the source export through the existing direct-peer strategy without requiring a network transfer carrier.
+
+Source start validates a distinct local destination before stopping the session. Once the target is committed, source cleanup preserves its v2 job and does not stop the resumed session on the same daemon. Cancellation addresses that shared job once through the existing abort owner. The v1 cleanup adapter remains available for source cleanup; it cannot mutate an uncommitted v2 target job.
+
 ### Direct-session import and takeover operations (development)
 
 The released `cli-v0.2.14` and `cli-v0.2.14-preview.1` daemon at
