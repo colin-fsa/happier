@@ -20,6 +20,7 @@ import { t } from '@/text';
 import { DotSpinnerNative } from './activitySpinner/DotSpinnerNative';
 import { DotSpinnerWeb } from './activitySpinner/DotSpinnerWeb';
 import type { DotSpinnerInk } from './activitySpinner/dotSpinnerFrames';
+import { DOT_SPINNER_STYLES } from './activitySpinner/dotSpinnerStyles';
 import { resolveSpinnerMotion } from './activitySpinner/dotSpinnerMotion';
 
 const DEFAULT_SMALL_SPINNER_SIZE = 20;
@@ -45,7 +46,7 @@ export type ActivitySpinnerProps = Omit<ActivityIndicatorProps, 'size'> & {
      *
      * Used wherever ambient motion must pause without the mark disappearing: a mounted offscreen
      * list row, an entry that has stopped reporting. Honoured on every platform and style — dot
-     * styles hold the full H still (web drops the CSS animation, native stops its frame clock), and
+     * styles hold the full chosen mark still (web drops the CSS animation, native stops its frame clock), and
      * the classic ring stops turning while keeping a still mark on screen. A
      * paused spinner still says "this is the running state"; a missing one says the work ended.
      */
@@ -91,7 +92,7 @@ export function iconMatchedSpinnerSize(iconSize: number): number {
 
 /**
  * Every loading spinner in the app. Draws the style chosen in Settings → Appearance: one of the dot
- * styles (the H of Happier with light moving through it) or the classic ring, at the speed and pause
+ * styles (the Happier mark or H with light moving through it) or the classic ring, at the speed and pause
  * between loops chosen there.
  */
 export function ActivitySpinner(props: ActivitySpinnerProps) {
@@ -131,7 +132,7 @@ export function ActivitySpinner(props: ActivitySpinnerProps) {
     const { indigo, purple, orange } = theme.colors.accent;
     // Aurora uses the theme accents, but only when the caller left the color to us: an explicit
     // color usually means a tinted surface (a filled button) where accent colors would not read.
-    const useAurora = styleId === 'aurora' && color == null;
+    const useAurora = styleId !== 'classicRing' && DOT_SPINNER_STYLES[styleId].ink === 'aurora' && color == null;
     const ink = React.useMemo<DotSpinnerInk>(
         () => (useAurora ? { aurora: [indigo, purple, orange] } : { color: inkColor }),
         [indigo, inkColor, orange, purple, useAurora],

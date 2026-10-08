@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
 
 import {
     HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
@@ -14,6 +15,8 @@ import {
     resolveProviderPromptForDispatch,
 } from './resolveProviderPromptForDispatch';
 import { configuration, reloadConfiguration } from '@/configuration';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 /**
  * D-27's total bound, at the one prompt-finalization owner.
@@ -99,6 +102,68 @@ async function dispatch(params: Readonly<{ meta: unknown; description?: string }
     });
     return { resolution, updateMetadata };
 }
+
+describe('resolveProviderPromptForDispatch catalog diagnostics', () => {
+    const envKeys = ['DEBUG', 'HAPPIER_HOME_DIR', 'HAPPIER_LOG_LEVEL'] as const;
+    let envScope = createEnvKeyScope(envKeys);
+    let tempDir: string;
+
+    beforeEach(() => {
+        envScope = createEnvKeyScope(envKeys);
+        tempDir = createTempDirSync('happier-prompt-dispatch-log-');
+        envScope.patch({ HAPPIER_HOME_DIR: tempDir, DEBUG: undefined, HAPPIER_LOG_LEVEL: undefined });
+        vi.resetModules();
+    });
+
+    afterEach(() => {
+        envScope.restore();
+        removeTempDirSync(tempDir);
+    });
+
+    it.each([
+        { catalog: 'skills', reason: 'failed', read: async () => { throw new Error('private catalog failure'); } },
+        { catalog: 'skills', reason: 'malformed', read: async () => 'private malformed catalog' },
+        { catalog: 'vendorPlugins', reason: 'unsupported', read: async () => ({ supported: false, vendorPlugins: [] }) },
+    ] as const)('records $catalog catalog $reason in normal file logs while preserving the prompt', async ({ catalog, reason, read }) => {
+        const { resolveProviderPromptForDispatch: resolveDispatch } = await import('./resolveProviderPromptForDispatch');
+        const { logger } = await import('@/ui/logger');
+        const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+        try {
+            const mention = catalog === 'skills' ? SKILL_MENTION : {
+                kind: MENTION_KIND_V1.vendorPlugin,
+                ref: buildMentionRefForKindV1(MENTION_KIND_V1.vendorPlugin, 'private-plugin'),
+                token: '@private-plugin',
+                start: 0,
+                end: 15,
+            };
+            const { session } = createSession();
+            const resolution = await resolveDispatch({
+                session,
+                userText: 'private user prompt',
+                allowSeed: false,
+                localId: 'local-1',
+                nowMs: 1_000,
+                refreshMetadataBeforeRead: false,
+                meta: metaWith([mention]),
+                catalogs: catalog === 'skills' ? { listSkills: read } : { listVendorPlugins: read },
+            });
+            logger.flushSync();
+
+            expect(resolution.providerPrompt).toBe('private user prompt');
+            expect(resolution.meta).toEqual({
+                [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: { v: 1 },
+            });
+            expect(logSpy).not.toHaveBeenCalled();
+            expect(existsSync(logger.getLogPath())).toBe(true);
+            const content = readFileSync(logger.getLogPath(), 'utf8');
+            expect(content).toContain(`${catalog} catalog ${reason}`);
+            expect(content).toContain('1 composer reference(s) contributed no provider item');
+            expect(content).not.toContain('private');
+        } finally {
+            logSpy.mockRestore();
+        }
+    });
+});
 
 describe('resolveProviderPromptForDispatch — D-27 total resolved-context bound', () => {
     it('rejects the send when one kind alone exceeds the total bound', async () => {

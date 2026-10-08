@@ -10,6 +10,21 @@ type Metadata = {
 };
 
 describe('updateSessionMetadataWithRetry', () => {
+    it('does not write metadata after its account scope retires during encryption', async () => {
+        let current = true;
+        const writes: string[] = [];
+        const snapshot = { metadataVersion: 1, metadata: { path: '/repo', host: 'host' } };
+        await updateSessionMetadataWithRetry({
+            sessionId: 's1', getSession: () => snapshot, refreshSessions: async () => {},
+            encryptMetadata: async (metadata) => { current = false; return JSON.stringify(metadata); },
+            decryptMetadata: async () => snapshot.metadata,
+            emitUpdateMetadata: async (payload) => { writes.push(payload.metadata); return { result: 'success' as const }; },
+            applySessionMetadata: () => {}, updater: (metadata) => ({ ...metadata, tools: ['new'] }),
+            shouldContinue: () => current,
+        });
+        expect(writes).toEqual([]);
+    });
+
     it('refreshes sessions when metadata is missing before attempting the update', async () => {
         const sessionId = 's1';
 

@@ -123,6 +123,8 @@ export {
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
   SessionUsageLimitWaitResumeEnableResponseV1Schema,
   SessionSkillCatalogItemV1Schema,
+  PreflightSessionCatalogsV1Schema,
+  type PreflightSessionCatalogsV1,
   SessionSkillCatalogListRequestV1Schema,
   SessionSkillCatalogListResponseV1Schema,
   SessionVendorPluginCatalogListRequestV1Schema,
@@ -202,6 +204,8 @@ export {
   type SkillCatalogItemIdentityV1,
   type SkillCatalogOriginV1,
 } from './sessionWorkState/index.js';
+
+export { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from './strings/opaqueIdentifier.js';
 
 export {
   SESSION_WORKFLOW_ACTIVITY_RECENT_RUNS_LIMIT,
@@ -586,6 +590,7 @@ export {
   CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
   CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY,
   CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY,
+  CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY,
   CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE,
   ConnectedServiceAuthGroupReaderCapabilitiesQueryV1Schema,
   appendConnectedServiceAuthGroupReaderCapabilities,
@@ -600,6 +605,7 @@ export {
   ConnectedServiceAuthGroupPatchRequestV1Schema,
   ConnectedServiceAuthGroupPolicyPatchV1Schema,
   ConnectedServiceAuthGroupPolicyV1Schema,
+  ConnectedServiceAuthGroupStrategyV1Schema,
   ConnectedServiceAuthGroupQuotaLimitSelectionV1Schema,
   ConnectedServiceAuthGroupErrorResponseV1Schema,
   ConnectedServiceAuthGroupResponseV1Schema,
@@ -2559,10 +2565,12 @@ export {
   DirectTranscriptReadAfterResponseSchema,
   DirectTranscriptTruncationReasonSchema,
   resolveDirectTranscriptContinuation,
+  DIRECT_SESSION_TAKEOVER_ACTION_IDS,
   DirectSessionTakeoverRequestSchema,
   DirectSessionTakeoverResponseSchema,
   DirectSessionTakeoverPersistRequestSchema,
   DirectSessionTakeoverPersistResponseSchema,
+  DirectSessionTakeoverPersistStartResponseSchema,
   type DirectSessionsProviderId,
   type DirectSessionsSource,
   type DirectSessionsAcpSessionListCapabilityRequest,
@@ -2593,6 +2601,7 @@ export {
   type DirectSessionTakeoverResponse,
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
+  type DirectSessionTakeoverPersistStartResponse,
 } from './directSessions/daemonRpcV1.js';
 
 export {

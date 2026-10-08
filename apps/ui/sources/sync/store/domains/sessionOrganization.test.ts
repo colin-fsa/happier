@@ -35,6 +35,35 @@ function emptySnapshot(input: Partial<SessionOrganizationSnapshot> = {}): Sessio
 }
 
 describe('createSessionOrganizationDomain', () => {
+    it.each([{ failureOrder: [0, 1] }, { failureOrder: [1, 0] }])('restores the due reminder when both overlapping writes fail in order $failureOrder', ({ failureOrder }) => {
+        const harness = createHarness();
+        const original = { sessionId: 's1', standing: true, remindAt: 1000, updatedAt: 1 };
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({ attentionStandings: [original] }));
+        const writes = [
+            harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: true, updatedAt: 2 }),
+            harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: true, remindAt: 2000, updatedAt: 3 }),
+        ];
+        for (const index of failureOrder) harness.get().rollbackSessionOrganizationOptimistic(writes[index]!);
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey['srv-a:s1']).toEqual(original);
+        expect(harness.get().sessionOrganizationOptimisticRecords).toEqual({});
+    });
+
+    it('preserves a newer confirmed reminder when an unrelated write and an older pending clear fail', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: false, remindAt: 1000, updatedAt: 1 }],
+        }));
+        const clear = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, updatedAt: 2 });
+        const unrelated = harness.get().setSessionPinOptimistic('srv-a', 's2', { sessionId: 's2', pinnedAt: 3, sortKey: null });
+        const latest = { sessionId: 's1', standing: false, remindAt: 2000, updatedAt: 4 };
+        const replacement = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', latest);
+        harness.get().confirmSessionAttentionStandingOptimistic(replacement, 's1', latest);
+        harness.get().rollbackSessionOrganizationOptimistic(unrelated);
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey['srv-a:s1']).toEqual(latest);
+        harness.get().rollbackSessionOrganizationOptimistic(clear);
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey['srv-a:s1']).toEqual(latest);
+    });
+
     it('does not publish unchanged loading, error, assignment, or ignored reconciliation state', () => {
         const harness = createHarness();
         harness.get().setSessionOrganizationLoading('srv-a', false);
@@ -264,6 +293,20 @@ describe('createSessionOrganizationDomain', () => {
         expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey).toEqual({
             [buildSessionOrganizationServerKey('srv-a', 's1')]: { sessionId: 's1', standing: true, updatedAt: 5 },
         });
+    });
+
+    it('rebases a pending replacement on the confirmed reminder clear before rollback', () => {
+        const harness = createHarness();
+        harness.get().applySessionOrganizationSnapshot('srv-a', emptySnapshot({
+            attentionStandings: [{ sessionId: 's1', standing: false, remindAt: 1000, updatedAt: 1 }],
+        }));
+        const clear = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, updatedAt: 2 });
+        const replacement = harness.get().setSessionAttentionStandingOptimistic('srv-a', 's1', { sessionId: 's1', standing: false, remindAt: 2000, updatedAt: 3 });
+        harness.get().confirmSessionAttentionStandingOptimistic(clear, 's1', { sessionId: 's1', standing: true, updatedAt: 4 });
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey['srv-a:s1']?.remindAt).toBe(2000);
+        harness.get().rollbackSessionOrganizationOptimistic(replacement);
+        expect(harness.get().sessionOrganizationAttentionStandingsBySessionKey['srv-a:s1'])
+            .toEqual({ sessionId: 's1', standing: true, updatedAt: 4 });
     });
 
     it('clears attention standings for one server without touching another server', () => {

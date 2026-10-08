@@ -257,6 +257,62 @@ describe('deriveSetupStageModel (INV3 — milestone-quantised)', () => {
         expect(model.blocked?.message).toBe('ENOENT: /usr/lib/systemd not found');
     });
 
+    it('names the failed service-install step from Details instead of calling it a setup read', () => {
+        const model = deriveSetupStageModel(runState({
+            status: 'failed',
+            events: [progress('setup.thisComputer.installService', 240)],
+            result: {
+                protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                taskId: 'task_1',
+                ok: false,
+                error: { code: 'cli_command_failed', message: 'Access is denied.' },
+            },
+        }), facts());
+
+        expect(model.statusSentence).toEqual({
+            key: 'setupSurface.blockedStepStatus',
+            params: { step: 'setupSurface.stageServiceStatus' },
+        });
+        expect(model.blocked?.message).toBe('Access is denied.');
+    });
+
+    it.each([
+        ['setup.thisComputer.ensureCli', 'cli_command_failed', 'settings.machineSetupStageInstall'],
+        ['setup.thisComputer.configureRelay', 'cli_command_failed', 'settings.machineSetupStageConnect'],
+        ['setup.thisComputer.auth.request', 'invalid_cli_response', 'settings.machineSetupStageConnect'],
+        ['setup.thisComputer.auth.wait', 'cli_command_failed', 'settings.machineSetupStageConnect'],
+        ['setup.thisComputer.startService', 'invalid_status_result', 'setupSurface.stageServiceStartStatus'],
+        ['setup.thisComputer.restartService', 'cli_command_failed', 'setupSurface.stageServiceRestartStatus'],
+    ])('names the current failed step %s even when the last milestone is different', (stepId, code, step) => {
+        const model = deriveSetupStageModel(runState({
+            status: 'failed',
+            currentStepId: stepId,
+            events: [progress('setup.thisComputer.installService', 240)],
+            result: { protocolVersion: 1, taskId: 'task_1', ok: false, error: { code, message: 'diagnostic' } },
+        }), facts());
+        expect(model.statusSentence).toEqual({ key: 'setupSurface.blockedStepStatus', params: { step } });
+    });
+
+    it('keeps reading setup for an inspection failure, but never guesses a missing or unknown setup step', () => {
+        const failed = runState({
+            status: 'failed',
+            result: { protocolVersion: 1, taskId: 'task_1', ok: false, error: { code: 'cli_command_failed', message: 'diagnostic' } },
+        });
+        expect(deriveSetupStageModel(failed, facts({ entry: 'checking' })).statusSentence).toBe('setupSurface.blockedCliFailedStatus');
+        for (const currentStepId of [null, 'setup.thisComputer.futureStep']) {
+            expect(deriveSetupStageModel({ ...failed, currentStepId }, facts()).statusSentence).toBe('setupSurface.blockedStatusFallback');
+        }
+    });
+
+    it('keeps acquisition failure phases more specific than the enclosing setup step', () => {
+        const model = deriveSetupStageModel(runState({
+            status: 'failed',
+            events: [progress('setup.thisComputer.ensureCli', 1)],
+            result: { protocolVersion: 1, taskId: 'task_1', ok: false, error: { code: 'cli_acquisition_verifying_failed', message: 'bad signature' } },
+        }), facts());
+        expect(model.statusSentence).toBe('setupSurface.acquisitionVerificationFailed');
+    });
+
     it('maps every executor failure code the setup corridor can raise', () => {
         const mapped: Readonly<Record<string, string>> = {
             service_install_blocked: 'setupSurface.blockedServiceConflictStatus',

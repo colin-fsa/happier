@@ -42,11 +42,14 @@ const SYSTEM_TASK_STEP_TRANSLATION_KEYS: Readonly<Record<string, TranslationKey>
     'ssh.complete': 'settings.machineSetupStageFinish',
 };
 
-export function resolveSystemTaskStepLabel(stepId: string | null): string | null {
+export function resolveSystemTaskStepLabel(
+    stepId: string | null,
+    options?: Readonly<{ fallbackToStepId?: boolean }>,
+): string | null {
     if (!stepId) {
         return null;
     }
 
     const translationKey = SYSTEM_TASK_STEP_TRANSLATION_KEYS[stepId];
-    return translationKey ? t(translationKey) : stepId;
+    return translationKey ? t(translationKey) : options?.fallbackToStepId === false ? null : stepId;
 }

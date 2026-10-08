@@ -115,28 +115,14 @@ vi.mock('@/sync/api/account/apiConnectedServicesQuotasV3', () => ({
   getConnectedServiceQuotaSnapshotPlain: getConnectedServiceQuotaSnapshotPlainSpy,
 }));
 
-function isTestInstance(value: ReactTestInstance | string): value is ReactTestInstance {
-  return typeof value !== 'string';
-}
-
-function collectSwitchesWithPressableAncestor(root: ReactTestInstance): ReactTestInstance[] {
-  const nested: ReactTestInstance[] = [];
-
-  function walk(node: ReactTestInstance, hasPressableAncestor: boolean): void {
-    const isPressable = String(node.type) === 'Pressable';
-    if (String(node.type) === 'Switch' && hasPressableAncestor) {
-      nested.push(node);
-    }
-
-    for (const child of node.children) {
-      if (isTestInstance(child)) {
-        walk(child, hasPressableAncestor || isPressable);
-      }
-    }
+function expectRowSwitchOutsidePressables(row: ReactTestInstance): void {
+  const switches = row.findAll((node) => String(node.type) === 'Switch');
+  expect(switches).toHaveLength(1);
+  let ancestor = switches[0].parent;
+  while (ancestor) {
+    expect(String(ancestor.type)).not.toBe('Pressable');
+    ancestor = ancestor.parent;
   }
-
-  walk(root, false);
-  return nested;
 }
 
 function findItemWithRightElement(root: ReactTestInstance, testID: string): ReactTestInstance {
@@ -408,31 +394,37 @@ describe('ConnectedServicesSettingsView quotas', () => {
     const { ConnectedServicesSettingsView } = await import('./ConnectedServicesSettingsView');
     const { ConnectedServicesProviderStateSharingBackendGroups } = await import('./ConnectedServicesProviderStateSharingSettings');
 
-    const { tree: settingsTree } = await renderScreen(<ConnectedServicesSettingsView />);
-    await flushHookEffects({ cycles: 2, turns: 1 });
-    expect(collectSwitchesWithPressableAncestor(settingsTree.root)).toHaveLength(0);
-    const defaultStateRow = findItemWithRightElement(
-      settingsTree.root,
-      'connected-services-provider-state-sharing-state-default',
-    );
-    expect(defaultStateRow.props.mode).toBe('info');
-    expect(defaultStateRow.props.onPress).toBeUndefined();
+    // Mount the real Switch after its Deferred clock boundary settles.
+    vi.useFakeTimers();
+    try {
+      const { tree: settingsTree } = await renderScreen(<ConnectedServicesSettingsView />);
+      await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
+      const defaultStateRow = findItemWithRightElement(
+        settingsTree.root,
+        'connected-services-provider-state-sharing-state-default',
+      );
+      expectRowSwitchOutsidePressables(defaultStateRow);
+      expect(defaultStateRow.props.mode).toBe('info');
+      expect(defaultStateRow.props.onPress).toBeUndefined();
 
-    const { tree: backendTree } = await renderScreen(
-      <ConnectedServicesProviderStateSharingBackendGroups
-        settings={ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSetting.current)}
-        setSettings={setSettingMutableSpy}
-        agentIds={['codex']}
-      />,
-    );
-    await flushHookEffects({ cycles: 2, turns: 1 });
-    expect(collectSwitchesWithPressableAncestor(backendTree.root)).toHaveLength(0);
-    const backendStateRow = findItemWithRightElement(
-      backendTree.root,
-      'connected-services-provider-state-sharing-agent-codex-state',
-    );
-    expect(backendStateRow.props.mode).toBe('info');
-    expect(backendStateRow.props.onPress).toBeUndefined();
+      const { tree: backendTree } = await renderScreen(
+        <ConnectedServicesProviderStateSharingBackendGroups
+          settings={ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSetting.current)}
+          setSettings={setSettingMutableSpy}
+          agentIds={['codex']}
+        />,
+      );
+      await flushHookEffects({ cycles: 2, turns: 1, runOnlyPendingTimers: true });
+      const backendStateRow = findItemWithRightElement(
+        backendTree.root,
+        'connected-services-provider-state-sharing-agent-codex-state',
+      );
+      expectRowSwitchOutsidePressables(backendStateRow);
+      expect(backendStateRow.props.mode).toBe('info');
+      expect(backendStateRow.props.onPress).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('writes provider state sharing overrides by agent id', async () => {

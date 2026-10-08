@@ -4,14 +4,15 @@
 // runs `daemon.service.status.v1` through `start_system_task`, which spawns the app's bundled
 // hsetup. That read is read-only only when a CLI resolves without acquisition, so the smoke points
 // the shipped `HAPPIER_BOOTSTRAP_CLI_PATH` override (provenance `override`, never approved
-// unattended) at a stand-in `happier` that records who ran it and answers only the status read.
+// unattended) at a stand-in `happier` that records who ran it and answers only startup reads.
 // No hook is added to the app: the probe observes, from outside, what the release build already does.
 
 import fs from 'node:fs';
 import path from 'node:path';
 
 /** Every command the status read may run; anything else means the smoke mutated the computer. */
-const READ_ONLY_INVOCATIONS = [['--version'], ['daemon', 'status', '--json']];
+// CLI owner `daemon/service/cli.ts` lists service inventory without runtime acquisition or lifecycle writes.
+const READ_ONLY_INVOCATIONS = [['--version'], ['daemon', 'status', '--json'], ['daemon', 'service', 'list', '--json']];
 const STATUS_READ = ['daemon', 'status', '--json'];
 const POLL_INTERVAL_MS = 250;
 
@@ -67,6 +68,7 @@ mv "$tmp" "$records/$$"
 case "$command_line" in
   "--version") echo '0.2.99' ;;
   "daemon status --json") echo ${shellQuote(JSON.stringify(FRESH_COMPUTER_STATUS))} ;;
+  "daemon service list --json") echo ${shellQuote(JSON.stringify({ entries: [], services: [] }))} ;;
   *) echo "stand-in happier: refusing non-read-only command: $command_line" >&2; exit 64 ;;
 esac
 `;

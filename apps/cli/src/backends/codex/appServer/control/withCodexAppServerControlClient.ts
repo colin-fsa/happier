@@ -45,6 +45,8 @@ export async function withCodexAppServerControlClient<T>(params: Readonly<{
     processEnv?: NodeJS.ProcessEnv;
     timeoutMs?: number | null;
     run: (client: CodexAppServerClient) => Promise<T>;
+    signal?: AbortSignal;
+    onCleanup?: (cleanup: () => Promise<void>) => void;
 }>): Promise<CodexAppServerControlClientResult<T>> {
     const backendMode = resolveCodexSessionBackendMode({
         metadata: params.metadata ?? null,
@@ -61,6 +63,8 @@ export async function withCodexAppServerControlClient<T>(params: Readonly<{
     let clientStarted = false;
     try {
         const value = await withCodexAppServerClient({
+            signal: params.signal,
+            onCleanup: params.onCleanup,
             cwd: params.cwd,
             processEnv: await buildControlProcessEnv({
                 processEnv: params.processEnv,

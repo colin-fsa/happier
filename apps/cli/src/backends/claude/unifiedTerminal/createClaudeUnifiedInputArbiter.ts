@@ -3,6 +3,7 @@ import type { TerminalInputInjectionResult, TerminalLifecycleObservation, Termin
 import { isNonSteerablePromptPayload, parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { logger } from '@/ui/logger';
 
+import { isConditionalPendingSteerClaim } from '@happier-dev/protocol';
 import type {
   ClaudeUnifiedInFlightSteerEvaluator,
   ClaudeUnifiedInputArbiter,
@@ -99,8 +100,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
   deferredRedriveFallbackMs?: number | undefined;
   /**
    * Canonical session turn lifecycle probe (Lane N2). The canonical lifecycle (the session
-   * client's turn owner) is a stronger truth source than a one-frame screen parse: when it
-   * reports NO active turn during stale-turn recovery, the prompt drains without requiring
+   * client's turn owner) supplies fallback evidence: when it reports NO active turn during
+   * stale-turn recovery, the prompt drains without requiring
    * turn-end screen evidence. Absent probe keeps the fail-closed screen-evidence requirement.
    */
   isCanonicalTurnActive?: (() => boolean) | undefined;
@@ -869,10 +870,12 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         return;
       }
       const next = queue[0];
-      if (next.pendingProviderAction === 'steer' && turnState !== 'running') {
-        if (await failExactDelivery(next) === 'dropped') continue;
-        return;
-      }
+      const isSteerDelivery = next.pendingProviderAction === 'steer'
+        || next.pendingRequestedAction?.kind === 'steer_now';
+      const isConditionalSteer = isConditionalPendingSteerClaim({
+        requestedAction: next.pendingRequestedAction,
+        providerAction: next.pendingProviderAction,
+      });
       if (next.pendingProviderAction === 'interrupt_and_send' && turnState === 'running') {
         if (!opts.interruptActiveTurn) {
           if (await failExactDelivery(next) === 'dropped') continue;
@@ -897,7 +900,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         }
         continue;
       }
-      const bypassQuietWindowForRunningSteer = next?.origin.kind === 'ui_pending' && turnState === 'running';
+      const bypassQuietWindowForRunningSteer = next.origin.kind === 'ui_pending'
+        && (turnState === 'running' || isSteerDelivery);
       const readiness = resolveTerminalInjectionReadiness({
         nowMs: nowMs(),
         firstObservedAtMs,
@@ -922,7 +926,8 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
       }
 
       let injectAsInFlightSteer = false;
-      if (next.origin.kind === 'ui_pending' && turnState === 'running') {
+      let injectionTurnState = turnState;
+      if (next.origin.kind === 'ui_pending' && (turnState === 'running' || isSteerDelivery)) {
         // In-flight steering (D19): evaluate the SCREEN before deciding. Claude's TUI natively
         // queues text typed mid-generation and submits it at turn end (probe P-D), so a safe
         // actively-generating screen can take the prompt now instead of holding it invisibly
@@ -933,7 +938,7 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         let steerTurnLikelyEnded = false;
         let canonicalTurnInactive = false;
         if (
-          (next.pendingProviderAction === 'steer' || next.pendingProviderAction === undefined)
+          (isSteerDelivery || next.pendingProviderAction === undefined)
           && opts.evaluateInFlightSteer
           && !isNonSteerablePrompt(next)
         ) {
@@ -947,13 +952,10 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
           }
         }
         canonicalTurnInactive = readCanonicalTurnInactive();
-        if (canonicalTurnInactive) {
-          steerSafe = false;
-        }
         if (disposed || queue[0] !== next) continue;
-        if (turnState !== 'running') continue;
-        if (!steerSafe) {
-          if (next.pendingProviderAction === 'steer') {
+        if (turnState !== 'running' && !isSteerDelivery) continue;
+        if (!steerSafe && turnState === 'running') {
+          if (isConditionalSteer) {
             if (await failExactDelivery(next) === 'dropped') continue;
             return;
           }
@@ -979,9 +981,18 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
           scheduleRetryDrain(busyTurnFallbackWakeMs);
           return;
         }
-        injectAsInFlightSteer = true;
+        if (steerSafe) {
+          // Native screen evidence owns injection and acceptance classification. Recorded turn
+          // state may lag either the start or the end of Claude's live generation.
+          injectAsInFlightSteer = !steerTurnLikelyEnded;
+          injectionTurnState = injectAsInFlightSteer ? 'running' : 'idle';
+        }
       }
-      const acceptance = resolvePromptAcceptance(turnState);
+      if (isConditionalSteer && !injectAsInFlightSteer) {
+        if (await failExactDelivery(next) === 'dropped') continue;
+        return;
+      }
+      const acceptance = resolvePromptAcceptance(injectionTurnState);
       const injectionAcceptance: PendingProviderAcceptance<Mode> = { batch: next, acceptance };
       providerAcceptanceByBatch.set(next, acceptance);
       headInputState = 'injecting';
@@ -990,7 +1001,14 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
       try {
         result = await opts.injectPrompt(
           next,
-          injectAsInFlightSteer ? { inFlightSteer: true } : undefined,
+          {
+            ...(injectAsInFlightSteer ? { inFlightSteer: true } : {}),
+            resolveDeliveryState: () => {
+              if (providerAcceptanceObservedDuringInjection === injectionAcceptance) return 'accepted';
+              const state = readPromptDeliveryState(next);
+              return state === 'pending' ? null : state;
+            },
+          },
         );
       } catch (error) {
         clearInjectionAcceptanceForBatch(next);
@@ -1000,7 +1018,15 @@ export function createClaudeUnifiedInputArbiter<Mode = unknown>(opts: Readonly<{
         injectingProviderAcceptance = null;
       }
       const providerAcceptedDuringInjection =
-        providerAcceptanceObservedDuringInjection === injectionAcceptance;
+        providerAcceptanceObservedDuringInjection === injectionAcceptance
+        || readPromptDeliveryState(next) === 'accepted';
+      if (readPromptDeliveryState(next) === 'retired') {
+        if (queue[0] === next) queue.shift();
+        forgetRetiredBatchDelivery(next);
+        clearCurrentHeadBlocker();
+        headInputState = queue.length > 0 ? 'waiting_for_readiness' : terminalCustody.length > 0 ? 'terminal_custody' : null;
+        continue;
+      }
       if (result.status === 'injected') {
         lastDeferredReason = null;
         lastFailureReason = null;

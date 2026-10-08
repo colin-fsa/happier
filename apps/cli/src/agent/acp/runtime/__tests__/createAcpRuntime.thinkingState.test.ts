@@ -10,6 +10,38 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClientWithOverrides } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (thinking state)', () => {
+  it('retires turn activity when durable transcript publication fails during flush', async () => {
+    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
+    const thinkingChanges: boolean[] = [];
+    const keepAliveThinking: boolean[] = [];
+    const failure = new Error('transcript transport unavailable');
+    const session = createBasicSessionClientWithOverrides({
+      sendAgentMessageCommitted: async () => { throw failure; },
+      keepAlive: (thinking) => { keepAliveThinking.push(thinking); },
+    });
+    const runtime = createAcpRuntime({
+      provider: 'pi', directory: '/tmp', session, messageBuffer: new MessageBuffer(),
+      mcpServers: {}, permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: (thinking) => { thinkingChanges.push(thinking); },
+      ensureBackend: async () => backend,
+      sessionMedia: { persist: async () => ({ media: [], unavailable: [{
+        id: 'media-unavailable', role: 'output', category: 'generated', mediaKind: 'image',
+        code: 'source_not_supported', origin: { source: 'acp-content' },
+      }] }) },
+    });
+    await runtime.startOrLoad({});
+    runtime.beginTurn();
+    backend.emit({ type: 'session-media', source: 'acp-content', media: [{
+      kind: 'base64', data: 'iVBORw0KGgo=', mimeType: 'image/png',
+      origin: { source: 'acp-content', providerEventId: 'event-1', contentIndex: 0 },
+      dedupeKey: 'acp-content:event-1:0',
+    }] } satisfies AgentMessage);
+    await expect(runtime.flushTurn()).rejects.toBe(failure);
+    expect(runtime.isTurnInFlight()).toBe(false);
+    expect(thinkingChanges.at(-1)).toBe(false);
+    expect(keepAliveThinking.at(-1)).toBe(false);
+  });
+
   it('sets thinking on beginTurn and clears on flushTurn', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 

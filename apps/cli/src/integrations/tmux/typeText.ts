@@ -2,6 +2,7 @@ import type { TmuxCommandResult } from './types';
 import type {
   TerminalInjectionDuplicateRisk,
   TerminalInjectionFailurePhase,
+  TerminalPromptInput,
 } from '../terminalHost/_types';
 import { splitStringByCodePoints } from '../terminalHost/chunks';
 import {
@@ -138,6 +139,8 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
   verifyStagedBeforeSubmit?: ((params: Readonly<{ text: string; remainingTimeoutMs?: number | undefined }>) => Promise<boolean>) | undefined;
   verifyAfterSubmit?: ((params: Readonly<{ text: string; remainingTimeoutMs?: number | undefined }>) => Promise<boolean>) | undefined;
   authorizeBeforeWrite?: (() => boolean | Promise<boolean>) | undefined;
+  signal?: AbortSignal | undefined;
+  resolveDeliveryState?: TerminalPromptInput['resolveDeliveryState'];
 }>): Promise<TmuxNativePasteTextResult> {
   const progress: TmuxNativePasteProgress = {
     bufferLoaded: false,
@@ -244,6 +247,8 @@ export async function pasteTextViaTmuxBuffer(params: Readonly<{
 
   const submission = await runTerminalPromptSubmission({
     promptText: normalizedText,
+    signal: params.signal,
+    resolveDeliveryState: params.resolveDeliveryState,
     ...(params.verifyStagedBeforeSubmit
       ? {
         verifyStagedBeforeSubmit: async ({ promptText, remainingTimeoutMs }) => params.verifyStagedBeforeSubmit?.({

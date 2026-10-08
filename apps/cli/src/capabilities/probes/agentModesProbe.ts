@@ -272,7 +272,7 @@ export async function probeAgentModesBestEffort(params: {
       }
     }
 
-    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId);
+    const spawnValidation = await validateCatalogAcpProbeSpawn(params.agentId, { processEnv: params.processEnv, cwd });
     if (!spawnValidation.ok) {
       agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
       return fallback;
@@ -290,6 +290,7 @@ export async function probeAgentModesBestEffort(params: {
         mcpServers: {},
         permissionHandler,
         permissionMode: 'default',
+        readinessOnly: true,
       });
       backend = created.backend;
 

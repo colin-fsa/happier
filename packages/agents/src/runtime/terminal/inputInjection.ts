@@ -36,6 +36,10 @@ export type TerminalInputInjectionDeferredBlocker =
 export type TerminalPromptInput = Readonly<{
   text: string;
   multiline: boolean;
+  /** Local session lifetime; transport timeouts do not bound provider redraw/consumption. */
+  signal?: AbortSignal | undefined;
+  /** Read the existing delivery owner; screen verification must not replay a settled input. */
+  resolveDeliveryState?: (() => 'accepted' | 'retired' | null) | undefined;
   origin: Readonly<{
     kind: 'ui_pending' | 'ui_immediate' | 'rpc';
     clientId?: string | undefined;

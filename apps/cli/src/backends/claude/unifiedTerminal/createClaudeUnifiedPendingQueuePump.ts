@@ -80,6 +80,7 @@ export function createClaudeUnifiedPendingQueuePump<Mode = unknown>(opts: Readon
         maxUserMessageSeq: batch.maxUserMessageSeq ?? null,
         userMessageLocalIds: batch.userMessageLocalIds ?? [],
         ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+        ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
         ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
       });
       await opts.arbiter.drainWhenSafe();

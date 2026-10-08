@@ -516,6 +516,8 @@ function main() {
   const baseTauriEnv = applyExpoWebModalEnv({
     CI: 'true',
     APP_ENV: environment,
+    // Preparation runs outside Tauri's hook, so forward the same target to hsetup.
+    ...(tauriTarget ? { TAURI_ENV_TARGET_TRIPLE: tauriTarget } : {}),
     ...(process.platform === 'linux' ? resolveLinuxTauriBundlerEnvOverrides(process.env) : {}),
     ...(signingKeyPath ? { TAURI_SIGNING_PRIVATE_KEY: signingKeyPath } : {}),
     ...(signingKeyPassword ? { TAURI_SIGNING_PRIVATE_KEY_PASSWORD: signingKeyPassword } : {}),

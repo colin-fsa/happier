@@ -45,6 +45,9 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
   const meta = buildStreamedTranscriptSegmentSnapshotMeta({ segment, state, interruptedReason, nowMs });
 
   const markDurablyPersisted = (commitResult: SessionMessageCommitResult | null) => {
+    // Admission may overlap an earlier checkpoint ACK. That checkpoint must not
+    // downgrade an already acknowledged terminal snapshot.
+    if (state === 'streaming' && segment.lastCommittedState !== null && segment.lastCommittedState !== 'streaming') return;
     segment.didWriteDurable = true;
     segment.lastDurableText = commitText;
     segment.lastCheckpointAtMs = Date.now();
@@ -118,12 +121,11 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
   let commitFailed = false;
   const observeCommitFailure = (error: unknown) => {
     commitFailed = true;
-    if (params.admissionOnly !== true) {
-      segment.lastCommitFailedAtMs = Date.now();
-      segment.lastCommitError = error;
-      if (state === 'streaming' && params.failureRetryDelayMs !== undefined) {
-        segment.durableRetryNotBeforeMs = Date.now() + params.failureRetryDelayMs;
-      }
+    if (state === 'streaming' && segment.lastCommittedState !== null && segment.lastCommittedState !== 'streaming') return;
+    segment.lastCommitFailedAtMs = Date.now();
+    segment.lastCommitError = error;
+    if (state === 'streaming' && params.failureRetryDelayMs !== undefined) {
+      segment.durableRetryNotBeforeMs = Date.now() + params.failureRetryDelayMs;
     }
     const serializedError = serializeAxiosErrorForLog(error);
     const failure = segment.durableCommitFailure;
@@ -157,17 +159,13 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
     );
   };
 
-  if (params.admissionOnly === true) {
-    void committedSnapshotPromise.catch(observeCommitFailure);
-    return;
-  }
-
-  void committedSnapshotPromise
+  return committedSnapshotPromise
     .then((result) => {
       if (result.persisted) markDurablyPersisted(result.commitResult);
     })
     .catch(observeCommitFailure)
     .finally(() => {
+      if (params.admissionOnly === true) return;
       segment.isCommittingDurable = false;
       const pendingCommit = segment.pendingDurableCommit;
       segment.pendingDurableCommit = null;

@@ -156,9 +156,6 @@ async function setupHarness() {
     vi.doMock('@/sync/domains/session/spawn/windowsRemoteSessionConsole', () => ({
         resolveWindowsRemoteSessionConsoleFromMachineMetadata: vi.fn(() => undefined),
     }));
-    vi.doMock('@/components/sessions/new/modules/profileHelpers', () => ({
-        transformProfileToEnvironmentVars: vi.fn(() => ({})),
-    }));
     vi.doMock('@/sync/runtime/time', () => ({
         nowServerMs: vi.fn(() => Date.now()),
     }));

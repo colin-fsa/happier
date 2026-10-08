@@ -3141,7 +3141,7 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
                 setPermissionMode: vi.fn(),
                 setModel: vi.fn(),
                 setMaxThinkingTokens: vi.fn(),
-                supportedCommands: vi.fn(async () => [{ command: '/compact', description: 'Compact context' }]),
+                supportedCommands: vi.fn(async () => [{ name: 'compact', description: 'Compact context', argumentHint: '' }]),
                 supportedModels: vi.fn(async () => [{ id: 'm1', displayName: 'Model 1' }]),
             } as any;
         });
@@ -3166,8 +3166,8 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
         expect(onCapabilities).toHaveBeenCalledWith(
             expect.objectContaining({
-                slashCommands: ['/compact'],
-                slashCommandDetails: [{ command: '/compact', description: 'Compact context' }],
+                slashCommands: ['compact'],
+                slashCommandDetails: [{ command: 'compact', description: 'Compact context' }],
             }),
         );
     });

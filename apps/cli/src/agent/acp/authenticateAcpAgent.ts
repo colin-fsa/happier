@@ -81,7 +81,6 @@ export async function authenticateAcpAgent(params: Readonly<{
   } finally {
     clearTimeout(initializeTimer);
     if (onAbort) params.signal?.removeEventListener('abort', onAbort);
-    child.stderr?.removeListener('data', params.onStderr);
     connection?.close();
     try {
       await killProcessTree(child);
@@ -92,6 +91,9 @@ export async function authenticateAcpAgent(params: Readonly<{
       throw cleanupError;
     } finally {
       await connection?.closed.catch(() => {});
+      // ACP success on stdout can arrive before the browser link on stderr.
+      // Keep explicit-login output attached until provider cleanup has settled.
+      child.stderr?.removeListener('data', params.onStderr);
     }
   }
 }

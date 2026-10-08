@@ -1150,6 +1150,26 @@ describe('PoolDetailView', () => {
         expect(modalSpies.alert).not.toHaveBeenCalled();
     });
 
+    it('offers expiry-first only on supporting servers and saves the explicit choice', async () => {
+        const screen = await renderPoolDetail();
+        const dropdown = findDropdown(screen, 'connected-services-pool-detail:strategy');
+        if (!dropdown) throw new Error('Strategy control is missing');
+        expect(dropdown.props.items.map((item: { id: string }) => item.id)).toContain('expiry_first');
+        await act(async () => {
+            dropdown.props.onSelect('expiry_first');
+            await flushAsyncHandlers();
+        });
+        expect(authGroupApiSpies.patchConnectedServiceAuthGroupV3).toHaveBeenCalledWith(
+            expect.anything(), expect.objectContaining({ patch: expect.objectContaining({ policy: { strategy: 'expiry_first' } }) }),
+        );
+        featureEnabledById.set('connectedServices.poolExpiryFirst', false);
+        const unsupported = await renderPoolDetail();
+        const unsupportedDropdown = findDropdown(unsupported, 'connected-services-pool-detail:strategy');
+        if (!unsupportedDropdown) throw new Error('Strategy control is missing');
+        expect(unsupportedDropdown.props.items.map((item: { id: string }) => item.id))
+            .not.toContain('expiry_first');
+    });
+
     it('surfaces every Behavior control including the two previously-hidden knobs', async () => {
         const screen = await renderPoolDetail();
         await expandAdvanced(screen);

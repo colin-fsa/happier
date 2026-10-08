@@ -7,6 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
+import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
+
+const loadFileVideoPreview = async () => (await import('@/components/sessions/files/content/FileVideoPreview')).FileVideoPreview;
 
 type FileStateProps = {
     theme: any;
@@ -107,10 +110,14 @@ export function FileErrorState({ theme, filePath, error, onRetry }: FileStatePro
     );
 }
 
-export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreviewSvgXml }: FileStateProps & {
+export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreviewSvgXml, sessionId, videoMimeType, videoPreviewRevision, isActive = true }: FileStateProps & {
     filePath: string;
     imagePreviewUri?: string | null;
     imagePreviewSvgXml?: string | null;
+    sessionId?: string;
+    videoMimeType?: string | null;
+    videoPreviewRevision?: string | null;
+    isActive?: boolean;
 }) {
     const svgXml = React.useMemo(() => {
         if (typeof imagePreviewSvgXml === 'string' && imagePreviewSvgXml.trim().length > 0) {
@@ -142,6 +149,14 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreview
                 padding: 20,
             }}
         >
+            {sessionId && videoMimeType ? (
+                <SessionPaneLazyLoader
+                    key={JSON.stringify([sessionId, filePath, videoPreviewRevision])}
+                    testID="file-video-module-loading"
+                    load={loadFileVideoPreview}
+                    props={{ sessionId, filePath, mimeType: videoMimeType, revision: videoPreviewRevision, isActive }}
+                />
+            ) : null}
             {typeof imagePreviewUri === 'string' && imagePreviewUri.trim().length > 0 ? (
                 <View
                     style={{
@@ -176,9 +191,9 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreview
                     ...Typography.default('semiBold'),
                 }}
             >
-                {t('files.binaryFile')}
+                {sessionId && videoMimeType ? t('files.videoPreview') : t('files.binaryFile')}
             </Text>
-            <Text
+            {sessionId && videoMimeType ? null : <Text
                 style={{
                     fontSize: 16,
                     color: theme.colors.text.secondary,
@@ -187,7 +202,7 @@ export function FileBinaryState({ theme, filePath, imagePreviewUri, imagePreview
                 }}
             >
                 {t('files.cannotDisplayBinary')}
-            </Text>
+            </Text>}
             <Text
                 style={{
                     fontSize: 14,

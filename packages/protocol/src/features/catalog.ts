@@ -99,6 +99,12 @@ const FEATURE_CATALOG_DEFINITION = {
     dependencies: ['connectedServices.accountFallback', 'connectedServices.quotas'],
     representation: 'server',
   },
+  'connectedServices.poolExpiryFirst': {
+    description: 'Expiry-first selection strategy for connected service account pools.',
+    defaultFailMode: 'fail_closed',
+    dependencies: ['connectedServices.accountGroups'],
+    representation: 'server',
+  },
   channelBridges: {
     description: 'Channel bridge integrations (Telegram/Discord/etc).',
     defaultFailMode: 'fail_closed',

@@ -37,13 +37,19 @@ type BulkTransferDownloadFinalizeResponse = Readonly<{
     error?: string;
 }>;
 
-async function cleanupFailedDestination(destination: BulkTransferFileDestination): Promise<void> {
-    if (destination.cleanup) {
-        await destination.cleanup();
-        return;
-    }
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
-    await destination.close();
+async function cleanupFailedDestination(destination: BulkTransferFileDestination, originalError: unknown): Promise<void> {
+    try {
+        if (destination.cleanup) await destination.cleanup();
+        else await destination.close();
+    } catch (cleanupError) {
+        throw Object.assign(new Error(`${errorMessage(originalError)}; Failed to clean up downloaded file: ${errorMessage(cleanupError)}`), {
+            errors: [originalError, cleanupError],
+        });
+    }
 }
 
 export async function downloadBulkPayloadToFile(params: Readonly<{
@@ -60,43 +66,51 @@ export async function downloadBulkPayloadToFile(params: Readonly<{
     | Readonly<{ ok: true; name: string; sizeBytes: number }>
     | Readonly<{ ok: false; error: string }>
 > {
-    const recipientKeyPair = createTransferRecipientKeyPair();
-    const init = await params.init({
-        recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
-    });
+    let failure: { error: unknown } | null = null;
+    try {
+        const recipientKeyPair = createTransferRecipientKeyPair();
+        const init = await params.init({
+            recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+        });
 
-    if (init.success !== true) {
-        await cleanupFailedDestination(params.destination);
+        if (init.success !== true) {
+            failure = { error: new Error(init.error) };
+            return {
+                ok: false,
+                error: init.error,
+            };
+        }
+
+        const download = await downloadInChunks<
+            BulkTransferDownloadInitResponse,
+            BulkTransferDownloadChunkResponse,
+            BulkTransferDownloadFinalizeResponse
+        >({
+            init: async () => init,
+            readChunk: async (request) => await params.readChunk(request),
+            finalize: async (request) => await params.finalize(request),
+            abort: params.abort ?? null,
+            recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
+            writeBytes: async (bytes) => await params.destination.writeBytes(bytes),
+            onProgress: params.onProgress ?? null,
+            signal: params.signal ?? null,
+        });
+
+        if (!download.ok) {
+            failure = { error: new Error(download.error) };
+            return download;
+        }
+
+        await params.destination.close();
         return {
-            ok: false,
-            error: init.error,
+            ok: true,
+            name: init.name,
+            sizeBytes: download.sizeBytes,
         };
+    } catch (error) {
+        failure = { error };
+        throw error;
+    } finally {
+        if (failure) await cleanupFailedDestination(params.destination, failure.error);
     }
-
-    const download = await downloadInChunks<
-        BulkTransferDownloadInitResponse,
-        BulkTransferDownloadChunkResponse,
-        BulkTransferDownloadFinalizeResponse
-    >({
-        init: async () => init,
-        readChunk: async (request) => await params.readChunk(request),
-        finalize: async (request) => await params.finalize(request),
-        abort: params.abort ?? null,
-        recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
-        writeBytes: async (bytes) => await params.destination.writeBytes(bytes),
-        onProgress: params.onProgress ?? null,
-        signal: params.signal ?? null,
-    });
-
-    if (!download.ok) {
-        await cleanupFailedDestination(params.destination);
-        return download;
-    }
-
-    await params.destination.close();
-    return {
-        ok: true,
-        name: init.name,
-        sizeBytes: download.sizeBytes,
-    };
 }

@@ -622,7 +622,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
     ]);
   });
 
-  it('terminalizes the failed turn before a delayed transcript flush can admit the next turn', async () => {
+  it('terminalizes the failed turn while delayed transcript settlement is pending', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const mutations: SessionTurnMutationV1[] = [];
     const committed: ACPMessageData[] = [];
@@ -667,7 +667,12 @@ describe('createAcpRuntime (status error surfacing)', () => {
     backend.emit({ type: 'status', status: 'error', detail: 'Provider failed.' } satisfies AgentMessage);
     await expect.poll(() => committed.some((body) => body.type === 'message')).toBe(true);
 
-    await runtime.flushTurn();
+    await expect.poll(() => mutations.map((mutation) => mutation.action)).toEqual(['begin', 'fail']);
+    expect(sessionTurnLifecycle.getActiveTurnId()).toBeNull();
+    expect(committed.some((body) => body.type === 'turn_failed')).toBe(false);
+
+    // Start the next turn while the status-error flush is still awaiting the durable commit.
+    // flushTurn itself must await settlement, so awaiting it here would deadlock this fixture.
     runtime.beginTurn();
     backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
     delayedAssistantCommit.resolve();
@@ -687,7 +692,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
     }));
   });
 
-  it('terminalizes an aborted turn before a delayed transcript flush can admit the next turn', async () => {
+  it('terminalizes an aborted turn while delayed transcript settlement is pending', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
     const mutations: SessionTurnMutationV1[] = [];
     const committed: ACPMessageData[] = [];
@@ -736,7 +741,12 @@ describe('createAcpRuntime (status error surfacing)', () => {
     } satisfies AgentMessage);
     await expect.poll(() => committed.some((body) => body.type === 'message')).toBe(true);
 
-    await runtime.flushTurn();
+    await expect.poll(() => mutations.map((mutation) => mutation.action)).toEqual(['begin', 'cancel']);
+    expect(sessionTurnLifecycle.getActiveTurnId()).toBeNull();
+    expect(committed.some((body) => body.type === 'turn_aborted')).toBe(false);
+
+    // Start the next turn while the status-error flush is still awaiting the durable commit.
+    // flushTurn itself must await settlement, so awaiting it here would deadlock this fixture.
     runtime.beginTurn();
     backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
     delayedAssistantCommit.resolve();

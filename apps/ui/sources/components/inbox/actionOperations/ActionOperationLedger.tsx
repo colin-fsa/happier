@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ListSection } from '@/components/ui/lists/ListSection';
 import { useNowMs } from '@/hooks/time/useNowMs';
 import { t } from '@/text';
+import { isActionOperationCancellationRequested } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 
 import {
@@ -122,7 +123,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     )
         && props.canDismissOperation?.(props.operation) === true;
     const canStop = !canDismiss && !presentation.terminal && props.operation.cancellation === 'supported';
-    const [stopPending, setStopPending] = React.useState(false);
+    const [stopRequestPending, setStopPending] = React.useState(false);
+    const stopPending = stopRequestPending || isActionOperationCancellationRequested(props.operation);
     const [stopFailed, setStopFailed] = React.useState(false);
 
     const stop = React.useCallback((event?: GestureResponderEvent) => {

@@ -95,9 +95,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     tagsEnabled: boolean;
     onSetTags?: ((newTags: string[]) => void) | null;
     onTogglePinned?: (() => void) | null;
-    folderMoveMenuItems?: readonly DropdownMenuItem[];
     onMoveToFolder?: () => void;
-    onSelectFolderMoveMenuItem?: (itemId: string) => void;
     leadingMenuItems?: readonly DropdownMenuItem[];
     onSelectLeadingMenuItem?: (itemId: string) => void | Promise<void>;
     selectionModeAvailable?: boolean;
@@ -245,7 +243,6 @@ export function useSessionRowActionMenu(params: Readonly<{
             target,
             iconColor: params.iconColor,
             leadingItems: params.leadingMenuItems,
-            folderMoveMenuItems: params.folderMoveMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             reminderPresets,
             reminder: params.reminder,
@@ -268,7 +265,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
         return items;
     }, [
-        params.folderMoveMenuItems,
         params.iconColor,
         params.isNativeMobile,
         params.leadingMenuItems,
@@ -292,10 +288,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
         if (leadingMenuItemIds.has(itemId)) {
             await params.onSelectLeadingMenuItem?.(itemId);
-            return;
-        }
-        if (itemId.startsWith('move-to-folder:')) {
-            params.onSelectFolderMoveMenuItem?.(itemId);
             return;
         }
         if (itemId.startsWith(`${SESSION_ATTENTION_REMINDER_MENU_ID}:`)) {
@@ -369,7 +361,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         params.onEnterSelectionMode,
         params.onMoveToFolder,
         params.onSelectLeadingMenuItem,
-        params.onSelectFolderMoveMenuItem,
         reminderPresets,
         setReminderPresets,
     ]);

@@ -31,6 +31,7 @@ import {
     parseConnectedServiceGroupViewModels,
     resolveConnectedServiceGroupMemberCredentialHealthStatus,
     resolveConnectedServiceGroupProfileTitle,
+    resolveConnectedServiceGroupStrategyLabel,
     type ConnectedServiceGroupMemberViewModel,
     type ConnectedServiceGroupProfileLike,
     type ConnectedServiceGroupViewModel,
@@ -215,11 +216,7 @@ const PoolRow = React.memo(function PoolRow(props: Readonly<{
         })
         : null;
 
-    const strategyLabel = group.policy.strategy === 'manual'
-        ? t('connectedServices.detail.groups.strategyManual')
-        : group.policy.strategy === 'least_limited'
-            ? t('connectedServices.detail.groups.strategyLeastLimited')
-            : t('connectedServices.detail.groups.strategyPriority');
+    const strategyLabel = resolveConnectedServiceGroupStrategyLabel(group.policy.strategy);
 
     const warningVariant = healthToStateVariant(aggregateHealth);
 

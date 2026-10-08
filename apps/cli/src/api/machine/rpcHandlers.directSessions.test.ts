@@ -42,6 +42,15 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
 }));
 
 import { registerMachineDirectSessionsRpcHandlers } from './rpcHandlers.directSessions';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
+
+function registerWithActionOperations(params: Parameters<typeof registerMachineDirectSessionsRpcHandlers>[0]) {
+  const runner = createActionOperationRunner({ store: createActionOperationStore() });
+  registerMachineDirectSessionsRpcHandlers({ ...params, actionOperations: {
+    runner, getScope: async () => ({ accountId: 'account-1', machineId: 'm1' }),
+  } });
+}
 
 function jsonlLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
@@ -121,7 +130,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       },
     };
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+    registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
     expect(handler).toBeDefined();
@@ -226,7 +235,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     }), 'utf8');
 
     try {
-      registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+      registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
       const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
       expect(handler).toBeDefined();
@@ -309,7 +318,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
     } as any;
 
     try {
-      registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+      registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
       const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
       expect(handler).toBeDefined();
@@ -412,7 +421,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+    registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST);
     expect(handler).toBeDefined();
@@ -516,7 +525,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+    registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST);
     expect(handler).toBeDefined();
@@ -740,7 +749,7 @@ describe('registerMachineDirectSessionsRpcHandlers', () => {
       },
     } as any;
 
-    registerMachineDirectSessionsRpcHandlers({ rpcHandlerManager, spawnSession, stopSession });
+    registerWithActionOperations({ rpcHandlerManager, spawnSession, stopSession });
 
     const handler = registered.get(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER);
     expect(handler).toBeDefined();

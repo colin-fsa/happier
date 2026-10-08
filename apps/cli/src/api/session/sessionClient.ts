@@ -255,6 +255,7 @@ import {
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createSessionSocketTransport } from './connection/createSessionSocketTransport';
 import { ensureSessionConnectionSupervisionActive } from './connection/ensureSessionConnectionSupervisionActive';
+import { SESSION_CONNECTION_STATE_EVENT } from './connection/sessionConnectionStateEvent';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import {
     createAuthenticationHttpStatusError,
@@ -517,7 +518,6 @@ function logSessionConnectionState(state: ManagedConnectionState): void {
     });
 }
 
-const SESSION_CONNECTION_STATE_EVENT = 'session-connection-state';
 const SESSION_PRESENCE_RECONNECT_REASSERT_DELAY_MS = 2_000;
 // How long a `thinking=true` keepalive may persist against an already-terminal turn status
 // before the publisher self-heals it to idle. Comfortably longer than a new turn's
@@ -3294,20 +3294,16 @@ export class ApiSessionClient extends EventEmitter {
             this.markAgentQueueEchoSuppressedLocalId(localId);
             this.markAgentQueueDeliveredLocalId(localId);
         }
+        const deliveryInfo: SessionUserMessageDeliveryInfo = {
+            seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
+            ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
+            ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
+            ...(message?.requestedAction ? { pendingRequestedAction: message.requestedAction } : {}),
+        };
         if (this.pendingMessageCallback) {
-            await this.pendingMessageCallback(userMessage, {
-                seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
-                ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
-                ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
-            });
+            await this.pendingMessageCallback(userMessage, deliveryInfo);
         } else {
-            if (localId) {
-                this.bufferedPendingMessageDeliveryInfoByLocalId.set(localId, {
-                    seq: typeof message?.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null,
-                    ...(opts.providerAcceptancePending ? { providerAcceptancePending: true } : {}),
-                    ...(message?.providerAction ? { pendingProviderAction: message.providerAction } : {}),
-                });
-            }
+            if (localId) this.bufferedPendingMessageDeliveryInfoByLocalId.set(localId, deliveryInfo);
             this.pendingMessages.push(userMessage);
         }
         return true;
@@ -6350,9 +6346,8 @@ export class ApiSessionClient extends EventEmitter {
             didMaterialize: materializeResult.didMaterialize,
             authoritativeState: materializeResult.pendingQueueState ?? null,
         });
-        this.pendingQueueState = pendingStateUpdate.state;
-        if (pendingStateUpdate.changed) {
-            this.pendingWakeSeq += 1;
+        if (pendingStateUpdate.state.known) {
+            this.applyPendingQueueState(pendingStateUpdate.state);
         }
         if (this.closed || this.runtimeTerminationStarted) {
             return { didMaterialize: false, result: { type: 'retryable_transport' } };

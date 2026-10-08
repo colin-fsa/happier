@@ -8,15 +8,36 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { isPidAlive } from '@/testkit/process/spawn';
 
 // Genuine OS enumeration boundary; the ACP transport and cleanup owner remain real.
-const enumeration = vi.hoisted(() => ({ denied: false }));
+const enumeration = vi.hoisted(() => ({
+  denied: false,
+  deferStderr: false,
+  pendingStderr: [] as import('node:stream').Readable[],
+}));
+// Independent OS pipes can deliver the successful ACP response before stderr.
+vi.mock('cross-spawn', async (importOriginal) => {
+  const actual = await importOriginal<{ default: typeof import('cross-spawn') }>();
+  return { default: (...args: Parameters<typeof actual.default>) => {
+    const child = actual.default(...args);
+    if (enumeration.deferStderr && child.stderr) {
+      child.stderr.pause();
+      enumeration.pendingStderr.push(child.stderr);
+    }
+    return child;
+  } };
+});
 vi.mock('ps-list', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ps-list')>();
   return { default: () => {
+    enumeration.pendingStderr.splice(0).forEach((stream) => stream.resume());
     if (enumeration.denied) return Promise.reject(new Error('process listing unavailable'));
     return actual.default();
   } };
 });
-afterEach(() => { enumeration.denied = false; });
+afterEach(() => {
+  enumeration.denied = false;
+  enumeration.deferStderr = false;
+  enumeration.pendingStderr.splice(0).forEach((stream) => stream.resume());
+});
 
 function fixture(dir: string, behavior: 'success' | 'reject' | 'wait' = 'success') {
   // External ACP boundary: the pinned AGY 1.1.1 server persists auth.type only
@@ -84,6 +105,7 @@ describe('ACP login', () => {
 
   it('finishes authentication, surfaces the browser link, and leaves persistence to the provider', async () => {
     await withTempDir('happier-acp-login-', async (dir) => {
+      enumeration.deferStderr = true;
       let output = '';
       await authenticateAcpAgent({ ...fixture(dir), onStderr: (text) => { output += text; } });
       expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))).toEqual({ auth: { type: 'oauth-personal' } });

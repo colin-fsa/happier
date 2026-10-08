@@ -4,6 +4,7 @@ export * from './constants';
 export * from './dragDropIntent';
 export * from './focus';
 export * from './mutations';
+export * from './moveTargets';
 export * from './names';
 export * from './normalize';
 export * from './orderKey';

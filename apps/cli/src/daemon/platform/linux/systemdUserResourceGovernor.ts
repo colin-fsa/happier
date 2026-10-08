@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { getPriority } from 'node:os';
 
 export const HAPPIER_JOBS_SLICE_NAME = 'happier-jobs.slice';
 export const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
@@ -161,7 +162,9 @@ export async function isSystemdUserResourceGovernorReady(params: Readonly<{
 export function buildSystemdUserScopedLaunchSpec(params: Readonly<{
   launchSpec: SystemdUserScopedLaunchSpec;
 }>): SystemdUserScopedLaunchSpec {
-  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, ['--nice=10']);
+  // Raising an inherited nice value requires privileges that agent runners may not have.
+  const niceValue = Math.max(10, getPriority());
+  return buildSystemdUserScopedLaunchSpecForSlice(params, HAPPIER_JOBS_SLICE_NAME, [`--nice=${niceValue}`]);
 }
 
 /**

@@ -1066,7 +1066,32 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   let closeHerdrFixture: (() => void) | undefined;
   let herdrFixtureRun: Promise<void> | undefined;
   let previousHerdrFixtureBinary: string | undefined;
+  let deliverShutdownWatchdog: (() => unknown) | undefined;
+  let firedShutdownTimerWork: Promise<unknown>[] = [];
+
+  async function restoreDaemonExitBoundary(exitSpy: MockInstance) {
+    // clearTimeout cannot retire an async watchdog callback that already fired.
+    // Real process.exit ends it; the in-process OS fixture must await it instead.
+    await Promise.all(firedShutdownTimerWork);
+    exitSpy.mockRestore();
+  }
+
   beforeEach(async () => {
+    deliverShutdownWatchdog = undefined;
+    firedShutdownTimerWork = [];
+    const { getDaemonShutdownWatchdogTimeoutMs } = await import('./shutdownPolicy');
+    const scheduleTimeout = globalThis.setTimeout;
+    vi.stubGlobal('setTimeout', ((...timerArgs: Parameters<typeof setTimeout>) => {
+      const [callback, delay, ...callbackArgs] = timerArgs;
+      if (delay !== getDaemonShutdownWatchdogTimeoutMs()) return scheduleTimeout(...timerArgs);
+      const watchdogCallback = () => {
+        const result: unknown = callback(...callbackArgs);
+        if (result instanceof Promise) firedShutdownTimerWork.push(result);
+        return result;
+      };
+      deliverShutdownWatchdog = watchdogCallback;
+      return scheduleTimeout(watchdogCallback, delay);
+    }) as typeof setTimeout);
     previousHerdrFixtureBinary = process.env.HERDR_BIN_PATH;
     if (ORIGINAL_PLATFORM_DESCRIPTOR) {
       // Most cases exercise platform-independent daemon lifecycle behavior. Keep their
@@ -1089,12 +1114,14 @@ describe('startDaemon spawn resume wiring (integration)', () => {
   });
 
   afterEach(async () => {
+    await Promise.all(firedShutdownTimerWork);
     closeHerdrFixture?.();
     await herdrFixtureRun;
     if (previousHerdrFixtureBinary === undefined) delete process.env.HERDR_BIN_PATH;
     else process.env.HERDR_BIN_PATH = previousHerdrFixtureBinary;
     resetActiveAccountSettingsSnapshotForTests();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     harness.resetControlRefs();
     harness.apiMachine.recoverDaemonTerminalSessionMutationJournals.mockClear();
     spawnHappyCLI.mockClear();
@@ -1225,7 +1252,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1318,11 +1345,11 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
       if (run) {
         harness.requestShutdown('happier-cli');
         await run.catch(() => {});
       }
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1391,7 +1418,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         harness.requestShutdown('happier-cli');
         await run.catch(() => {});
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1423,7 +1450,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1457,7 +1484,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
       delete process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1588,7 +1615,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
       featureDecisionSpy.mockRestore();
     }
   }, 120_000);
@@ -1708,7 +1735,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
       featureDecisionSpy.mockRestore();
     }
   });
@@ -1766,17 +1793,43 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
       featureDecisionSpy.mockRestore();
       if (run) {
         harness.requestShutdown('happier-cli');
         await run.catch(() => undefined);
       }
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
   it('does not treat webhook metadata bindings and task start as provider activity recovery proof', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    const shutdownExitCalls = exitSpy.mock.calls;
+    let watchdogCompletion: unknown;
+    let firingWatchdog = false;
+    let releaseWatchdogGrace!: () => void;
+    let observeWatchdogGrace!: () => void;
+    const watchdogGraceElapsed = new Promise<void>(resolve => { observeWatchdogGrace = resolve; });
+    const scheduleTimeout = globalThis.setTimeout;
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(((...timerArgs: Parameters<typeof setTimeout>) => {
+      if (firingWatchdog && timerArgs[1] === 100) {
+        const [callback, delay, ...callbackArgs] = timerArgs;
+        // The watchdog's existing grace timer elapses normally; its OS delivery
+        // is held until ordinary cleanup has returned, reproducing the CI overlap.
+        releaseWatchdogGrace = () => callback(...callbackArgs);
+        return scheduleTimeout(observeWatchdogGrace, delay);
+      }
+      return scheduleTimeout(...timerArgs);
+    }) as typeof setTimeout);
+    let enterCleanup!: () => void;
+    let releaseCleanup!: () => void;
+    const cleanupEntered = new Promise<void>(resolve => { enterCleanup = resolve; });
+    const cleanupReleased = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    const { stopCaffeinate } = await import('@/integrations/caffeinate');
+    vi.mocked(stopCaffeinate).mockImplementationOnce(async () => {
+      enterCleanup();
+      await cleanupReleased;
+    });
     const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
     process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
     let run: Promise<void> | null = null;
@@ -1853,9 +1906,24 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       expect(providerActivityRecorderCapture.record).not.toHaveBeenCalled();
 
       harness.requestShutdown('happier-cli');
+      // Capture the timer armed at shutdown admission before later drain budgets
+      // install their own timers with the same duration.
+      await Promise.resolve();
+      const fireWatchdog = deliverShutdownWatchdog;
+      await cleanupEntered;
+      // Deliver the existing watchdog at the OS timer boundary while cleanup is
+      // pending. Its real 100ms grace period then overlaps normal completion.
+      if (!fireWatchdog) throw new Error('Expected the shutdown watchdog to be armed');
+      firingWatchdog = true;
+      watchdogCompletion = fireWatchdog();
+      firingWatchdog = false;
+      expect(releaseWatchdogGrace).toBeTypeOf('function');
+      await watchdogGraceElapsed;
+      releaseCleanup();
       await run;
       run = null;
     } finally {
+      releaseCleanup();
       if (run) {
         harness.requestShutdown('happier-cli');
         await run;
@@ -1866,7 +1934,14 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      if (watchdogCompletion) {
+        releaseWatchdogGrace();
+      }
+      await restoreDaemonExitBoundary(exitSpy);
+      if (watchdogCompletion) {
+        await expect(watchdogCompletion).resolves.toBeUndefined();
+        expect([...new Set(shutdownExitCalls.map(([code]) => code))]).toEqual([0]);
+      }
     }
   });
 
@@ -1923,7 +1998,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -1980,7 +2055,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -2029,7 +2104,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -2075,7 +2150,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -2123,7 +2198,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -2239,7 +2314,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSourceOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3088,7 +3163,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = previousRefresh;
       if (previousHerdr === undefined) delete process.env.HERDR_BIN_PATH;
       else process.env.HERDR_BIN_PATH = previousHerdr;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
       await rm(fixtureHome, { recursive: true, force: true });
     }
   });
@@ -3153,7 +3228,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       vi.mocked(buildHappyCliSubprocessLaunchSpec).mockReset();
       if (previousRefresh === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = previousRefresh;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3212,7 +3287,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       vi.mocked(buildHappyCliSubprocessLaunchSpec).mockReset();
       if (previousRefresh === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = previousRefresh;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3287,7 +3362,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       vi.mocked(buildHappyCliSubprocessLaunchSpec).mockReset();
       if (previousRefresh === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = previousRefresh;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3415,7 +3490,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3466,7 +3541,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3559,7 +3634,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3631,7 +3706,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3680,7 +3755,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3748,7 +3823,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3807,7 +3882,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_STACK_PROCESS_KIND = stackProcessKindOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3876,7 +3951,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3922,7 +3997,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -3984,7 +4059,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4035,7 +4110,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4109,7 +4184,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
       killSpy.mockRestore();
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4176,7 +4251,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
       killSpy.mockRestore();
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4263,7 +4338,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4753,7 +4828,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
       vi.mocked(catalog.requireCatalogEntry).mockReset();
       if (previousCatalog) vi.mocked(catalog.requireCatalogEntry).mockImplementation(previousCatalog);
     }
@@ -4846,7 +4921,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -4901,7 +4976,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5105,7 +5180,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
       explicitRecoveryCheckSpy.mockRestore();
     }
   });
@@ -5187,7 +5262,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       await endpointFixture.cleanup();
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5318,7 +5393,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       Object.defineProperty(configuration, 'happyHomeDir', { value: originalHome });
       await rm(fixtureHome, { recursive: true, force: true });
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5437,7 +5512,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       claudeEndpointRecoveryBoundaryMocks.evaluateLiveness.mockResolvedValue({ paneAlive: true, observedAt: 1 });
       Object.defineProperty(configuration, 'happyHomeDir', { value: originalHome });
       await rm(fixtureHome, { recursive: true, force: true });
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5564,7 +5639,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       await endpointFixture.cleanup();
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5657,7 +5732,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       });
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5748,7 +5823,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       });
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5832,7 +5907,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       temporaryThrottleCancelSpy.mockRestore();
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -5881,7 +5956,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6094,7 +6169,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       stopSessionMocks.createStopSession.mockImplementation(() => stopSessionMocks.stopSession);
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6152,7 +6227,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       });
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6211,7 +6286,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       stopSessionMocks.stopSession.mockResolvedValue({ status: 'stopped' });
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6312,7 +6387,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6407,7 +6482,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6504,7 +6579,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6591,7 +6666,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6658,7 +6733,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6709,7 +6784,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6757,7 +6832,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HOME = homeOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6822,7 +6897,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HOME = homeOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6869,7 +6944,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6925,7 +7000,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6961,7 +7036,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       spawnHappyCLI.mockClear();
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -6990,7 +7065,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7019,7 +7094,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     } finally {
       if (refreshEnvOriginal === undefined) delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       else process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7059,7 +7134,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7099,7 +7174,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7141,7 +7216,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7185,7 +7260,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7267,7 +7342,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7369,7 +7444,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7446,7 +7521,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 
@@ -7523,7 +7598,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       } else {
         process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
       }
-      exitSpy.mockRestore();
+      await restoreDaemonExitBoundary(exitSpy);
     }
   });
 

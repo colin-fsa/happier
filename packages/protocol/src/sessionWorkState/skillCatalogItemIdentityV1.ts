@@ -11,6 +11,8 @@
  * and transmitted, so a reference written by one repository is resolved by the other.
  */
 
+import { readNonBlankOpaqueIdentifier } from '../strings/opaqueIdentifier.js';
+
 const LEGACY_VENDOR_SKILL_BACKENDS = {
   codex_native: 'codex',
   opencode_native: 'opencode',
@@ -80,7 +82,7 @@ export function resolveSkillCatalogItemIdentityV1(value: unknown): SkillCatalogI
     ?? readString(item.projectionKind)
     ?? (origin === 'happier' && rawOrigin !== 'happier' ? rawOrigin : null);
 
-  const id = readString(item.id)
+  const id = readNonBlankOpaqueIdentifier(item.id)
     ?? [origin, backendId, projectionRef, name]
       .filter((part): part is string => typeof part === 'string' && part.length > 0)
       .join(':');

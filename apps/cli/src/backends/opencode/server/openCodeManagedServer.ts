@@ -73,6 +73,10 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   hostname?: string;
   port?: number;
   timeoutMs?: number;
+  signal?: AbortSignal;
+  onCleanup?: (cleanup: () => Promise<void>) => void;
+  env?: NodeJS.ProcessEnv;
+  cwd?: string;
   xdgRootDir?: string | null;
   isolateConfig?: boolean;
   /** Override the durable-log directory (defaults to `configuration.logsDir`). */
@@ -101,24 +105,27 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   apiGeneration: 'auto' | 'v2';
   authPassword?: string;
 }> {
+  params.signal?.throwIfAborted();
+  const processEnv = { ...(params.env ?? process.env) };
   const hostname = typeof params.hostname === 'string' && params.hostname.trim().length > 0 ? params.hostname.trim() : '127.0.0.1';
   const port = typeof params.port === 'number' && Number.isFinite(params.port) && params.port > 0
     ? Math.floor(params.port)
     : await resolveEphemeralPort(hostname);
+  params.signal?.throwIfAborted();
   const timeoutMs = typeof params.timeoutMs === 'number' && Number.isFinite(params.timeoutMs) && params.timeoutMs > 0
     ? Math.floor(params.timeoutMs)
-    : resolveOpenCodeManagedServerStartTimeoutMsFromEnv(process.env);
+    : resolveOpenCodeManagedServerStartTimeoutMsFromEnv(processEnv);
 
-  const launch = resolveOpenCodeCliLaunchSpec();
+  const launch = resolveOpenCodeCliLaunchSpec(processEnv);
   const cmd = launch.command;
   const args = [...launch.args, `serve`, `--hostname=${hostname}`, `--port=${port}`];
   // Released OpenCode 2 password-protects every `serve`, generating an unknowable secret when the
   // environment supplies none. Mint the credential BEFORE spawning so the child is protected with a
   // password this launch can authenticate with; the caller retains it in the managed-server state so
   // later readers of THIS server can too.
-  const launchCredential = resolveOpenCodeManagedServerLaunchCredential();
+  const launchCredential = resolveOpenCodeManagedServerLaunchCredential(processEnv);
   const readinessCredentials = resolveOpenCodeManagedServerReadinessCredentials({
-    env: process.env,
+    env: processEnv,
     launchCredential: launchCredential.credential,
   });
   const healthHeaders = resolveOpenCodeServerAuthHeaders(readinessCredentials.v1);
@@ -133,15 +140,16 @@ export async function startManagedOpenCodeServer(params: Readonly<{
   // empty config home exists and write the broker plugin file(s) before spawn. Native sessions have
   // no selection identity ⇒ this is a no-op ⇒ native HOME/XDG/config/plugins remain untouched.
   const brokerAssets = await ensureConnectedOpenCodeBrokerAssetsBeforeSpawn(
-    process.env,
+    processEnv,
     launch.apiGeneration,
   );
   const brokerLoadNonce = brokerAssets.brokerLoadNonce;
+  params.signal?.throwIfAborted();
 
   const childEnv = resolveOpenCodeManagedServerChildEnv({
     baseEnv: brokerAssets.openCodeConfigContent
-      ? { ...process.env, OPENCODE_CONFIG_CONTENT: brokerAssets.openCodeConfigContent }
-      : process.env,
+      ? { ...processEnv, OPENCODE_CONFIG_CONTENT: brokerAssets.openCodeConfigContent }
+      : processEnv,
     xdgRootDir: xdgRootDir.length > 0 ? xdgRootDir : null,
     isolateConfig,
     authCredential: launchCredential.credential,
@@ -155,6 +163,7 @@ export async function startManagedOpenCodeServer(params: Readonly<{
 
   const proc = spawn(invocation.command, invocation.args, {
     env: childEnv,
+    ...(params.cwd ? { cwd: params.cwd } : {}),
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: true,
     ...(invocation.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
@@ -210,12 +219,13 @@ export async function startManagedOpenCodeServer(params: Readonly<{
     closePromise = (async () => {
       try {
         if (trackedPid > 0) {
-          try {
-            await terminateManagedOpenCodeServerPidBestEffort(trackedPid);
-            return;
-          } catch {
-            // fall through to direct kill
+          const terminated = await terminateManagedOpenCodeServerPidBestEffort(trackedPid);
+          if (!terminated) {
+            throw Object.assign(new Error('Owned OpenCode server termination could not be verified'), {
+              code: 'open_code_server_termination_incomplete',
+            });
           }
+          return;
         }
         try {
           proc.kill();
@@ -225,22 +235,26 @@ export async function startManagedOpenCodeServer(params: Readonly<{
       } finally {
         await logCapture.close().catch(() => {});
       }
-    })();
+    })().catch((error: unknown) => {
+      logger.infoFile('[OpenCodeServer] Owned native server cleanup failed');
+      throw error;
+    });
     await closePromise;
   };
+  params.onCleanup?.(close);
 
   let detectedApiGeneration = launch.apiGeneration;
   await new Promise<void>((resolve, reject) => {
     const tag = randomUUID();
     const timer = setTimeout(() => {
-      void close();
+      void close().catch(() => undefined);
       reject(new Error(`Timeout waiting for OpenCode server to start after ${timeoutMs}ms (${tag}). Log: ${logPath}. Output:\n${readStartupOutput()}`));
     }, timeoutMs);
     timer.unref?.();
 
     proc.on('exit', (code, signal) => {
       clearTimeout(timer);
-      void close();
+      void close().catch(() => undefined);
       const codeLabel = code ?? 'unknown';
       const signalLabel = signal ?? 'none';
       reject(new Error(
@@ -250,11 +264,12 @@ ${readStartupOutput()}`,
     });
     proc.on('error', (error) => {
       clearTimeout(timer);
-      void close();
+      void close().catch(() => undefined);
       reject(error);
     });
 
     void waitForOpenCodeServerHealth({
+      signal: params.signal,
       baseUrl,
       timeoutMs,
       pollIntervalMs: 200,
@@ -271,11 +286,14 @@ ${readStartupOutput()}`,
       })
       .catch((error) => {
         clearTimeout(timer);
-        void close();
+        void close().catch(() => undefined);
         const message = error instanceof Error ? error.message : String(error);
         reject(new Error(`OpenCode server did not become healthy: ${message}. Log: ${logPath}. Output:
 ${readStartupOutput()}`));
       });
+  }).catch(async (error: unknown) => {
+    await close();
+    throw error;
   });
 
   // Readiness reached: stop growing the bounded startup buffer; the log listeners keep draining and
@@ -292,6 +310,10 @@ ${readStartupOutput()}`));
     // keep the spawned pid best-effort
   }
   logCapture.recordTrackedPid(trackedPid);
+  if (params.signal?.aborted) {
+    await close();
+    params.signal.throwIfAborted();
+  }
 
   try {
     await params.onSpawned?.({

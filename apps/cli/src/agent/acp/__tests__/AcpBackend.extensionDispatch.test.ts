@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 
 import { writeAcpTestAgentScript, readFileEventually } from '../testkit/subprocessHarness';
 import { AcpBackend, buildInitializeRequest } from '../AcpBackend';
@@ -9,6 +11,7 @@ import {
 } from '../connection/types';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { normalizeAcpPlan, type NormalizedAcpPlanSnapshot } from '@/agent/acp/plans';
+import { buildGrokAcpBackendOptions } from '@/backends/grok/acp/backend';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -54,7 +57,7 @@ const extensionParams = {
 function writeExtensionProbeAgentScript(params: {
   dir: string;
   resultFile: string;
-  scenario: 'request' | 'notification' | 'error' | 'abort' | 'abort-with-update' | 'outgoing';
+  scenario: 'request' | 'notification' | 'error' | 'abort' | 'abort-with-update' | 'outgoing' | 'steer';
 }): string {
   const src = `
     const fs = require('node:fs');
@@ -110,7 +113,7 @@ function writeExtensionProbeAgentScript(params: {
         if (id === undefined || id === null || typeof method !== 'string') continue;
 
         if (method === 'initialize') {
-          ok(id, { protocolVersion: 1, authMethods: [] });
+          ok(id, { protocolVersion: 1, authMethods: ${JSON.stringify(params.scenario === 'steer' ? [{ id: 'cached_token', name: 'Grok cached token' }] : [])} });
           continue;
         }
 
@@ -126,6 +129,11 @@ function writeExtensionProbeAgentScript(params: {
         }
 
         if (method === 'session/prompt') {
+          if (${JSON.stringify(params.scenario)} === 'steer') {
+            writeResult(req.params);
+            ok(id, { stopReason: 'end_turn' });
+            continue;
+          }
           pendingPromptId = id;
           const scenario = ${JSON.stringify(params.scenario)};
           if (scenario === 'notification') {
@@ -161,6 +169,12 @@ function writeExtensionProbeAgentScript(params: {
           continue;
         }
 
+        if (method === 'x.ai/interject') {
+          writeResult(req.params);
+          ok(id, { status: 'queued' });
+          continue;
+        }
+
         if (method === 'session/cancel') {
           ok(id, {});
           continue;
@@ -179,6 +193,72 @@ function writeExtensionProbeAgentScript(params: {
 }
 
 describe('AcpBackend ACP extension dispatch', () => {
+  it.each(['standard', 'grok'] as const)('preserves verified images in %s in-flight steer at the native RPC boundary', async (provider) => {
+    await withTempDir('happier-acp-steer-image-', async (dir) => {
+      const resultFile = `${dir}/steer-request.json`;
+      const scriptPath = writeExtensionProbeAgentScript({ dir, resultFile, scenario: 'steer' });
+      const bytes = Buffer.from([0, 255, 1, 2, 3, 128]);
+      const uploadPath = '.happier/uploads/messages/message-1/screen.png';
+      await mkdir(`${dir}/.happier/uploads/messages/message-1`, { recursive: true });
+      await writeFile(`${dir}/${uploadPath}`, bytes);
+      const metadata = {
+        happier: { kind: 'attachments.v1', payload: { attachments: [{
+          path: uploadPath, mimeType: 'image/png', sizeBytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+        }] } },
+        happierStructuredInputV1: { v: 1, imageInputs: [{
+          kind: 'image', path: uploadPath, mimeType: 'image/png',
+          provenance: { kind: 'sessionAttachmentUpload' },
+        }] },
+      };
+      const backend = new AcpBackend({
+        ...(provider === 'grok' ? buildGrokAcpBackendOptions({
+          cwd: dir, env: { HAPPIER_GROK_PATH: process.execPath },
+        }) : { agentName: 'test', cwd: dir }),
+        command: process.execPath,
+        args: [scriptPath],
+      });
+      try {
+        await backend.startSession();
+        await backend.sendSteerPrompt('test-session', 'inspect this', {
+          localId: 'pending-image', metadata,
+        });
+        const nativeRequest = parseJsonRecord(await readFileEventually(resultFile, { timeoutMs: 1_000 }));
+        expect(provider === 'grok' ? nativeRequest.content : nativeRequest.prompt).toEqual([
+          { type: 'text', text: 'inspect this' },
+          { type: 'image', data: bytes.toString('base64'), mimeType: 'image/png' },
+        ]);
+        if (provider === 'grok') expect(nativeRequest.interjectionId).toBe('pending-image');
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it.each(['standard', 'grok'] as const)('refuses %s steer before native effect when disposed during prompt projection', async (provider) => {
+    await withTempDir('happier-acp-retired-steer-', async (dir) => {
+      const resultFile = `${dir}/steer-request.json`;
+      const scriptPath = writeExtensionProbeAgentScript({ dir, resultFile, scenario: 'steer' });
+      const backend = new AcpBackend({
+        ...(provider === 'grok' ? buildGrokAcpBackendOptions({
+          cwd: dir, env: { HAPPIER_GROK_PATH: process.execPath },
+        }) : { agentName: 'test', cwd: dir }),
+        command: process.execPath, args: [scriptPath],
+      });
+      try {
+        await backend.startSession();
+        const outcome = backend.sendSteerPrompt('test-session', 'retired input').then(
+          () => ({ resolved: true }), (error: unknown) => ({ error }),
+        );
+        await backend.dispose();
+        expect(await outcome).toMatchObject({ error: { phase: 'rejected_before_effect' } });
+        await expect(readFile(resultFile)).rejects.toMatchObject({ code: 'ENOENT' });
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
   it('merges provider-supplied initialize metadata into the ACP initialize request', () => {
     const params = {
       clientName: 'test',

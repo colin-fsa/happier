@@ -1,3 +1,5 @@
+import { installDesktopDeepLinks } from '@/desktop/deepLinks/installDesktopDeepLinks';
+import { isTauriDesktop } from '@/utils/platform/tauri';
 import { router, useGlobalSearchParams, usePathname, useSegments } from 'expo-router';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
@@ -86,6 +88,12 @@ export function RootLayoutNavigationEffects(): React.ReactElement | null {
     const happierVoiceSupported = useHappierVoiceSupport();
     const activeServerAccountScope = useActiveServerAccountScope();
     const isTerminalConnectRoute = segments.includes('terminal') && segments.includes('connect');
+
+    React.useEffect(() => {
+        if (Platform.OS === 'web' && isTauriDesktop()) {
+            return installDesktopDeepLinks((href) => router.push(href));
+        }
+    }, []);
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 

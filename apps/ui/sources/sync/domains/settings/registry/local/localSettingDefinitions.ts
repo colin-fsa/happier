@@ -216,7 +216,7 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
     loadingIndicatorStyle: {
         schema: LoadingIndicatorStyleIdSchema,
         default: DEFAULT_LOADING_INDICATOR_STYLE_ID,
-        description: 'Which loading indicator spinners draw: one of the dot H styles, or the classic ring',
+        description: 'Which loading indicator spinners draw: a dotted Happier mark or H, or the classic ring',
         storageScope: 'local',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },

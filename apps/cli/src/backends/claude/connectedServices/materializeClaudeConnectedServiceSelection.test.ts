@@ -27,6 +27,7 @@ describe('Claude selection configuration sharing', () => {
     await mkdir(join(source, 'skills', 'example'), { recursive: true });
     await writeFile(join(source, 'skills', 'example', 'SKILL.md'), 'original');
     await writeFile(join(source, 'settings.json'), '{"theme":"dark"}');
+    await writeFile(join(source, 'CLAUDE.md'), 'native user instructions');
     await writeFile(join(source, '.credentials.json'), '{"ambientSecret":"must-not-import"}');
     const record = buildConnectedServiceCredentialRecord({
       now: Date.now(), serviceId: 'claude-subscription', profileId: 'work', kind: 'oauth',
@@ -75,6 +76,7 @@ describe('Claude selection configuration sharing', () => {
     await rm(join(source, 'settings.json'));
     await materialize('copied');
     expect(await readFile(join(target, 'skills', 'example', 'SKILL.md'), 'utf8')).toBe('updated');
+    expect(await readFile(join(target, 'CLAUDE.md'), 'utf8')).toBe('native user instructions');
     await expect(lstat(join(target, 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await lstat(target)).ino).toBe(rootStat.ino);
     expect(await readFile(join(target, 'local-state'), 'utf8')).toBe('preserve');
@@ -95,6 +97,9 @@ describe('Claude selection configuration sharing', () => {
     await materialize();
     expect((await lstat(join(target, 'skills'))).isSymbolicLink()).toBe(true);
     expect((await lstat(join(target, 'settings.json'))).isSymbolicLink()).toBe(true);
+    expect((await lstat(join(target, 'CLAUDE.md'))).isSymbolicLink()).toBe(true);
+    await writeFile(join(source, 'CLAUDE.md'), 'updated user instructions');
+    expect(await readFile(join(target, 'CLAUDE.md'), 'utf8')).toBe('updated user instructions');
     await writeFile(join(source, 'skills', 'example', 'SKILL.md'), 'visible-without-rematerialization');
     expect(await readFile(join(target, 'skills', 'example', 'SKILL.md'), 'utf8')).toBe('visible-without-rematerialization');
     expect((await lstat(join(target, '.credentials.json'))).isSymbolicLink()).toBe(false);
@@ -113,6 +118,7 @@ describe('Claude selection configuration sharing', () => {
     await materialize('isolated');
     await expect(lstat(join(target, 'skills'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(lstat(join(target, 'settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(join(target, 'CLAUDE.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readFile(join(target, 'projects', 'repo', 'session.jsonl'), 'utf8')).toBe('session-history');
     expect((await lstat(join(target, '.credentials.json'))).isFile()).toBe(true);
   });

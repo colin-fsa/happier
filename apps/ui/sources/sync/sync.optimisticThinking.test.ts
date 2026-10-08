@@ -1831,12 +1831,37 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].latestTurnStatus).toBe('completed');
     });
 
+    it('leaves a newer permission choice pending when an earlier prompt is admitted', async () => {
+        const sessionId = 's_perm_next_prompt_frozen';
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }), encryptionMode: 'plain',
+            metadata: { path: '/repo', host: 'host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        }]);
+        storage.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        storage.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        const { sync } = await import('./sync');
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
+        const emitMetadata = vi.spyOn(apiSocket, 'emitWithAck').mockResolvedValue({ result: 'success' });
+        sync.setMessageTransport({
+            // The transport's generic response is supplied by this JSON boundary fixture.
+            emitWithAck: async <T>() => {
+                storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+                return { ok: true, id: 'm1', seq: 1, localId: null, didWrite: true } as T;
+            },
+            send: vi.fn(),
+        });
+        await sync.sendMessage(sessionId, 'hello');
+        expect(emitMetadata.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
+        expect(storage.getState().sessions[sessionId].permissionMode).toBe('read-only');
+        expect(storage.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
+    });
+
     it('publishes session metadata after send when apply timing is next_prompt and local permission selection is newer', async () => {
         const sessionId = 's_perm_next_prompt';
         storage.getState().applySessions([
             {
-                ...createSession({ sessionId }),
-                metadata: { permissionMode: 'default', permissionModeUpdatedAt: 1 } as any,
+                ...createSession({ sessionId }), encryptionMode: 'plain',
+                metadata: { path: '/repo', host: 'host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
             },
         ]);
 
@@ -1863,25 +1888,79 @@ describe('sync.sendMessage optimistic thinking', () => {
             send: vi.fn(),
         });
 
-        const publish = vi.fn(async () => {});
-        (sync as any).publishSessionPermissionModeToMetadata = publish;
+        const publish = vi.spyOn(apiSocket, 'emitWithAck').mockImplementation(async <T>(_event: string, data: unknown) => ({
+            result: 'success', version: 1, metadata: (data as { metadata: string }).metadata,
+        }) as T);
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(publish).toHaveBeenCalledTimes(1);
-        expect(publish).toHaveBeenCalledWith({
-            sessionId,
-            permissionMode: 'yolo',
-            permissionModeUpdatedAt: localUpdatedAt,
+        const writes = publish.mock.calls.filter(([event]) => event === 'update-metadata');
+        expect(writes).toHaveLength(1);
+        expect(JSON.parse((writes[0][1] as { metadata: string }).metadata)).toMatchObject({
+            permissionMode: 'yolo', permissionModeUpdatedAt: localUpdatedAt,
         });
+        expect(storage.getState().sessions[sessionId].metadata?.permissionMode).toBe('yolo');
+    });
+
+    it('does not publish an admitted prompt into a different account scope', async () => {
+        const sessionId = 's_perm_next_prompt_scope';
+        const session = {
+            ...createSession({ sessionId }), encryptionMode: 'plain' as const,
+            metadata: { path: '/repo', host: 'host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        } satisfies Session;
+        storage.getState().applySessions([session]);
+        storage.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        storage.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        const { sync } = await import('./sync');
+        vi.spyOn(apiSocket, 'sessionRPC').mockRejectedValue(createRpcMethodNotAvailableError());
+        const emitMetadata = vi.spyOn(apiSocket, 'emitWithAck').mockResolvedValue({ result: 'success' });
+        sync.setMessageTransport({
+            // The transport's generic response is supplied by this JSON boundary fixture.
+            emitWithAck: async <T>() => {
+                storage.getState().activateProfileScope({ serverId: getActiveServerSnapshot().serverId, accountId: 'other-account' });
+                storage.getState().applySessions([session]);
+                storage.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+                storage.getState().updateSessionPermissionMode(sessionId, 'yolo');
+                return { ok: true, id: 'm1', seq: 1, localId: null, didWrite: true } as T;
+            },
+            send: vi.fn(),
+        });
+        await sync.sendMessage(sessionId, 'hello');
+        expect(emitMetadata.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
+        expect(storage.getState().sessions[sessionId].permissionMode).toBe('yolo');
+        expect(storage.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
+    });
+
+    it('returns unpublished when the admitted permission write retires before acknowledgement', async () => {
+        const sessionId = 's_perm_next_prompt_retired';
+        const session = {
+            ...createSession({ sessionId }), encryptionMode: 'plain' as const,
+            metadata: { path: '/repo', host: 'host', permissionMode: 'default', permissionModeUpdatedAt: 1 },
+        } satisfies Session;
+        storage.getState().applySessions([session]);
+        storage.getState().applySettingsLocal({ sessionPermissionModeApplyTiming: 'next_prompt' });
+        storage.getState().updateSessionPermissionMode(sessionId, 'yolo');
+        const expectedAccountScope = storage.getState().profileScope;
+        const { sync } = await import('./sync');
+        vi.spyOn(apiSocket, 'emitWithAck').mockImplementation(async <T>(_event: string, data: unknown) => {
+            storage.getState().activateProfileScope({ serverId: getActiveServerSnapshot().serverId, accountId: 'other-account' });
+            storage.getState().applySessions([session]);
+            storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+            return { result: 'success', version: 1, metadata: (data as { metadata: string }).metadata } as T;
+        });
+        expect(await sync.publishNextPromptPermissionModeAfterAdmission({
+            sessionId, admittedPermissionMode: 'yolo', expectedAccountScope,
+        })).toBe(false);
+        expect(storage.getState().sessions[sessionId].permissionMode).toBe('read-only');
+        expect(storage.getState().sessions[sessionId].metadata?.permissionMode).toBe('default');
     });
 
     it('does not publish session metadata after send when apply timing is next_prompt but metadata is already up to date', async () => {
         const sessionId = 's_perm_next_prompt_noop';
         storage.getState().applySessions([
             {
-                ...createSession({ sessionId }),
-                metadata: { permissionMode: 'safe-yolo', permissionModeUpdatedAt: Date.now() } as any,
+                ...createSession({ sessionId }), encryptionMode: 'plain',
+                metadata: { path: '/repo', host: 'host', permissionMode: 'safe-yolo', permissionModeUpdatedAt: Date.now() },
             },
         ]);
 
@@ -1904,11 +1983,10 @@ describe('sync.sendMessage optimistic thinking', () => {
             send: vi.fn(),
         });
 
-        const publish = vi.fn(async () => {});
-        (sync as any).publishSessionPermissionModeToMetadata = publish;
+        const publish = vi.spyOn(apiSocket, 'emitWithAck').mockResolvedValue({ result: 'success' });
 
         await sync.sendMessage(sessionId, 'hello');
 
-        expect(publish).not.toHaveBeenCalled();
+        expect(publish.mock.calls.filter(([event]) => event === 'update-metadata')).toHaveLength(0);
     });
 });

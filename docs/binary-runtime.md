@@ -68,6 +68,16 @@ The setup ring still advances only at its existing milestones, and readiness sti
 runtime-convergence and machine-RPC proof.
 
 Acquisition failures carry their phase and cause; diagnostics strip URL credentials and queries.
+In current development source, QA can set `HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL` to an
+HTTP(S) origin on `127.0.0.1` or `[::1]` when `NODE_ENV=development`. The existing first-party
+release resolver uses that origin for GitHub-shaped tag metadata; metadata supplies the asset URLs.
+Paths, URL credentials, queries, fragments, malformed values and non-loopback hosts are rejected
+visibly. GitHub tokens are never sent to the mirror. Build the QA hsetup with
+`NODE_ENV=development node apps/bootstrap/scripts/buildBinary.mjs` after building its dependencies;
+normal builds freeze `NODE_ENV` to `production` and reject the override even if the launched
+process sets `NODE_ENV=development`. This is a development/QA seam, not a released setting.
+The mirror must serve the publisher's unmodified archives, checksums and minisign signatures:
+the existing checksum and official-public-key verification is unchanged, with no environment key override.
 Retry uses the existing installed-command resolution and acquisition path. The executor's existing
 abort signal reaches release requests and extraction cleanup. Installation checks cancellation
 before promotion, then finishes pointer, shim, and marker finalization once started; this does not

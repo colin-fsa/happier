@@ -12,7 +12,7 @@ export type ParsedTerminalConnectUrl = Readonly<{
 }>;
 
 const SAFE_SERVER_PROTOCOLS = new Set(['http:', 'https:']);
-const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
+export const TERMINAL_CONNECT_WEB_PATH = '/terminal/connect';
 
 function normalizeServerUrl(raw: string): string | null {
     const value = String(raw ?? '').trim();
@@ -64,7 +64,9 @@ function buildPairingQuerySuffix(pairing: ParsedTerminalConnectUrl['pairing']): 
 function parseTerminalConnectWebUrl(raw: string): ParsedTerminalConnectUrl | null {
     try {
         const parsed = new URL(raw);
-        if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol)) return null;
+        // Bundled macOS/Linux Tauri webviews carry app routes on this local origin.
+        const isLocalTauriCarrier = parsed.protocol === 'tauri:' && parsed.host === 'localhost';
+        if (!SAFE_SERVER_PROTOCOLS.has(parsed.protocol) && !isLocalTauriCarrier) return null;
         if (normalizeWebPathname(parsed.pathname) !== TERMINAL_CONNECT_WEB_PATH) return null;
 
         const hashTail = String(parsed.hash ?? '').replace(/^#/, '');

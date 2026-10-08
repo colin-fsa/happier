@@ -63,6 +63,7 @@ export const RPC_METHODS = {
   DAEMON_DIRECT_SESSION_TRANSCRIPT_READ_AFTER: 'daemon.directSessions.transcript.readAfter',
   DAEMON_DIRECT_SESSION_TAKEOVER: 'daemon.directSessions.takeover',
   DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST: 'daemon.directSessions.takeoverPersist',
+  DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START: 'daemon.directSessions.takeoverPersist.start',
   DAEMON_SESSION_GOAL_GET: 'daemon.sessionGoal.get',
   DAEMON_SESSION_GOAL_SET: 'daemon.sessionGoal.set',
   DAEMON_SESSION_GOAL_CLEAR: 'daemon.sessionGoal.clear',
@@ -217,6 +218,7 @@ const SOCKET_RPC_PROVIDER_STARTING_METHODS = new Set<string>([
   RPC_METHODS.DAEMON_SESSION_HANDOFF_TARGET_RESUME_V2,
   RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER,
   RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST,
+  RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_START,
 ]);
 
 function normalizeSocketRpcSessionId(value: unknown): string | null {

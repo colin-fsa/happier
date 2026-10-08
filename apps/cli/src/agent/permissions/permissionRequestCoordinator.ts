@@ -61,7 +61,8 @@ export type PermissionRequestCoordinatorStore = Readonly<{
         updatedPermissions?: unknown;
         extraCompletedFields?: Readonly<Record<string, unknown>> | null;
         fallback?: Readonly<{ toolName: string; toolInput: unknown; createdAt: number; kind?: string; source?: string }> | null;
-    }>): void;
+        requireAck?: boolean;
+    }>): Promise<void> | void;
     cancelAllRequests?(params: Readonly<{ reason: string; decision?: string }>): void;
     hasOutstandingRequest(requestId: string): boolean;
     isOutstandingRequestClaimed(requestId: string): boolean;
@@ -91,6 +92,7 @@ type PendingPermissionRequest<TResult> = {
     sourceLocalId: string | null;
     status: 'live' | 'detached';
     waiters: Map<string, PendingPermissionWaiter<TResult>>;
+    completionInProgress?: boolean;
 };
 
 type CachedPermissionDecision<TResult> = {
@@ -271,34 +273,11 @@ export class PermissionRequestCoordinator<TResult> {
         if (this.isRequestClaimed(context.requestId)) return false;
         const entry = this.pendingRequests.get(context.requestId);
         if (entry) {
+            if (entry.completionInProgress) return false;
             this.store.completeRequest({
-                requestId: entry.requestId,
-                ...completion.completedRequest,
-                fallback: {
-                    toolName: entry.toolName,
-                    toolInput: entry.toolInput,
-                    createdAt: entry.createdAt,
-                    ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
-                    ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
-                },
+                ...this.buildEntryCompletion(entry, completion),
             });
-
-            const waiters = [...entry.waiters.values()];
-            entry.waiters.clear();
-            this.pendingRequests.delete(entry.requestId);
-            this.cachedDecisions.set(entry.requestId, {
-                result: completion.result,
-                toolName: entry.toolName,
-                toolInput: entry.toolInput,
-                sourceLocalId: entry.sourceLocalId,
-            });
-
-            for (const waiter of waiters) {
-                if (waiter.aborted) continue;
-                detachWaiter(waiter);
-                waiter.resolve(completion.result);
-            }
-
+            this.finishPendingResponse(entry, completion.result);
             return true;
         }
 
@@ -309,6 +288,62 @@ export class PermissionRequestCoordinator<TResult> {
             ...completion.completedRequest,
         });
         return true;
+    }
+
+    async completeResponseWithAck(params: Readonly<{
+        context: PermissionRequestCoordinatorContext;
+        completion: PermissionRequestCoordinatorCompletion<TResult>;
+    }>): Promise<boolean> {
+        const { context, completion } = params;
+        if (this.isRequestClaimed(context.requestId)) return false;
+        const entry = this.pendingRequests.get(context.requestId);
+        if (!entry || entry.status !== 'live' || entry.completionInProgress) return false;
+        entry.completionInProgress = true;
+        try {
+            await this.store.completeRequest({
+                ...this.buildEntryCompletion(entry, completion),
+                requireAck: true,
+            });
+            if (this.pendingRequests.get(context.requestId) !== entry) return false;
+            this.finishPendingResponse(entry, completion.result);
+            return true;
+        } finally {
+            entry.completionInProgress = false;
+        }
+    }
+
+    private buildEntryCompletion(
+        entry: PendingPermissionRequest<TResult>,
+        completion: PermissionRequestCoordinatorCompletion<TResult>,
+    ) {
+        return {
+            requestId: entry.requestId,
+            ...completion.completedRequest,
+            fallback: {
+                toolName: entry.toolName,
+                toolInput: entry.toolInput,
+                createdAt: entry.createdAt,
+                ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+                ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
+            },
+        };
+    }
+
+    private finishPendingResponse(entry: PendingPermissionRequest<TResult>, result: TResult): void {
+        const waiters = [...entry.waiters.values()];
+        entry.waiters.clear();
+        this.pendingRequests.delete(entry.requestId);
+        this.cachedDecisions.set(entry.requestId, {
+            result,
+            toolName: entry.toolName,
+            toolInput: entry.toolInput,
+            sourceLocalId: entry.sourceLocalId,
+        });
+        for (const waiter of waiters) {
+            if (waiter.aborted) continue;
+            detachWaiter(waiter);
+            waiter.resolve(result);
+        }
     }
 
     cancelRequest(requestId: string, reason: string): void {

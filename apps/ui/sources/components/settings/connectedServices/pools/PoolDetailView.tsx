@@ -41,6 +41,7 @@ import { useProfile, useSettings } from '@/sync/store/hooks';
 import { t } from '@/text';
 import {
     ConnectedServiceAuthGroupIdSchema,
+    ConnectedServiceAuthGroupStrategyV1Schema,
     ConnectedServiceIdSchema,
     isConnectedServiceCredentialHealthStatusUsable,
     normalizeConnectedServiceCredentialHealthStatus,
@@ -62,6 +63,7 @@ import {
     resolveConnectedServiceGroupProbeIfSnapshotOlderThanMs,
     resolveConnectedServiceGroupMemberIdentity,
     resolveConnectedServiceGroupProfileTitle,
+    resolveConnectedServiceGroupStrategyLabel,
     resolveConnectedServiceGroupRecoveryMode,
     resolveConnectedServiceGroupSoftSwitchRemainingPercent,
     resolveConnectedServiceGroupSwitchBudget,
@@ -109,9 +111,7 @@ function parsePromptNumber(raw: string): number | null {
 }
 
 function resolveStrategyTitle(strategy: GroupStrategy): string {
-    if (strategy === 'least_limited') return t('connectedServices.detail.groupDetail.strategyLeastLimitedTitle');
-    if (strategy === 'manual') return t('connectedServices.detail.groupDetail.strategyManualTitle');
-    return t('connectedServices.detail.groupDetail.strategyPriorityTitle');
+    return resolveConnectedServiceGroupStrategyLabel(strategy);
 }
 
 function resolveRecoveryModeSubtitle(mode: GroupRecoveryMode): string {
@@ -133,8 +133,15 @@ function StrategyCheckmark() {
     return <Icon name="check" size={16} color={theme.colors.accent.blue} />;
 }
 
-function buildStrategyItems(currentStrategy: GroupStrategy): DropdownMenuItem[] {
+function buildStrategyItems(currentStrategy: GroupStrategy, expiryFirstSupported: boolean): DropdownMenuItem[] {
     return [
+        ...(expiryFirstSupported || currentStrategy === 'expiry_first' ? [{
+            id: 'expiry_first',
+            title: resolveStrategyTitle('expiry_first'),
+            subtitle: t('connectedServices.detail.groupDetail.strategyExpiryFirstSubtitle'),
+            rightElement: currentStrategy === 'expiry_first' ? <StrategyCheckmark /> : null,
+            disabled: !expiryFirstSupported,
+        }] : []),
         {
             id: 'priority',
             title: t('connectedServices.detail.groupDetail.strategyPriorityTitle'),
@@ -166,7 +173,7 @@ function buildRecoveryModeItems(currentMode: GroupRecoveryMode): DropdownMenuIte
 }
 
 function isGroupStrategy(value: string): value is GroupStrategy {
-    return value === 'priority' || value === 'least_limited' || value === 'manual';
+    return ConnectedServiceAuthGroupStrategyV1Schema.safeParse(value).success;
 }
 
 function isGroupRecoveryMode(value: string): value is GroupRecoveryMode {
@@ -214,6 +221,7 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
     const autoQuotaResetEnabled = useFeatureEnabled('connectedServices.autoQuotaReset');
     const autoDisablePlanInvalidEnabled = useFeatureEnabled('connectedServices.autoDisablePlanInvalid');
     const poolQuotaLimitSelectionEnabled = useFeatureEnabled('connectedServices.poolQuotaLimitSelection');
+    const poolExpiryFirstEnabled = useFeatureEnabled('connectedServices.poolExpiryFirst');
     const [strategyOpen, setStrategyOpen] = React.useState(false);
     const [recoveryModeOpen, setRecoveryModeOpen] = React.useState(false);
     const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
@@ -371,6 +379,7 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
 
     const handleSetStrategy = (strategy: string) => {
         if (!isGroupStrategy(strategy)) return;
+        if (strategy === 'expiry_first' && !poolExpiryFirstEnabled) return;
         void patchPolicy({ strategy });
     };
 
@@ -1013,7 +1022,7 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
                 <DropdownMenu
                     open={strategyOpen}
                     onOpenChange={setStrategyOpen}
-                    items={buildStrategyItems(group.policy.strategy)}
+                    items={buildStrategyItems(group.policy.strategy, poolExpiryFirstEnabled)}
                     selectedId={group.policy.strategy}
                     onSelect={handleSetStrategy}
                     itemTrigger={{

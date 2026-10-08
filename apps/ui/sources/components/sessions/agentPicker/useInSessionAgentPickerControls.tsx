@@ -2,11 +2,14 @@ import * as React from 'react';
 
 import {
     buildAcpConfigOptionOverridesV1FromConfigOptions,
+    type AccountProfile,
     type FeatureDecision,
     type SessionAgentTransitionSelectionV1,
 } from '@happier-dev/protocol';
 
+import { getAgentCore } from '@/agents/catalog/catalog';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveNewSessionConnectedServicesBindingsForAgent } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import {
     APPLIED_RUNTIME_MARKER_ICON,
     APPLIED_RUNTIME_MARKER_RAIL_SIZE,
@@ -169,6 +172,9 @@ export type SessionAgentPickerTargetDetailContext = Readonly<{
     machineId: string | null;
     cwd: string | null;
     profileId?: string | null;
+    accountProfileConnectedServicesV2?: AccountProfile['connectedServicesV2'];
+    connectedServicesFeatureEnabled?: boolean;
+    accountGroupsFeatureEnabled?: boolean;
 }>;
 
 /**
@@ -289,6 +295,8 @@ export type InSessionAgentPickerControls = Readonly<{
      */
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
+    /** Spends the matching live and persisted submission once canonical custody consumes it. */
+    clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /** Captures the exact canonical user-message request before transition dispatch. */
     recordArmedContinuationSubmission: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
@@ -594,6 +602,25 @@ export function useInSessionAgentPickerControls(
         persistArmedContinuation(null);
     }, [persistArmedContinuation]);
 
+    // Custody spends both projections of the same submission, even before the
+    // target metadata arrives. Ordinary disarming retains submitted custody;
+    // this compare-clear is its sole spending owner and preserves a newer arm.
+    const clearArmedContinuationSubmissionIfCurrent = React.useCallback((
+        expected: SessionArmedAgentContinuationSubmission,
+    ): boolean => {
+        const persisted = draftSessionId === null
+            ? undefined
+            : readPersistedArmedContinuation(accountScope, draftSessionId);
+        const persistedMatches = persisted?.submission?.localId === expected.localId;
+        const liveMatches = armed?.submission?.localId === expected.localId;
+        if (!persistedMatches && !liveMatches) return false;
+        if (persistedMatches && draftSessionId !== null) {
+            clearPersistedArmedContinuation(accountScope, draftSessionId);
+        }
+        setArmed((current) => current?.submission?.localId === expected.localId ? null : current);
+        return true;
+    }, [accountScope, armed?.submission?.localId, draftSessionId]);
+
     // The submission identity for the armed choice, derived from the choice
     // itself rather than minted at whichever affordance established it.
     //
@@ -853,6 +880,15 @@ export function useInSessionAgentPickerControls(
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,
                         profileId: params.detail.profileId ?? null,
+                        connectedServices: resolveNewSessionConnectedServicesBindingsForAgent({
+                            agentId: entry.providerAgentId,
+                            agentCore: getAgentCore(entry.providerAgentId),
+                            agentOptionState: null,
+                            accountProfileConnectedServicesV2: params.detail.accountProfileConnectedServicesV2 ?? [],
+                            settings: params.detail.settings,
+                            connectedServicesFeatureEnabled: params.detail.connectedServicesFeatureEnabled === true,
+                            accountGroupsFeatureEnabled: params.detail.accountGroupsFeatureEnabled === true,
+                        }).connectedServicesBindingsPayload,
                         settings: params.detail.settings,
                         // The same disclosure, told truthfully for this Session:
                         // an empty transcript has no conversation to carry, so the
@@ -968,6 +1004,7 @@ export function useInSessionAgentPickerControls(
         armedContinuationSubmission: submissionArm?.submission ?? null,
         armedContinuationSubmissionIntent: submissionArm?.intent ?? null,
         clearArmedContinuation,
+        clearArmedContinuationSubmissionIfCurrent,
         recordArmedContinuationSubmission,
         onAgentPickerIntent: signalAgentPickerIntent,
         onAgentPickerVisibilityChange,

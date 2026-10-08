@@ -110,6 +110,10 @@ import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './backend/t
 import { abortPendingAcpPermissionRequests } from './backend/permissions/acpPermissionFinalization';
 import { SessionControlApplyError } from '@/agent/runtime/sessionControlApplyError';
 import { buildAcpPromptContentBlocks } from './prompt/buildAcpPromptContentBlocks';
+import type {
+  InFlightSteerDeliveryIdentity,
+  InFlightSteerPromptOptions,
+} from '@/agent/runtime/permission/bindPermissionModeQueue';
 import {
   createAcpClientConnection,
   type AcpClientConnection,
@@ -765,18 +769,14 @@ export interface AcpBackendOptions {
   declaredSessionLoadSupport?: boolean;
 }
 
-export type AcpSteerDeliveryIdentity = Readonly<{
-  localId?: string | null;
-  localIds?: readonly string[];
-  userMessageSeq?: number | null;
-  userMessageSeqs?: readonly number[];
-}>;
+export type AcpSteerDeliveryIdentity = InFlightSteerDeliveryIdentity;
 
 export type AcpInFlightSteerAdapter = Readonly<{
   method: string;
   buildParams(input: Readonly<{
     sessionId: string;
     prompt: string;
+    content: readonly ContentBlock[];
     deliveryIdentity?: AcpSteerDeliveryIdentity;
   }>): unknown;
   isAccepted(response: unknown): boolean;
@@ -871,6 +871,7 @@ export class AcpBackend implements AgentBackend {
   private negotiatedSessionCapabilities: NegotiatedAcpSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
   private negotiatedSessionLoadSupport: boolean | null = null;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private replayCapture: AcpReplayCapture | null = null;
   /** Sole tool lifecycle/merge/timeout/finalization owner. */
   private readonly toolCalls: AcpToolCallTracker;
@@ -3488,15 +3489,15 @@ export class AcpBackend implements AgentBackend {
   async sendSteerPrompt(
     sessionId: SessionId,
     prompt: string,
-    deliveryIdentity?: AcpSteerDeliveryIdentity,
+    options?: InFlightSteerPromptOptions,
   ): Promise<void> {
-    await this.sendSteerPromptWithEvidence(sessionId, prompt, deliveryIdentity);
+    await this.sendSteerPromptWithEvidence(sessionId, prompt, options);
   }
 
   async sendSteerPromptWithEvidence(
     sessionId: SessionId,
     prompt: string,
-    deliveryIdentity?: AcpSteerDeliveryIdentity,
+    options?: InFlightSteerPromptOptions,
   ): Promise<AcpPromptSubmissionEvidence> {
     if (this.disposed) {
       throw new Error('Backend has been disposed');
@@ -3513,13 +3514,36 @@ export class AcpBackend implements AgentBackend {
       throw new Error('Session ID does not match the active ACP session');
     }
 
+    const connection = this.connection;
+    const turnGeneration = this.turnGeneration;
+    // Native extensions may queue input between turns; projection must not outlive a turn that was open.
+    const turnWasClosed = this.isTurnGenerationClosed(turnGeneration);
+    const { metadata, ...deliveryIdentity } = options ?? {};
+    const content = await buildAcpPromptContentBlocks({
+      cwd: this.options.cwd,
+      text: prompt,
+      metadata,
+    });
+    if (
+      this.disposed
+      || this.connection !== connection
+      || this.acpSessionId !== normalizedSessionId
+      || this.turnGeneration !== turnGeneration
+      || (!turnWasClosed && this.isTurnGenerationClosed(turnGeneration))
+    ) {
+      throw toAcpPromptSubmissionPhaseError(
+        'rejected_before_effect',
+        new Error('ACP steer is no longer current'),
+      );
+    }
     if (this.options.inFlightSteer) {
-      const response = await this.connection.peer.requestExtension(
+      const response = await connection.peer.requestExtension(
         this.options.inFlightSteer.method,
         this.options.inFlightSteer.buildParams({
           sessionId: normalizedSessionId,
           prompt,
-          ...(deliveryIdentity === undefined ? {} : { deliveryIdentity }),
+          content,
+          ...(options === undefined ? {} : { deliveryIdentity }),
         }),
       );
       if (!this.options.inFlightSteer.isAccepted(response)) {
@@ -3528,18 +3552,16 @@ export class AcpBackend implements AgentBackend {
       return { kind: 'accepted_without_exact_final_response' };
     }
 
-    const contentBlock: ContentBlock = { type: 'text', text: prompt };
     const promptRequest: PromptRequest = {
       sessionId: this.acpSessionId,
-      prompt: [contentBlock],
+      prompt: content,
     };
 
     // Intentionally do not toggle `waitingForResponse` or tool-call counters here.
     // This method is used for in-flight steering while a primary prompt is already running.
-    const turnGeneration = this.turnGeneration;
     const transportWriteReceipt = this.createAcpPromptTransportWriteReceipt(this.acpSessionId);
     const transportWriteSentinel = Symbol('acp-steer-transport-write');
-    const promptPromise = this.connection.peer.prompt(promptRequest);
+    const promptPromise = connection.peer.prompt(promptRequest);
     const finalResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = promptPromise
       .then((response): AcpPromptExactFinalResponseEvidence => {
         this.handlePromptResponseForTurn(response, turnGeneration, () => {});
@@ -3954,10 +3976,14 @@ export class AcpBackend implements AgentBackend {
   }
 
   async dispose(): Promise<void> {
-    if (this.disposed) return;
-    
-    logger.debug('[AcpBackend] Disposing backend');
+    if (this.disposePromise) return await this.disposePromise;
     this.disposed = true;
+    this.disposePromise = Promise.resolve().then(() => this.disposeResources());
+    return await this.disposePromise;
+  }
+
+  private async disposeResources(): Promise<void> {
+    logger.debug('[AcpBackend] Disposing backend');
 
     if (this.waitingForResponse || this.responseCompletionTimeout) {
       this.failPendingResponseWait(makeAbortError('Backend disposed'));

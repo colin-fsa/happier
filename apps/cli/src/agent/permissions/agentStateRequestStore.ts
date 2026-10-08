@@ -199,96 +199,98 @@ export class AgentStateRequestStore {
         extraCompletedFields?: Readonly<Record<string, unknown>> | null;
         fallback?: Readonly<{ toolName: string; toolInput: unknown; createdAt: number; kind?: string; source?: string }> | null;
         updateState?: (state: AgentState) => AgentState;
+        requireAck?: boolean;
     }>): Promise<void> {
         let completedRequest = false;
-        const completion = updateAgentStateBestEffort(
-            this.session,
-            (currentState) => {
-                const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
-                const existing = requests[params.requestId] as unknown;
-                if (!existing && !params.fallback) {
-                    return currentState;
-                }
-                if (hasPermissionResponseClaimV1(existing)) {
-                    return currentState;
-                }
-                delete requests[params.requestId];
+        const update = (currentState: AgentState): AgentState => {
+            const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
+            const existing = requests[params.requestId] as unknown;
+            if (!existing && !params.fallback) {
+                return currentState;
+            }
+            if (hasPermissionResponseClaimV1(existing)) {
+                return currentState;
+            }
+            delete requests[params.requestId];
 
-                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
-                const completedEntry = clonePlainObjectToNullProto(existing) ?? Object.create(null);
+            const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
+            const completedEntry = clonePlainObjectToNullProto(existing) ?? Object.create(null);
 
-                if (!existing && params.fallback) {
-                    completedEntry.tool = params.fallback.toolName;
-                    completedEntry.arguments = params.fallback.toolInput;
-                    completedEntry.createdAt = params.fallback.createdAt;
-                    if (typeof params.fallback.kind === 'string') completedEntry.kind = params.fallback.kind;
-                    if (typeof params.fallback.source === 'string') completedEntry.source = params.fallback.source;
-                }
+            if (!existing && params.fallback) {
+                completedEntry.tool = params.fallback.toolName;
+                completedEntry.arguments = params.fallback.toolInput;
+                completedEntry.createdAt = params.fallback.createdAt;
+                if (typeof params.fallback.kind === 'string') completedEntry.kind = params.fallback.kind;
+                if (typeof params.fallback.source === 'string') completedEntry.source = params.fallback.source;
+            }
 
-                if (typeof completedEntry.kind !== 'string') {
-                    const toolName =
-                        typeof completedEntry.tool === 'string'
-                            ? completedEntry.tool
-                            : params.fallback?.toolName;
-                    if (toolName) {
-                        completedEntry.kind = resolveAgentRequestKind(toolName);
-                    }
+            if (typeof completedEntry.kind !== 'string') {
+                const toolName =
+                    typeof completedEntry.tool === 'string'
+                        ? completedEntry.tool
+                        : params.fallback?.toolName;
+                if (toolName) {
+                    completedEntry.kind = resolveAgentRequestKind(toolName);
                 }
+            }
 
-                completedEntry.completedAt = Date.now();
-                completedEntry.status = params.status;
-                if (typeof params.decision === 'string') completedEntry.decision = params.decision;
-                if (typeof params.reason === 'string' && params.reason.length > 0) completedEntry.reason = params.reason;
-                if (typeof params.mode === 'string') completedEntry.mode = params.mode;
-                if (Array.isArray(params.allowedTools) && params.allowedTools.length > 0) {
-                    completedEntry.allowedTools = [...params.allowedTools];
+            completedEntry.completedAt = Date.now();
+            completedEntry.status = params.status;
+            if (typeof params.decision === 'string') completedEntry.decision = params.decision;
+            if (typeof params.reason === 'string' && params.reason.length > 0) completedEntry.reason = params.reason;
+            if (typeof params.mode === 'string') completedEntry.mode = params.mode;
+            if (Array.isArray(params.allowedTools) && params.allowedTools.length > 0) {
+                completedEntry.allowedTools = [...params.allowedTools];
+            }
+            if (typeof params.updatedPermissions !== 'undefined') {
+                completedEntry.updatedPermissions = params.updatedPermissions;
+            }
+            if (params.extraCompletedFields && typeof params.extraCompletedFields === 'object' && !Array.isArray(params.extraCompletedFields)) {
+                const extra = clonePlainObjectToNullProto(params.extraCompletedFields) ?? Object.create(null);
+                for (const [key, value] of Object.entries(extra)) {
+                    if (!key) continue;
+                    completedEntry[key] = value;
                 }
-                if (typeof params.updatedPermissions !== 'undefined') {
-                    completedEntry.updatedPermissions = params.updatedPermissions;
-                }
-                if (params.extraCompletedFields && typeof params.extraCompletedFields === 'object' && !Array.isArray(params.extraCompletedFields)) {
-                    const extra = clonePlainObjectToNullProto(params.extraCompletedFields) ?? Object.create(null);
-                    for (const [key, value] of Object.entries(extra)) {
-                        if (!key) continue;
-                        completedEntry[key] = value;
-                    }
-                }
+            }
 
-                completedRequests[params.requestId] = completedEntry as AgentStateCompletedEntry;
-                for (const [id, request] of Object.entries(requests)) {
-                    if (id === params.requestId) continue;
-                    if (!isAgentStateRequestCoveredByCompletedRequests({
-                        requestId: id,
-                        request,
-                        completedRequests: {
-                            [params.requestId]: completedEntry,
-                        },
-                        options: PENDING_REQUEST_COVERAGE_OPTIONS,
-                    })) continue;
+            completedRequests[params.requestId] = completedEntry as AgentStateCompletedEntry;
+            for (const [id, request] of Object.entries(requests)) {
+                if (id === params.requestId) continue;
+                if (!isAgentStateRequestCoveredByCompletedRequests({
+                    requestId: id,
+                    request,
+                    completedRequests: {
+                        [params.requestId]: completedEntry,
+                    },
+                    options: PENDING_REQUEST_COVERAGE_OPTIONS,
+                })) continue;
 
-                    delete requests[id];
-                    const equivalentCompleted = clonePlainObjectToNullProto(request) ?? Object.create(null);
-                    equivalentCompleted.completedAt = completedEntry.completedAt;
-                    equivalentCompleted.status = completedEntry.status;
-                    if (typeof completedEntry.reason === 'string') equivalentCompleted.reason = completedEntry.reason;
-                    if (typeof completedEntry.decision === 'string') equivalentCompleted.decision = completedEntry.decision;
-                    completedRequests[id] = equivalentCompleted as AgentStateCompletedEntry;
-                    this.markPermissionRequestCompletedBestEffort(id);
-                }
+                delete requests[id];
+                const equivalentCompleted = clonePlainObjectToNullProto(request) ?? Object.create(null);
+                equivalentCompleted.completedAt = completedEntry.completedAt;
+                equivalentCompleted.status = completedEntry.status;
+                if (typeof completedEntry.reason === 'string') equivalentCompleted.reason = completedEntry.reason;
+                if (typeof completedEntry.decision === 'string') equivalentCompleted.decision = completedEntry.decision;
+                completedRequests[id] = equivalentCompleted as AgentStateCompletedEntry;
+                this.markPermissionRequestCompletedBestEffort(id);
+            }
 
-                const nextState: AgentState = {
-                    ...currentState,
-                    requests,
-                    completedRequests,
-                };
-                completedRequest = true;
-                return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
-            },
-            this.logPrefix,
-            'complete_request',
-        );
+            const nextState: AgentState = {
+                ...currentState,
+                requests,
+                completedRequests,
+            };
+            completedRequest = true;
+            return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
+        };
+        const completion = params.requireAck
+            ? Promise.resolve(this.session.updateAgentState(update))
+            : updateAgentStateBestEffort(this.session, update, this.logPrefix, 'complete_request');
 
         return completion.then(() => {
+            if (params.requireAck && !completedRequest) {
+                throw new Error(`Permission request ${params.requestId} was not completed by the acknowledged write`);
+            }
             if (completedRequest) {
                 this.markPermissionRequestCompletedBestEffort(params.requestId);
             }

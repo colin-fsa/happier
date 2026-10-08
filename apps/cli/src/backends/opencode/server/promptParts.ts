@@ -1,8 +1,13 @@
 import path from 'node:path';
 
-import { HappierStructuredInputV1EnvelopeSchema } from '@happier-dev/protocol';
+import {
+  HappierStructuredInputV1EnvelopeSchema,
+  readHappierStructuredInputV1FromMeta,
+  readStructuredInputMentionSourcesV1,
+} from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
+import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { readTrustedSessionAttachmentLocalImages } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import {
   normalizeSessionMediaMimeType,
@@ -12,7 +17,9 @@ import {
 type UnknownRecord = Record<string, unknown>;
 
 export type OpenCodePromptPart =
-  | Readonly<{ type: 'text'; text: string }>
+  | Readonly<{ type: 'text'; text: string; synthetic?: boolean }>
+  | Readonly<{ type: 'agent'; name: string }>
+  | Readonly<{ type: 'skill'; id?: string; name: string; path?: string; text: string }>
   | Readonly<{ type: 'file'; mime: string; filename?: string; url: string }>;
 
 export class OpenCodePromptProjectionError extends Error {
@@ -73,7 +80,29 @@ export function buildOpenCodePromptParts(params: Readonly<{
     : asRecordArray(structured?.data.attachments);
   const parts: OpenCodePromptPart[] = [];
   if (params.text.length > 0) parts.push({ type: 'text', text: params.text });
-  if (imageInputs.length === 0) return Object.freeze(parts);
+  const mentionSources = readStructuredInputMentionSourcesV1(readHappierStructuredInputV1FromMeta(metadata));
+  const finishProjection = (): readonly OpenCodePromptPart[] => {
+    for (const mention of mentionSources.vendorPluginMentions) {
+      const name = readNonBlankString(mention.vendorPluginRef);
+      if (name) parts.push({ type: 'agent', name });
+    }
+    for (const skill of mentionSources.skillMentions) {
+      const name = readNonBlankString(skill.name ?? skill.displayName);
+      if (name) {
+        const id = skill.idSource === 'generated' ? null : readNonBlankOpaqueIdentifier(skill.id);
+        const skillPath = readNonBlankString(skill.path);
+        parts.push({
+          type: 'skill',
+          name,
+          ...(id ? { id } : {}),
+          ...(skillPath ? { path: skillPath } : {}),
+          text: `Use the ${name} skill for this request.`,
+        });
+      }
+    }
+    return Object.freeze(parts);
+  };
+  if (imageInputs.length === 0) return finishProjection();
 
   return (async () => {
     const trustedImages = await readTrustedSessionAttachmentLocalImages({
@@ -120,6 +149,6 @@ export function buildOpenCodePromptParts(params: Readonly<{
         url: `data:${mime};base64,${bytes.toString('base64')}`,
       });
     }
-    return Object.freeze(parts);
+    return finishProjection();
   })();
 }

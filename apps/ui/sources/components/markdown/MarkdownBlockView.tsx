@@ -290,6 +290,10 @@ function MarkdownOptionButton(props: {
         });
     }, [feedback, feedbackKey, option, props.onOptionLongPress]);
 
+    const isSelectable = Platform.OS === 'web'
+        ? props.selectable
+        : (props.selectable && !props.onOptionLongPress);
+
     return (
         <Pressable
             style={({ pressed }) => [
@@ -299,7 +303,7 @@ function MarkdownOptionButton(props: {
             onPress={handlePress}
             onLongPress={props.onOptionLongPress ? handleLongPress : undefined}
         >
-            <Text selectable={props.selectable && !props.onOptionLongPress} style={props.textStyle}>{props.item}</Text>
+            <Text selectable={isSelectable} style={props.textStyle}>{props.item}</Text>
             <CopiedPill
                 visible={feedback.isCopied(feedbackKey)}
                 testID={`markdown-option-copy-feedback:${props.index}`}

@@ -547,3 +547,18 @@ export const SessionSkillCatalogListResponseV1Schema = z.preprocess(
     .passthrough(),
 );
 export type SessionSkillCatalogListResponseV1 = z.infer<typeof SessionSkillCatalogListResponseV1Schema>;
+
+/** Native catalogs observed for a selected launch scope before a Happier session exists. */
+export const PreflightSessionCatalogsV1Schema = z.object({
+  commands: z.object({
+    supported: z.boolean(),
+    items: z.array(z.object({ command: z.string().min(1), description: z.string().optional() })),
+    diagnostic: z.string().optional(),
+  }),
+  skills: z.object({
+    supported: z.boolean(),
+    items: z.array(SessionSkillCatalogItemV1Schema),
+    diagnostic: z.string().optional(),
+  }),
+});
+export type PreflightSessionCatalogsV1 = z.infer<typeof PreflightSessionCatalogsV1Schema>;

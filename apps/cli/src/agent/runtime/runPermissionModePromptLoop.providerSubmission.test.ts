@@ -24,7 +24,9 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
   it('delivers advertised provider commands unchanged and applies deferred fresh-session prompt composition to the next prompt', async () => {
     const queue = createModeQueue();
     queue.push(
-      { text: '/goal fix authentication', localId: 'local-command' },
+      { text: '/goal fix authentication $review', localId: 'local-command', meta: { happierStructuredInputV1: {
+        v: 1, mentions: [{ kind: 'happier.skill', ref: 'skill:review', token: '$review', start: 25, end: 32 }],
+      } } },
       { permissionMode: 'default', appendSystemPrompt: 'APPEND' },
       { userMessageLocalId: 'local-command' },
     );
@@ -73,6 +75,7 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
         beginTurn: vi.fn(),
         startOrLoad: vi.fn(async () => undefined),
         isProviderNativeCommand: vi.fn(async (text: string) => text.startsWith('/goal')),
+        listSkills: async () => ({ supported: true, skills: [{ id: 'review', name: 'review', path: '/skills/review/SKILL.md', origin: 'opencode_native' }] }),
         sendPrompt: vi.fn(async () => undefined),
         sendPromptWithMeta,
         flushTurn: vi.fn(async () => undefined),
@@ -97,7 +100,8 @@ describe('runPermissionModePromptLoop provider submission phase ownership', () =
     });
 
     expect(sendPromptWithMeta).toHaveBeenCalledWith(expect.objectContaining({
-      text: '/goal fix authentication',
+      text: '/goal fix authentication $review',
+      meta: { happierStructuredInputV1: { v: 1, skillMentions: [expect.objectContaining({ name: 'review', path: '/skills/review/SKILL.md' })] } },
     }));
     expect(sendPromptWithMeta).toHaveBeenNthCalledWith(2, expect.objectContaining({
       text: 'APPEND\n\ncontinue normally',

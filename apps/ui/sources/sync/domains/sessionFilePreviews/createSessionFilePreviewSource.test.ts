@@ -201,4 +201,24 @@ describe('createSessionFilePreviewSource', () => {
         });
         expect(nativeFileSystem.makeDirectoryAsync).not.toHaveBeenCalled();
     });
+
+    it('writes an Android MP4 preview directly to the native cache and removes it after use', async () => {
+        Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+        const chunks = [new Uint8Array([0, 1, 2]), new Uint8Array([3, 4, 5])];
+        downloadDaemonSessionFileToDestination.mockImplementation(async (params: DownloadMockParams) => {
+            const init = await params.onInit?.({ name: 'demo.mp4', sizeBytes: 12_000_000 });
+            if (init?.success === false) return { ok: false, error: init.error };
+            for (const chunk of chunks) await params.destination.writeBytes(chunk);
+            await params.destination.close();
+            return { ok: true, name: 'demo.mp4', sizeBytes: 12_000_000 };
+        });
+        const result = await createSessionFilePreviewSource({ sessionId: 's1', filePath: 'demo.mp4', mimeType: 'video/mp4' });
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.source.uri).toMatch(/^file:\/\/\/cache\/happier-previews\/.*demo\.mp4$/);
+        expect(result.source.svgXml).toBeNull();
+        expect(nativeFileSystem.writes).toEqual(chunks);
+        await result.source.cleanup();
+        expect(nativeFileSystem.delete).toHaveBeenCalled();
+    });
 });

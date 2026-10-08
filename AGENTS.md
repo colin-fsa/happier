@@ -216,6 +216,8 @@ Before changing production behavior:
 
 ## Testing: contract value, not test volume
 
+- Run tests, typechecks, lint/static analysis, and read-only repository searches through `./apps/stack/bin/hstack-exec -- <command> [args...]` from this checkout's root. Routing through an executable sibling `../0.3` executor is optional; absent/unusable siblings or `HAPPIER_ROUTED_EXECUTOR=0` (also `off`, `false`, or `disabled`) execute the command locally with the same arguments, streams, and exit status.
+
 ### Behavior-change rule
 
 - Any production behavior change requires TDD: write or update the relevant test first, verify RED for the intended reason, implement minimal GREEN, then refactor with tests green.

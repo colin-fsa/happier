@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionItemTestRowModel, installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import {
     SESSION_ACTION_ARCHIVE_ID,
@@ -829,62 +829,6 @@ describe('SessionItem server-scoped mutations', () => {
         )).toBe(false);
     });
 
-    it('groups folder move targets under one submenu item', async () => {
-        const session = {
-            id: 'sess_folder_menu',
-            seq: 2,
-            lastViewedSessionSeq: 2,
-            createdAt: 1,
-            updatedAt: 1,
-            active: false,
-            activeAt: 1,
-            archivedAt: null,
-            metadata: null,
-            metadataVersion: 1,
-            agentState: null,
-            agentStateVersion: 1,
-            thinking: false,
-            thinkingAt: 0,
-            presence: 1,
-        } as any;
-
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                serverId="server_d"
-                serverName="Server D"
-                showServerBadge={true}
-                selected={false}
-                isFirst={true}
-                isLast={true}
-                isSingle={true}
-                variant="default"
-                compact={false}
-                folderMoveMenuItems={[
-                    { id: 'move-to-folder:null', title: 'Workspace root' },
-                    { id: 'move-to-folder:folder_a', title: 'Folder A' },
-                ]}
-                onSelectFolderMoveMenuItem={vi.fn()}
-                nativeContextMenuOpen={true}
-                onNativeContextMenuOpenChange={vi.fn()}
-            />,
-        );
-
-        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
-        const moreMenu = contextMenus.find((node: any) =>
-            Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID),
-        );
-        expect(moreMenu).toBeTruthy();
-
-        const moveItem = moreMenu!.props.items.find((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID);
-        expect(moveItem?.title).toBe('sessionsList.moveToFolder');
-        expect(moveItem?.submenu?.items).toEqual([
-            expect.objectContaining({ id: 'move-to-folder:null' }),
-            expect.objectContaining({ id: 'move-to-folder:folder_a' }),
-        ]);
-        expect(moreMenu!.props.items.some((item: any) => item?.id === 'move-to-folder:folder_a')).toBe(false);
-    });
-
     it('uses the move sheet action when an accessible move fallback is provided', async () => {
         const session = {
             id: 'sess_move_sheet',
@@ -918,10 +862,6 @@ describe('SessionItem server-scoped mutations', () => {
                 isSingle={true}
                 variant="default"
                 compact={false}
-                folderMoveMenuItems={[
-                    { id: 'move-to-folder:null', title: 'Workspace root' },
-                    { id: 'move-to-folder:folder_a', title: 'Folder A' },
-                ]}
                 onMoveToFolder={onMoveToFolder}
                 onMoveToWorkspaceRoot={onMoveToWorkspaceRoot}
                 nativeContextMenuOpen={true}

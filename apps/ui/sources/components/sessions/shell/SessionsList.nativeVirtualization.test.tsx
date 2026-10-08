@@ -44,6 +44,8 @@ const setWorkspaceLabelsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
 let sessionFolderViewModeV1: 'off' | 'tree' = 'off';
+let foldersFeatureEnabled = true;
+const folderFeatureListeners = new Set<() => void>();
 const setSessionFolderViewModeV1 = vi.fn();
 let sessionFoldersV1: any = { v: 1, folders: [] };
 const setSessionFoldersV1 = vi.fn();
@@ -634,7 +636,13 @@ vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
 }));
 
 vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => ({ state: 'enabled' }),
+    useFeatureDecision: (featureId: string) => {
+        const enabled = React.useSyncExternalStore(
+            React.useCallback((listener: () => void) => { folderFeatureListeners.add(listener); return () => { folderFeatureListeners.delete(listener); }; }, []),
+            () => featureId === 'sessions.folders' ? foldersFeatureEnabled : true,
+        );
+        return { state: enabled ? 'enabled' : 'disabled' };
+    },
 }));
 
 let mockVisibleSessionListViewData: any[] | null = [
@@ -811,6 +819,7 @@ describe('SessionsList (native virtualization)', () => {
         workspaceLabelsV1 = {};
         collapsedGroupKeysV1 = {};
         sessionFolderViewModeV1 = 'off';
+        foldersFeatureEnabled = true;
         sessionFoldersV1 = { v: 1, folders: [] };
         sessionListOrderingModeV1 = 'custom';
         sessionListIdentityDisplay = 'avatar';
@@ -1670,12 +1679,19 @@ describe('SessionsList (native virtualization)', () => {
         expect(updatedRow.props.resolveDropResult).toBe(initialRow.props.resolveDropResult);
         expect(updatedRow.props.onRegisterTreeRowBounds).toBe(initialRow.props.onRegisterTreeRowBounds);
         expect(updatedRow.props.onUnregisterTreeRowBounds).toBe(initialRow.props.onUnregisterTreeRowBounds);
-        expect(updatedRow.props.folderMoveMenuItems).toBe(initialRow.props.folderMoveMenuItems);
         expect(updatedRow.props.onMoveToFolder).toBe(initialRow.props.onMoveToFolder);
         expect(updatedRow.props.onMoveToWorkspaceRoot).toBe(initialRow.props.onMoveToWorkspaceRoot);
         expect(updatedRow.props.onMoveUp).toBe(initialRow.props.onMoveUp);
         expect(updatedRow.props.onMoveDown).toBe(initialRow.props.onMoveDown);
-        expect(updatedRow.props.onSelectFolderMoveMenuItem).toBe(initialRow.props.onSelectFolderMoveMenuItem);
+    });
+
+    it('updates mounted row folder actions when the folder gate changes with folder view off', async () => {
+        const screen = await renderSessionsList();
+        expect(findSessionItem(screen, 'sess_a')?.props.onMoveToFolder).toEqual(expect.any(Function));
+        await act(async () => { foldersFeatureEnabled = false; folderFeatureListeners.forEach((listener) => listener()); });
+        expect(findSessionItem(screen, 'sess_a')?.props.onMoveToFolder).toBeUndefined();
+        await act(async () => { foldersFeatureEnabled = true; folderFeatureListeners.forEach((listener) => listener()); });
+        expect(findSessionItem(screen, 'sess_a')?.props.onMoveToFolder).toEqual(expect.any(Function));
     });
 
     it('invalidates mounted native rows when a row presentation setting changes', async () => {
@@ -1837,7 +1853,6 @@ describe('SessionsList (native virtualization)', () => {
         expect(secondRow.props.onMoveToWorkspaceRoot).toBe(firstRow.props.onMoveToWorkspaceRoot);
         expect(secondRow.props.onMoveUp).toBe(firstRow.props.onMoveUp);
         expect(secondRow.props.onMoveDown).toBe(firstRow.props.onMoveDown);
-        expect(secondRow.props.onSelectFolderMoveMenuItem).toBe(firstRow.props.onSelectFolderMoveMenuItem);
         expect(secondRow.props.tags).toBe(firstRow.props.tags);
         expect(secondRow.props.allKnownTags).toBe(firstRow.props.allKnownTags);
     });
@@ -2196,6 +2211,22 @@ describe('SessionsList (native virtualization)', () => {
         });
 
         expect(setSessionMruOrderV1).not.toHaveBeenCalled();
+    });
+
+    it('keeps disabled folder commands inert when invoked by keyboard', async () => {
+        mockPathname = '/session/sess_a';
+        foldersFeatureEnabled = false;
+        sessionFolderAssignmentsBySessionKey = { 'server_a:sess_a': 'planning' };
+        await renderSessionsList();
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => {
+            keyboardShortcutHandlersRef.current?.['sessions.row.moveToFolder']?.();
+            keyboardShortcutHandlersRef.current?.['sessions.row.moveToWorkspaceRoot']?.();
+        });
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(Modal.alert).not.toHaveBeenCalled();
     });
 
     it('registers visible session shortcut handlers through the keyboard provider', async () => {

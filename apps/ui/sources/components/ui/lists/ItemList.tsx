@@ -28,7 +28,10 @@ export interface ItemListProps extends ScrollViewProps {
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
-        flex: 1,
+        // Preserve intrinsic height in fit-content cards, while filling bounded screens.
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 'auto',
         ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
         backgroundColor: theme.colors.background.canvas,
     },

@@ -5,7 +5,12 @@ import { createSessionFixture, pressTestInstanceAsync, renderScreen } from '@/de
 import type { Session, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { Project } from '@/sync/runtime/orchestration/projectManager';
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
+import { FileBinaryState } from '@/components/sessions/files/file/FileScreenState';
 
+vi.mock('@react-navigation/native', async () => {
+    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
+    return createReactNavigationNativeMock();
+});
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
 
@@ -14,8 +19,8 @@ installSessionFilesViewCommonModuleMocks({
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'ios',
-                select: (spec: any) => spec?.ios ?? spec?.default,
+                OS: 'web',
+                select: (spec: any) => spec?.web ?? spec?.default,
             },
         });
     },
@@ -63,12 +68,6 @@ vi.mock('@/components/sessions/files/file/editor/FileEditorPanel', () => ({
 
 vi.mock('@/components/ui/markdown/editor/RichMarkdownEditorPanel', () => ({
   RichMarkdownEditorPanel: (props: any) => React.createElement('RichMarkdownEditorPanel', props),
-}));
-
-vi.mock('@/components/sessions/files/file/FileScreenState', () => ({
-  FileLoadingState: (props: any) => React.createElement('FileLoadingState', props),
-  FileErrorState: (props: any) => React.createElement('FileErrorState', props),
-  FileBinaryState: (props: any) => React.createElement('FileBinaryState', props),
 }));
 
 vi.mock('@/hooks/ui/useMountedRef', () => ({
@@ -119,7 +118,7 @@ const binaryProject: Project = {
     updatedAt: 1,
 };
 const binaryEntry: ScmWorkingSnapshot['entries'][number] = {
-    path: 'bin.dat',
+    path: 'bin.zip',
     kind: 'modified',
     includeStatus: 'unmodified',
     pendingStatus: 'modified',
@@ -134,7 +133,7 @@ const binaryEntry: ScmWorkingSnapshot['entries'][number] = {
         isBinary: true,
     },
 };
-const binarySnapshot: ScmWorkingSnapshot = {
+let binarySnapshot: ScmWorkingSnapshot = {
     projectKey: 'project-1',
     fetchedAt: 1,
     repo: {
@@ -174,18 +173,6 @@ vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
     startDownload: (input: any) => startDownloadSpy(input),
     cancelDownload: vi.fn(),
   }),
-}));
-
-const refreshSpy = vi.fn(async (..._args: any[]) => ({
-  status: 'ready' as const,
-  error: null,
-  diffContent: null,
-  fileContent: { content: '', isBinary: true },
-  fileWriteSupported: true,
-}));
-
-vi.mock('./sessionFileDetails/refreshSessionFileDetails', () => ({
-  refreshSessionFileDetails: (input: any) => refreshSpy(input),
 }));
 
 vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
@@ -259,6 +246,8 @@ vi.mock('@/components/sessions/files/useSessionFileDownloadAvailability', () => 
 
 beforeEach(() => {
   downloadAvailabilityState.value = true;
+  binarySnapshot = { ...binarySnapshot, fetchedAt: 1, entries: [binaryEntry] };
+
 });
 
 describe('SessionFileDetailsView (binary)', () => {
@@ -267,7 +256,7 @@ describe('SessionFileDetailsView (binary)', () => {
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 
     let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.dat" />)).tree;
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.zip" />)).tree;
 
     await act(async () => {});
 
@@ -279,22 +268,22 @@ describe('SessionFileDetailsView (binary)', () => {
     const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 
     let tree!: renderer.ReactTestRenderer;
-    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.dat" />)).tree;
+    tree = (await renderScreen(<SessionFileDetailsView sessionId="s1" scopeId="session:s1" filePath="bin.zip" />)).tree;
 
     // Flush the refresh effect.
     await act(async () => {});
 
-    expect(refreshSpy).toHaveBeenCalled();
     expect(tree.findAllByType('FileActionToolbar' as any).length).toBe(1);
     expect(tree.findByType('FileActionToolbar' as any).props.showWrapLinesToggle).toBe(false);
     expect(tree.findAllByType('ScmChangeDiscardButton' as any).length).toBe(1);
     expect(tree.findAllByProps({ testID: 'file-header-download', accessibilityRole: 'button' }).length).toBe(1);
-    expect(tree.findAllByType('FileBinaryState' as any).length).toBe(1);
+    expect(tree.findAllByType(FileBinaryState).length).toBe(1);
 
     await act(async () => {
       await pressTestInstanceAsync(tree.findByProps({ testID: 'file-header-download', accessibilityRole: 'button' }));
     });
 
-    expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'bin.dat', asZip: false });
+    expect(startDownloadSpy).toHaveBeenCalledWith({ path: 'bin.zip', asZip: false });
   });
+
 });

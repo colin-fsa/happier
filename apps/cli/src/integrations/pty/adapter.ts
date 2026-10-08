@@ -347,6 +347,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       );
       const submission = await runTerminalPromptSubmission({
         promptText: input.text,
+        signal: input.signal,
+        resolveDeliveryState: input.resolveDeliveryState,
         ...(shouldStagePrompt
           ? {
             verifyStagedBeforeSubmit: async ({ promptText }) => promptSubmitVerification.isPromptStagedBeforeSubmit({

@@ -124,12 +124,12 @@ describe('DesktopSidebarChrome', () => {
 
         expect(chrome.children[0]).toBe(controlsRow);
         expect(chrome.children[1]).toBe(contentRow);
-        // The desktop top rail carries window-level utilities: Updates leads the group (so nothing else
-        // moves when it appears), inbox and activity live only in the sidebar's own icon row below.
+        // The desktop top rail carries window-level utilities: back/forward lead, Updates follows them
+        // ahead of the other utilities; inbox and activity live only in the sidebar's own icon row below.
         expect(directChildTestIDs(screen.findByTestId('desktop-sidebar-chrome-utility-row')!)).toEqual([
-            'desktop-sidebar-updates-button',
             'sidebar-back-button',
             'sidebar-forward-button',
+            'desktop-sidebar-updates-button',
             'nav-settings',
             'sidebar-collapse-button',
         ]);

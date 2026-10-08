@@ -24,12 +24,6 @@ export type SessionFolderSessionItem = Extract<SessionListViewItem, { type: 'ses
     folderDepth?: number;
 }>;
 
-export type SessionFolderMoveTarget = Readonly<{
-    folderId: string | null;
-    title: string;
-    depth: number;
-}>;
-
 export function asSessionFolderHeaderItem(
     item: Extract<SessionListViewItem, { type: 'header' }>,
 ): SessionFolderHeaderItem | null {
@@ -55,30 +49,6 @@ export function readSessionFolderDepth(item: Extract<SessionListViewItem, { type
     return typeof rawDepth === 'number' && Number.isFinite(rawDepth)
         ? Math.max(0, Math.trunc(rawDepth))
         : 0;
-}
-
-export function buildSessionFolderMoveTargets(
-    items: ReadonlyArray<SessionListViewItem>,
-): SessionFolderMoveTarget[] {
-    const targets: SessionFolderMoveTarget[] = [{
-        folderId: null,
-        title: 'sessionsList.moveToWorkspaceRoot',
-        depth: 0,
-    }];
-    const seen = new Set<string>();
-    for (const item of items) {
-        if (item.type !== 'header') continue;
-        const folder = asSessionFolderHeaderItem(item);
-        if (!folder) continue;
-        if (seen.has(folder.folderId)) continue;
-        seen.add(folder.folderId);
-        targets.push({
-            folderId: folder.folderId,
-            title: folder.title,
-            depth: folder.depth,
-        });
-    }
-    return targets;
 }
 
 export function buildSessionFolderBreadcrumbs(

@@ -10,7 +10,7 @@ export function createCodexConnectedServicesMaterializer(): ConnectedServicesPro
     const openai = params.recordsByServiceId.get('openai') ?? null;
 
     if (codex) {
-      const materialized = await materializeCodexConnectedServiceAuth({
+      const write = () => materializeCodexConnectedServiceAuth({
         rootDir: params.rootDir,
         previousCodexHome: params.previousMaterializedRoot
           ? join(params.previousMaterializedRoot, 'codex-home')
@@ -19,6 +19,7 @@ export function createCodexConnectedServicesMaterializer(): ConnectedServicesPro
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
       });
+      const materialized = await (params.writeArtifacts ? params.writeArtifacts(write) : write());
 
       return {
         env: materialized.env,

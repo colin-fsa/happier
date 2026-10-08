@@ -48,6 +48,7 @@ export type SessionBulkActionTarget = Readonly<{
     hasAdminAccess?: boolean;
     canStop?: boolean;
     canArchive?: boolean;
+    canMoveToFolder?: boolean;
     pinned?: boolean;
     tags?: readonly string[];
     readState?: SessionBulkReadState;

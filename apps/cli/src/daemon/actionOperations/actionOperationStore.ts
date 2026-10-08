@@ -101,7 +101,6 @@ export function createActionOperationStore(options?: Readonly<{
       scope: current.scope,
       title: current.title,
       createdAt: current.createdAt,
-      cancellation: current.cancellation,
     });
     snapshots.set(operationId, next);
     publishRevision(next);

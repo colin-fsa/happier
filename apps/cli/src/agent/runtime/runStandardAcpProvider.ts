@@ -37,7 +37,7 @@ import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPush
 import { createTurnAssistantPreviewTracker, type TurnAssistantPreviewTracker } from '@/agent/runtime/turnAssistantPreviewTracker';
 import { resolveEffectiveCodingPromptText } from '@/agent/prompting/coding/resolveEffectiveCodingPrompt';
 import { shouldSendReadyPushNotification } from '@/settings/notifications/notificationsPolicy';
-import type { InFlightSteerController, InFlightSteerDeliveryIdentity } from '@/agent/runtime/permission/bindPermissionModeQueue';
+import type { InFlightSteerController, InFlightSteerPromptOptions } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { Credentials } from '@/persistence';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -68,11 +68,12 @@ type RuntimeForLoop = {
   clearGoal?: () => Promise<unknown>;
   listVendorPlugins?: () => Promise<unknown>;
   listSkills?: () => Promise<unknown>;
+  isProviderNativeCommand?: InFlightSteerController['isProviderNativeCommand'];
   supportsInFlightSteer?: () => boolean;
   isTurnInFlight?: () => boolean;
   steerPrompt?: (
     message: string,
-    identity?: InFlightSteerDeliveryIdentity & Readonly<{
+    identity?: InFlightSteerPromptOptions & Readonly<{
       onProviderPromptAccepted?: () => void;
     }>,
   ) => Promise<void>;
@@ -352,9 +353,12 @@ export async function runStandardAcpProvider(
   const inFlightSteerController: InFlightSteerController = {
     supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
     isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
+    isProviderNativeCommand: (text) => runtimeForInFlightSteer?.isProviderNativeCommand?.(text) ?? false,
+    listSkills: () => runtimeForInFlightSteer?.listSkills?.() ?? Promise.resolve({ supported: false, skills: [] }),
+    listVendorPlugins: () => runtimeForInFlightSteer?.listVendorPlugins?.() ?? Promise.resolve({ supported: false, vendorPlugins: [] }),
     steerText: async (
       text: string,
-      identity?: InFlightSteerDeliveryIdentity,
+      identity?: InFlightSteerPromptOptions,
       callbacks?: Readonly<{ onProviderPromptAccepted?: () => void }>,
     ) => {
       const runtime = runtimeForInFlightSteer;

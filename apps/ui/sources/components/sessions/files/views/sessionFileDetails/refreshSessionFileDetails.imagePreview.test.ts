@@ -28,11 +28,6 @@ vi.mock('@/hooks/session/files/sessionPathState', () => ({
 
 installSessionFileDetailsCommonModuleMocks();
 
-vi.mock('@/scm/utils/filePresentation', () => ({
-    isBinaryContent: () => true,
-    isKnownBinaryPath: () => true,
-    getImageMimeTypeFromPath: (path: string) => (path.endsWith('.png') ? 'image/png' : null),
-}));
 
 vi.mock('@/scm/diff/looksLikeUnifiedDiff', () => ({
     looksLikeUnifiedDiff: () => false,

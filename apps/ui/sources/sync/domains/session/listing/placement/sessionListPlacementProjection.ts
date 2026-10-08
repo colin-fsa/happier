@@ -4,6 +4,7 @@ import {
 } from '../../attention/deriveSessionRuntimePresentationState';
 import {
     resolveSessionAttentionStandingSource,
+    resolveSessionReminderPresentation,
     type SessionAttentionStandingPolicy,
 } from '../../organization/attentionStanding';
 import type { SessionListAttentionPromotionReason } from '../attentionPromotion/sessionListAttentionPromotionTypes';
@@ -100,6 +101,10 @@ export function projectSessionListPlacement(params: Readonly<{
         ? resolveSessionAttentionStandingSource(params.standingPolicy, sessionKey, params.nowMs)
         : 'none';
     if (standingSource !== 'none') {
+        if (params.standingPolicy && sessionKey
+            && resolveSessionReminderPresentation(params.standingPolicy.overridesBySessionKey[sessionKey], params.nowMs)?.state === 'due') {
+            return createPlacement('reminder', null);
+        }
         return { kind: 'standing', timestamp: null, retainedWorking: false, explicitStanding: standingSource === 'override' };
     }
     return UNPLACED_SESSION_LIST_PROJECTION;
@@ -210,6 +215,7 @@ export function resolveSessionListPlacementTimestampForReason(
         case 'unread':
             return resolveSessionListUnreadPlacementTimestamp(session);
         case 'standing':
+        case 'reminder':
             return null;
     }
 }

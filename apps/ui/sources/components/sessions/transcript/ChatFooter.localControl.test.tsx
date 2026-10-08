@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 import { ChatFooter } from './ChatFooter';
+import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 
 (
     globalThis as typeof globalThis & {
@@ -71,6 +72,71 @@ describe('ChatFooter (local control)', () => {
     afterEach(() => {
         resetTranscriptCommonModuleMockState();
         standardCleanup();
+    });
+
+    it('shows daemon progress and Stop while import cancellation is available', async () => {
+        const onCancelImport = vi.fn();
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: 'persisted',
+            importOperation: createActionOperationFixture(),
+            onCancelImport,
+        } });
+        expect(screen.getTextContent()).toContain('chatFooter.directImportImporting');
+        expect(screen.getTextContent()).toContain('chatFooter.directImportCount');
+        const stop = screen.findByTestId('session-chatFooter-stopImport');
+        expect(stop).not.toBeNull();
+        await act(async () => { stop!.props.onPress(); });
+        expect(onCancelImport).toHaveBeenCalled();
+        expect(screen.findByTestId('session-chatFooter-takeOverPersist')).toBeNull();
+    });
+
+    it.each(['cancelling', 'starting'] as const)('does not offer Stop once daemon reports %s', async (phase) => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: 'persisted',
+            importOperation: createActionOperationFixture({ cancellation: 'unsupported', progress: { kind: 'phase', phase, label: phase } }),
+            onCancelImport: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-stopImport')).toBeNull();
+        expect(screen.getTextContent()).toContain(phase === 'cancelling' ? 'chatFooter.directImportCancelling' : 'chatFooter.directImportStarting');
+    });
+
+    it('keeps a conversion failure visible after the runner has started', async () => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: true, activity: 'running', canTakeOverDirect: false,
+            canTakeOverPersist: true, takeoverInFlight: null,
+            importOperation: createActionOperationFixture({ state: 'failed', settledAt: 110, cancellation: 'unsupported',
+                error: { errorCode: 'failed', error: 'metadata update failed' } }),
+            onRequestTakeOverPersist: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-directControl')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('chatFooter.directImportFailed');
+        expect(screen.getTextContent()).toContain('metadata update failed');
+    });
+
+    it('keeps a status recovery action visible after the runner has started', async () => {
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: true, activity: 'running', canTakeOverDirect: false,
+            canTakeOverPersist: false, takeoverInFlight: null, importStatusError: 'refresh disconnected',
+            onRefreshImport: vi.fn(),
+        } });
+        expect(screen.findByTestId('session-chatFooter-refreshImport')).not.toBeNull();
+    });
+
+    it('offers retry after cancellation with retained history', async () => {
+        const onRequestTakeOverPersist = vi.fn();
+        const screen = await renderFooter({ directControl: {
+            machineOnline: true, runnerActive: false, activity: 'idle', canTakeOverDirect: true,
+            canTakeOverPersist: true, takeoverInFlight: null,
+            importOperation: createActionOperationFixture({ state: 'cancelled', settledAt: 110, cancellation: 'unsupported' }),
+            onRequestTakeOverPersist,
+        } });
+        expect(screen.getTextContent()).toContain('chatFooter.directImportCancelled');
+        const retry = screen.findByTestId('session-chatFooter-takeOverPersist');
+        expect(retry).not.toBeNull();
+        await act(async () => { retry!.props.onPress(); });
+        expect(onRequestTakeOverPersist).toHaveBeenCalled();
     });
 
     it('renders a switch-to-remote button when controlled by user', async () => {

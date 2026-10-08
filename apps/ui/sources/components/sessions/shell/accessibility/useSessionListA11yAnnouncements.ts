@@ -18,6 +18,7 @@ export type UseSessionListA11yAnnouncementsResult = Readonly<{
     announcePickedUp: (subject: SessionListA11yAnnouncementSubject) => void;
     announceCancelled: (subject: SessionListA11yAnnouncementSubject) => void;
     announceDropResult: (announcement: SessionListA11yDropAnnouncement) => void;
+    announceFolderAssignment: (announcement: SessionListA11yAnnouncementSubject & Readonly<{ destinationLabel: string; folderId: string | null }>) => void;
     announceSelectionCount: (announcement: Readonly<{ count: number }>) => void;
 }>;
 
@@ -99,6 +100,12 @@ export function useSessionListA11yAnnouncements(): UseSessionListA11yAnnouncemen
         announceAccessibilityMessage(formatDropAnnouncement(drop));
     }, []);
 
+    const announceFolderAssignment = React.useCallback((assignment: SessionListA11yAnnouncementSubject & Readonly<{ destinationLabel: string; folderId: string | null }>) => {
+        announceAccessibilityMessage(t(assignment.folderId === null ? 'sessionsList.dragA11yDroppedRoot' : 'sessionsList.dragA11yDroppedNest', {
+            item: assignment.label, destination: assignment.destinationLabel,
+        }));
+    }, []);
+
     const announceSelectionCount = React.useCallback((selection: Readonly<{ count: number }>) => {
         announceAccessibilityMessage(t('sessionsList.selectionA11ySelectedCount', { count: selection.count }));
     }, []);
@@ -107,6 +114,7 @@ export function useSessionListA11yAnnouncements(): UseSessionListA11yAnnouncemen
         announcePickedUp,
         announceCancelled,
         announceDropResult,
+        announceFolderAssignment,
         announceSelectionCount,
-    }), [announceCancelled, announceDropResult, announcePickedUp, announceSelectionCount]);
+    }), [announceCancelled, announceDropResult, announceFolderAssignment, announcePickedUp, announceSelectionCount]);
 }

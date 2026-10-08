@@ -1,9 +1,214 @@
-import { describe, expect, it } from 'vitest';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Fastify from 'fastify';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
+import { ActionsSettingsV1Schema, SessionGoalSetRequestV1Schema, SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+
+const { nativeRpc } = vi.hoisted(() => ({
+  nativeRpc: vi.fn<typeof import('@/session/transport/rpc/sessionRpc').callSessionRpc>(),
+}));
+vi.mock('@/session/transport/rpc/sessionRpc', () => ({ callSessionRpc: nativeRpc }));
+// The machine settings file and OS host lookup are external process boundaries.
+vi.mock('@/persistence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/persistence')>()),
+  readSettings: async () => ({ machineId: 'machine-test' }),
+}));
+vi.mock('@/daemon/machine/metadata', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/daemon/machine/metadata')>()),
+  getPreferredHostName: async () => 'test-host',
+}));
 
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
 
 describe('createActionToolExecutorBridge', () => {
+  const envScope = createEnvKeyScope(['HAPPIER_ACTIONS_SETTINGS_V1']);
+  const cleanups: Array<() => Promise<void>> = [];
+
+  beforeEach(() => {
+    envScope.patch({ HAPPIER_ACTIONS_SETTINGS_V1: undefined });
+    nativeRpc.mockReset();
+  });
+
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0)) await cleanup();
+    envScope.restore();
+  });
+
+  // HTTP and native session RPC are external boundaries. Keep session lookup,
+  // authentication, goal routing, encrypted approvals and their coordinator real.
+  async function createGoalHarness() {
+    const app = Fastify();
+    app.addHook('onRequest', async (request, reply) => {
+      if (request.headers.authorization !== 'Bearer test-token') {
+        await reply.code(401).send({ error: 'not_authenticated' });
+      }
+    });
+    const artifacts = new Map<string, {
+      id: string; header: string; body: string; dataEncryptionKey: string;
+      headerVersion: number; bodyVersion: number;
+    }>();
+    let notifyCreated!: (id: string) => void;
+    const approvalCreated = new Promise<string>((resolve) => { notifyCreated = resolve; });
+    app.get<{ Params: { id: string } }>('/v2/sessions/:id', async (request) => ({
+      session: createSessionRecordFixture({
+        id: request.params.id, active: true, encryptionMode: 'plain', metadata: '{}',
+      }),
+    }));
+    app.post<{ Body: { id: string; header: string; body: string; dataEncryptionKey: string } }>(
+      '/v1/artifacts', async (request) => {
+        artifacts.set(request.body.id, { ...request.body, headerVersion: 1, bodyVersion: 1 });
+        notifyCreated(request.body.id);
+        return { id: request.body.id };
+      },
+    );
+    app.get<{ Params: { id: string } }>('/v1/artifacts/:id', async (request, reply) => {
+      const artifact = artifacts.get(request.params.id);
+      return artifact ?? reply.code(404).send();
+    });
+    app.post<{
+      Params: { id: string };
+      Body: { header: string; body: string; expectedHeaderVersion: number; expectedBodyVersion: number };
+    }>('/v1/artifacts/:id', async (request, reply) => {
+      const artifact = artifacts.get(request.params.id);
+      if (!artifact) return reply.code(404).send();
+      if (artifact.headerVersion !== request.body.expectedHeaderVersion
+          || artifact.bodyVersion !== request.body.expectedBodyVersion) {
+        return { success: false, error: 'version-mismatch' };
+      }
+      artifacts.set(artifact.id, {
+        ...artifact, header: request.body.header, body: request.body.body,
+        headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion + 1,
+      });
+      return { success: true };
+    });
+    await app.ready();
+    const restoreAdapter = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
+    cleanups.push(async () => { restoreAdapter(); await app.close(); });
+
+    let goal: { objective: string; status: string } | null = { objective: 'Blocked goal', status: 'blocked' };
+    nativeRpc.mockImplementation(async ({ sessionId, method, request }) => {
+      expect(method.startsWith(`${sessionId}:`)).toBe(true);
+      if (method.endsWith(`:${SESSION_RPC_METHODS.SESSION_GOAL_CLEAR}`)) {
+        goal = null;
+      } else if (method.endsWith(`:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`)) {
+        const mutation = SessionGoalSetRequestV1Schema.parse(request);
+        goal = { objective: mutation.objective ?? goal?.objective ?? '', status: mutation.status ?? 'active' };
+      } else {
+        expect(method).toBe(`${sessionId}:${SESSION_RPC_METHODS.SESSION_GOAL_GET}`);
+      }
+      return SessionWorkStateGetResponseV1Schema.parse({
+        workState: {
+          v: 1, backendId: 'codex', agentId: 'codex', updatedAt: 1,
+          items: goal ? [{
+            id: 'native-goal', kind: 'goal', origin: 'vendor', status: goal.status,
+            title: goal.objective, vendorRef: 'thread-native', updatedAt: 1,
+          }] : [],
+          primaryItemId: goal ? 'native-goal' : null,
+        },
+      });
+    });
+    const credentials = { token: 'test-token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) } };
+    const harness = createCliActionExecutorHarness({
+      token: 'test-token', sessionId: 'sess-current', credentials,
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy' },
+    });
+    return { ...harness, approvalCreated, credentials };
+  }
+
+  it.each(['direct', 'generic'] as const)('can replace its blocked goal without a session ID through %s MCP tools', async (route) => {
+    const { credentials } = await createGoalHarness();
+    const { mcp } = createHappierMcpServer({
+      sessionId: 'sess-current',
+      rpcHandlerManager: {
+        registerHandler: () => {},
+        invokeLocal: async () => { throw new Error('Goal calls must use the authenticated goal router'); },
+      },
+      sendClaudeSessionMessage: () => {}, updateMetadata: () => {},
+    }, { credentials });
+    const client = new Client({ name: 'goal-regression', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    cleanups.push(async () => { await client.close(); await mcp.close(); });
+    await mcp.connect(serverTransport);
+    await client.connect(clientTransport);
+    const execute = async (operation: 'get' | 'clear' | 'set', input = {}) => {
+      const reply = await client.callTool(route === 'direct'
+        ? { name: `session_goal_${operation}`, arguments: input }
+        : { name: 'action_execute', arguments: { actionId: `session.goal.${operation}`, input } });
+      expect(reply.isError).toBe(false);
+      const content = reply.content;
+      if (!Array.isArray(content)) throw new Error('Missing MCP result content');
+      const text = content.find((part) => part.type === 'text')?.text;
+      if (typeof text !== 'string') throw new Error('Missing MCP result text');
+      return SessionWorkStateGetResponseV1Schema.parse(JSON.parse(text));
+    };
+    expect((await execute('get')).workState?.items).toMatchObject([{ title: 'Blocked goal', status: 'blocked' }]);
+    expect((await execute('clear')).workState?.items).toEqual([]);
+    expect((await execute('get')).workState?.items).toEqual([]);
+    expect((await execute('set', { objective: 'Replacement goal' })).workState?.items)
+      .toMatchObject([{ title: 'Replacement goal', status: 'active' }]);
+    expect((await execute('get')).workState?.items).toMatchObject([{ title: 'Replacement goal', status: 'active' }]);
+    expect(nativeRpc).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'sess-current' }));
+  });
+
+  it('preserves explicit goal targets and rejects unbound goal calls without IDs', async () => {
+    const { executor } = await createGoalHarness();
+    const bridge = createActionToolExecutorBridge({ executor, surface: 'mcp' });
+    expect(await bridge.executeActionByToolName('session_goal_get', { sessionId: 'sess-explicit' }, 'sess-current'))
+      .toMatchObject({ ok: true, result: { workState: { items: [{ status: 'blocked' }] } } });
+    expect(nativeRpc).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess-explicit' }));
+    for (const actionId of ['session.goal.get', 'session.goal.set', 'session.goal.clear'] as const) {
+      expect(await executor.execute(actionId, { objective: 'Replacement' }, { surface: 'mcp' }))
+        .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    }
+  });
+
+  it('surfaces native goal transport failure without clearing or replacing the blocked goal', async () => {
+    const { executor } = await createGoalHarness();
+    const bridge = createActionToolExecutorBridge({ executor, surface: 'session_agent' });
+    nativeRpc.mockRejectedValueOnce(new Error('Native session disconnected'));
+    expect(await bridge.executeActionByToolName('session_goal_clear', {}, 'sess-current')).toMatchObject({
+      result: { ok: false, errorCode: 'session_rpc_failed' },
+    });
+    expect(await bridge.executeActionByToolName('session_goal_get', {}, 'sess-current')).toMatchObject({
+      result: { workState: { items: [{ status: 'blocked' }] } },
+    });
+  });
+
+  it.each(['approve', 'reject'] as const)('waits for %s before settling a policy-gated goal clear', async (decision) => {
+    envScope.patch({ HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify({
+      v: 1, actions: { 'session.goal.clear': { approvalRequiredSurfaces: ['session_agent'] } },
+    }) });
+    const { executor, deps, approvalCreated } = await createGoalHarness();
+    const bridge = createActionToolExecutorBridge({ executor, surface: 'session_agent' });
+    let settled = false;
+    const clear = bridge.executeActionByToolName('session_goal_clear', {}, 'sess-current').then((result) => {
+      settled = true;
+      return result;
+    });
+    const artifactId = await approvalCreated;
+    const request = await deps.approvalsGet?.({ artifactId });
+    expect(request?.actionArgs).toEqual({ sessionId: 'sess-current' });
+    expect(settled).toBe(false);
+    expect(await bridge.executeActionByToolName('session_goal_get', {}, 'sess-current')).toMatchObject({
+      result: { workState: { items: [{ status: 'blocked' }] } },
+    });
+    expect(await executor.execute('approval.request.decide', { artifactId, decision }, { surface: 'cli' }))
+      .toMatchObject({ ok: true });
+    expect(await clear).toMatchObject(decision === 'approve'
+      ? { ok: true, result: { workState: { items: [] } } }
+      : { ok: false, errorCode: 'approval_rejected' });
+    expect(await bridge.executeActionByToolName('session_goal_get', {}, 'sess-current')).toMatchObject({
+      result: { workState: { items: decision === 'approve' ? [] : [{ status: 'blocked' }] } },
+    });
+  });
+
   it('passes approval origin metadata through to action executor context', async () => {
     const calls: unknown[] = [];
     const actionsSettings = ActionsSettingsV1Schema.parse({

@@ -18,6 +18,7 @@ export type SessionListAttentionPromotionReason =
     | 'failed'
     | 'ready'
     | 'unread'
+    | 'reminder'
     | 'standing';
 
 export function normalizeSessionListAttentionPromotionMode(value: unknown): SessionListAttentionPromotionMode {

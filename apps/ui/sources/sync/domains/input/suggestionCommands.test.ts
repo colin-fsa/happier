@@ -9,6 +9,41 @@ describe('suggestionCommands', () => {
         storage.setState({ sessions: {} } as any);
     });
 
+    it('merges pre-session native commands with provider commands while preserving local built-in and template precedence', async () => {
+        storage.setState({ sessions: {}, settings: { promptInvocationsV1: { v: 1, entries: [{
+            id: 'local-template', token: '/template', title: 'Local template',
+            target: { kind: 'doc', artifactId: 'local-doc' }, behavior: 'insert', allowArgs: false, availableIn: 'global',
+        }] } } } as any);
+        const { searchCommands } = await import('./suggestionCommands');
+        const nativeCommands = [
+            { command: 'project-check', description: 'Check this project' },
+            { command: 'init', description: 'Initialize this project' },
+            { command: 'template', description: 'Provider template' },
+            { command: 'clear', description: 'Provider clear' },
+            { command: 'memory', description: 'Open project memory' },
+        ];
+
+        expect(await searchCommands(null, 'project-check', { nativeCommands }))
+            .toEqual([{ command: 'project-check', description: 'Check this project' }]);
+        const commands = await searchCommands(null, '', { nativeCommands, limit: 100 });
+        expect(commands.filter((command) => command.command === 'clear')).toEqual([
+            { command: 'clear', description: 'Clear the conversation' },
+        ]);
+        expect(commands.filter((command) => command.command === 'init')).toEqual([
+            { command: 'init', description: 'Initialize this project' },
+        ]);
+        expect(commands.filter((command) => command.command === 'template')).toEqual([
+            expect.objectContaining({ command: 'template', description: 'Local template', promptInvocation: expect.any(Object) }),
+        ]);
+        expect(commands.filter((command) => command.command === 'memory')).toEqual([
+            { command: 'memory', description: 'Open project memory' },
+        ]);
+        storage.setState({ sessions: { live: { metadata: { slashCommandDetails: nativeCommands } } } } as any);
+        const liveCommands = await searchCommands('live', '', { limit: 100 });
+        expect(liveCommands).toEqual(commands);
+
+    });
+
     it('includes UI action-registry slash commands even when the session has no metadata', async () => {
         storage.setState({
             sessions: { s1: { metadata: undefined } },
@@ -20,7 +55,7 @@ describe('suggestionCommands', () => {
         expect(commands.some((c) => c.command === 'h.review')).toBe(true);
         expect(commands.find((c) => c.command === 'pet')?.description).toBe(t('commandPalette.pets.chooseSubtitle'));
         expect(commands.find((c) => c.command === 'h.pet')?.description).toBe(t('commandPalette.pets.chooseSubtitle'));
-        expect(commands.find((c) => c.command === 'goal')?.description).toBe('Set or inspect the session goal');
+        expect(commands.find((c) => c.command === 'goal')?.description).toBe(t('session.workState.commandDescription'));
         expect(commands.some((c) => c.command === 'clear')).toBe(true);
     });
 

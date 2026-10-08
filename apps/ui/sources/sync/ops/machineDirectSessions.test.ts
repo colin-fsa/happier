@@ -3,6 +3,7 @@ import { RpcError } from '@/sync/runtime/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createActionOperationFixture } from '@/dev/testkit/fixtures/actionOperationFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const machineRpcWithServerScopeMock = vi.hoisted(() => vi.fn());
@@ -237,9 +238,9 @@ describe('machine direct sessions ops server-scoped routing', () => {
                 },
             },
         });
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, converted: true });
-        const { machineDirectSessionTakeover, machineDirectSessionTakeoverPersist } = await import('./machineDirectSessions');
-        await (mode === 'direct' ? machineDirectSessionTakeover : machineDirectSessionTakeoverPersist)({
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'session-1' } }) });
+        const { machineDirectSessionTakeover, machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
+        await (mode === 'direct' ? machineDirectSessionTakeover : machineDirectSessionTakeoverPersistStart)({
             machineId: 'old', sessionId: 'session-1',
         });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -273,21 +274,21 @@ describe('machine direct sessions ops server-scoped routing', () => {
     it('routes direct session takeover+persist through server-scoped machine rpc', async () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
-            converted: true,
+            operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }),
         });
-        const { machineDirectSessionTakeoverPersist } = await import('./machineDirectSessions');
+        const { machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
 
-        const result = await machineDirectSessionTakeoverPersist({
+        const result = await machineDirectSessionTakeoverPersistStart({
             machineId: 'machine-1',
             sessionId: 'happy-session-1',
             forceStop: true,
         }, { serverId: 'server-a' });
 
-        expect(result).toEqual({ ok: true, converted: true });
+        expect(result).toEqual({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }) });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-1',
             serverId: 'server-a',
-            method: 'daemon.directSessions.takeoverPersist',
+            method: 'daemon.directSessions.takeoverPersist.start',
             payload: {
                 machineId: 'machine-1',
                 sessionId: 'happy-session-1',
@@ -313,21 +314,21 @@ describe('machine direct sessions ops server-scoped routing', () => {
         });
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
-            converted: true,
+            operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }),
         });
-        const { machineDirectSessionTakeoverPersist } = await import('./machineDirectSessions');
+        const { machineDirectSessionTakeoverPersistStart } = await import('./machineDirectSessions');
 
-        const result = await machineDirectSessionTakeoverPersist({
+        const result = await machineDirectSessionTakeoverPersistStart({
             machineId: 'machine-old',
             sessionId: 'happy-session-1',
             forceStop: true,
         }, { serverId: 'server-a' });
 
-        expect(result).toEqual({ ok: true, converted: true });
+        expect(result).toEqual({ ok: true, operation: createActionOperationFixture({ scope: { accountId: 'account-1', machineId: 'machine-1', sessionId: 'happy-session-1' } }) });
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             machineId: 'machine-new',
             serverId: 'server-a',
-            method: 'daemon.directSessions.takeoverPersist',
+            method: 'daemon.directSessions.takeoverPersist.start',
             payload: {
                 machineId: 'machine-old',
                 sessionId: 'happy-session-1',

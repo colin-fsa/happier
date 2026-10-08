@@ -44,6 +44,7 @@ test('collectPolicyFindings keeps hidden skip aliases report-only for provider r
 test('exclusive parameterized tests cannot silently reduce the selected suite', () => {
   for (const declaration of [
     "it.only.each([1])('case', () => {});",
+    "it.concurrent.only('case', () => {});",
     "test.concurrent.only.each([1])('case', () => {});",
     "describe.only.each`value\n${1}`('case', () => {});",
   ]) {
@@ -61,6 +62,9 @@ test('test-policy fixture strings and comments are not executed exclusive tests'
       const other = { only: () => undefined };
       other.only();
       it('ordinary', () => {});
+      it.each([1])('ordinary parameterized', () => {});
+      test.concurrent.each([1])('ordinary concurrent', () => {});
+      describe.each\`value\n${1}\`('ordinary tagged', () => {});
     `,
   }]);
   assert.equal(report.findings.filter((finding) => finding.ruleId === 'no-exclusive-tests').length, 0);

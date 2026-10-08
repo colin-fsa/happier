@@ -12,10 +12,6 @@ import { isBun } from '@/utils/runtime'
 import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv'
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath'
 
-function resolveHomeDir(): string {
-    return resolveHomeDirFromEnvironment(process.env)
-}
-
 function buildClaudeCodeInstallHelpMessage(pathHintLine: string): string {
     const installLines = getProviderCliManualInstallSummaryLines('claude')
     const setupGuideUrl = getProviderCliInstallGuideUrl('claude')
@@ -35,8 +31,8 @@ function buildClaudeCodeInstallHelpMessage(pathHintLine: string): string {
  * This ensures we find the global claude, not the local one
  * Also removes conflicting Bun environment variables when running in Bun
  */
-export function getCleanEnv(): NodeJS.ProcessEnv {
-    const env = { ...process.env }
+export function getCleanEnv(processEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const env = { ...processEnv }
     const cwd = process.cwd()
     const pathSep = process.platform === 'win32' ? ';' : ':'
     const pathKey = process.platform === 'win32' ? 'Path' : 'PATH'
@@ -199,9 +195,9 @@ function findClaudeInNpmGlobalModules(): string | null {
     return null
 }
 
-function findClaudeInNativeInstallerLocations(homeDir: string): string | null {
+function findClaudeInNativeInstallerLocations(homeDir: string, processEnv: NodeJS.ProcessEnv = process.env): string | null {
     if (process.platform === 'win32') {
-        const localAppData = process.env.LOCALAPPDATA || join(homeDir, 'AppData', 'Local')
+        const localAppData = processEnv.LOCALAPPDATA || join(homeDir, 'AppData', 'Local')
         const windowsClaudeDir = join(localAppData, 'Claude')
         const windowsExe = join(windowsClaudeDir, 'claude.exe')
         if (existsSync(windowsExe)) return windowsExe
@@ -304,13 +300,19 @@ function canonicalizeClaudeEntrypointPath(filePath: string): string {
     }
 }
 
+export function isClaudeAgentSdkJavaScriptEntrypoint(filePath: string): boolean {
+    // Agent SDK 0.2.123 selects its JavaScript runtime by these exact suffixes;
+    // executable shims and native binaries are launched directly.
+    return ['.js', '.mjs', '.tsx', '.ts', '.jsx'].some((extension) => filePath.endsWith(extension));
+}
+
 /**
  * Agent SDK requires a real on-disk entrypoint (binary or JS) — it does not accept a bare `claude` command name.
  */
-export function getDefaultClaudeCodePathForAgentSdk(): string {
-    const overrideRaw = process.env.HAPPIER_CLAUDE_PATH;
+export function getDefaultClaudeCodePathForAgentSdk(processEnv: NodeJS.ProcessEnv = process.env): string {
+    const overrideRaw = processEnv.HAPPIER_CLAUDE_PATH;
     if (typeof overrideRaw === 'string' && overrideRaw.trim().length > 0) {
-        const override = expandHomeDirPath(overrideRaw.trim());
+        const override = expandHomeDirPath(overrideRaw.trim(), processEnv);
         if (!existsSync(override)) {
             throw new Error(`Claude Code executable not found at HAPPIER_CLAUDE_PATH=${override}`);
         }
@@ -321,7 +323,7 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
     }
 
     const resolved = resolveProviderCliCommand('claude', {
-        processEnv: getCleanEnv(),
+        processEnv: getCleanEnv(processEnv),
         isBunRuntime: isBun(),
         currentExecPath: process.execPath,
     });
@@ -331,7 +333,7 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         }
     }
 
-    const homeDir = resolveHomeDir();
+    const homeDir = resolveHomeDirFromEnvironment(processEnv);
     if (process.platform !== 'win32') {
         const versionsDir = join(homeDir, '.local', 'share', 'claude', 'versions');
         const versioned = findLatestVersionedClaudeEntrypointForAgentSdk(versionsDir);
@@ -351,7 +353,7 @@ export function getDefaultClaudeCodePathForAgentSdk(): string {
         return npmGlobalPath;
     }
 
-    const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir);
+    const nativeInstallPath = findClaudeInNativeInstallerLocations(homeDir, processEnv);
     if (nativeInstallPath && isAgentSdkCompatibleClaudeEntrypoint(nativeInstallPath)) {
         return canonicalizeClaudeEntrypointPath(nativeInstallPath);
     }

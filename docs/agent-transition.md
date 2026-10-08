@@ -125,6 +125,12 @@ the target is recognised as this operation's own committed cutover seen again
 (7.5) rather than as a stale client view. Sanitize the submitted input through
 `sanitizeSessionUserMessageSendMeta` here, before the idle proof, so a rejected
 mention or attachment fails with the source untouched.
+An explicit `input.meta.permissionMode` is validated through
+`resolveSessionMessagePermissionIntent` at this same preflight boundary; malformed
+intent is `unsupported_operation` before stop. On a CLI declaring
+`supportsInputPermissionIntent`, this frozen, provider-neutral intent overrides
+the committed metadata's permission intent at admission.
+An input without it retains the existing metadata-based admission policy.
 
 **Strict idle.** `waitForSessionIdle` with the session-control stop timeout.
 Not idle within that window → `rejected('source_not_idle')`. There is
@@ -342,6 +348,16 @@ over), `unavailable` with `unsupported_session` (not retryable) or
 - The picker is the running Session's Agent/engine picker in the composer. Each
   target row carries its own model/mode/config choice, rendered by the same
   owner New Session uses (`buildSessionAgentPickerDetailContent`).
+- The armed selection also owns the outbound composer Agent, permission
+  presentation and provider-specific message metadata. Running-Agent status and
+  recovery remain source-scoped. Standalone live model/mode/config editors and
+  the source MCP editor are omitted while armed; target choices stay in the
+  target row's detail. Profiles and permission intent remain Session-scoped.
+- The target auth chip is a read-only preview of its configured new-Session
+  default, resolved through the existing connected-service default owner. Target
+  model/config probes use that same requested binding; an unavailable requested
+  profile is shown as unavailable rather than replaced with Native in the
+  preview or probe. Selecting target auth is not part of the transition wire.
 - **Selection is arming**: there is no confirm step, and re-selecting the
   running Agent's row is the cancel gesture. Nothing is sent until the next
   message.
@@ -357,6 +373,26 @@ over), `unavailable` with `unsupported_session` (not retryable) or
   send would reach a voice adapter or execution run), `armedTargetUnreachable`
   (no machine), `unreconciledTransitionOutcome` (an earlier `outcome_unknown`
   window is still open).
+- When the selected canonical permission intent differs from committed Session
+  metadata, `continueSessionWithArmedAgent` probes the existing
+  `tool.sessionAgentTransition` capability for `supportsInputPermissionIntent`
+  before recording a submission or dispatching the transition. Unknown or
+  unsupported capability leaves the draft and arm untouched; an unreadable or
+  failed probe is indeterminate, not proof that an upgrade is needed. Equal
+  canonical aliases need no permission-transfer capability. A compatible older
+  daemon may instead admit the input using the latest committed Session policy,
+  including an immediate Session-global permission edit made while stopping.
+  Account scope is
+  checked after the awaited probe and before dispatch.
+- The retained wire input includes the first submitted permission intent; retries
+  reuse that snapshot. This freezes the authored input, not the effective policy
+  applied by an older daemon on the equivalent-intent compatibility path.
+  After canonical custody, ordinary sends and continuation
+  reconciliation use `Sync.publishNextPromptPermissionModeAfterAdmission` for
+  next-prompt metadata publication. It publishes only the admitted intent while
+  the original account/server scope is current and the local choice still
+  matches; a newer different choice remains pending. Publication is best effort
+  and does not delay continuation draft or arm cleanup.
 - Inspection answers are keyed on both the client's connection generation and
   the machine's daemon generation; either moving discards every prior answer.
 - `resolveSessionContinuationUnavailablePresentationV1` splits an

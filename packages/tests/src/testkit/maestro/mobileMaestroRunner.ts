@@ -186,14 +186,16 @@ async function stopCapturedLogProcess(params: Readonly<{
   timeoutMs: number;
   isClosed: () => boolean;
 }>): Promise<void> {
-  if (!params.isClosed()) {
+  // Failed spawn has no process to signal, even before its asynchronous error arrives.
+  const hasSpawnedProcess = typeof params.child.pid === 'number' && params.child.pid > 0;
+  if (hasSpawnedProcess && !params.isClosed()) {
     params.child.kill('SIGTERM');
   }
   await Promise.race([
     params.closeSignal,
     sleep(params.timeoutMs),
   ]);
-  if (!params.isClosed()) {
+  if (hasSpawnedProcess && !params.isClosed()) {
     params.child.kill('SIGKILL');
     await Promise.race([
       params.closeSignal,

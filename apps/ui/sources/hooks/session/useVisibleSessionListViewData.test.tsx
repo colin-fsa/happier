@@ -7,6 +7,7 @@ import type { SessionFoldersV1 } from '@/sync/domains/session/folders';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionOrganizationProjection } from '@/sync/domains/session/organization';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { useVisibleSessionListViewData as useReminderListViewData } from './useVisibleSessionListViewData';
 
 function makeRenderableSession(id: string, overrides: Partial<SessionListRenderableSession> = {}): SessionListRenderableSession {
     return {
@@ -1807,6 +1808,29 @@ describe('useVisibleSessionListViewData', () => {
             'header:date',
             'session:quiet-session:none',
         ]);
+        await hook.unmount();
+    });
+
+    it.each(['global', 'withinGroups'] as const)('retains a cleared due reminder in its %s position until leaving the session', async (mode) => {
+        sourceData.sessionListAttentionPromotionMode = mode;
+        sourceData.activeData = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey: 'server:server-a:day:2026-05-04', serverId: 'server-a' },
+            { type: 'session', session: makeRenderableSession('reminder-session', { seq: 4, lastViewedSessionSeq: 4 }), section: 'inactive', groupKey: 'server:server-a:day:2026-05-04', groupKind: 'date', serverId: 'server-a' },
+            { type: 'session', session: makeRenderableSession('quiet-session', { seq: 4, lastViewedSessionSeq: 4 }), section: 'inactive', groupKey: 'server:server-a:day:2026-05-04', groupKind: 'date', serverId: 'server-a' },
+        ];
+        sourceData.sessionOrganizationProjection = makeOrganizationProjection({
+            'reminder-session': { sessionId: 'reminder-session', standing: false, remindAt: 1, updatedAt: 10 },
+        });
+        const hook = await renderHook(({ activeSessionId }: { activeSessionId: string | null }) =>
+            useReminderListViewData('all', { activeSessionId }), { initialProps: { activeSessionId: null as string | null } });
+        const positions = (items: SessionListViewItem[] | null) => items?.map((item) => item.type === 'header'
+            ? `header:${item.headerKind}` : `${item.session.id}:${item.attentionPromotionReason ? 'attention' : 'normal'}`);
+        const before = positions(hook.getCurrent());
+        sourceData.sessionOrganizationProjection = makeOrganizationProjection({});
+        expect(positions(await hook.rerender({ activeSessionId: 'reminder-session' }))).toEqual(before);
+        expect(positions(await hook.rerender({ activeSessionId: null }))).not.toEqual(before);
+        expect(hook.getCurrent()?.find((item) => item.type === 'session' && item.session.id === 'reminder-session'))
+            .toHaveProperty('groupKind', 'date');
         await hook.unmount();
     });
 

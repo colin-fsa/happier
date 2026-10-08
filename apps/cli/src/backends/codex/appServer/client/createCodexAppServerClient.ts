@@ -371,11 +371,13 @@ export async function createCodexAppServerClient(params: Readonly<{
     configOverrides?: ReadonlyArray<string>;
     disableUserMcpServers?: boolean;
     initializeRequestOptions?: CodexAppServerRequestOptions;
+    onCleanup?: (cleanup: () => Promise<void>) => void;
     transport?:
         | Readonly<{ kind: 'stdio' }>
         | Readonly<{ kind: 'daemonProxy' }>
         | Readonly<{ kind: 'unixWebSocket'; socketPath: string }>;
 }>): Promise<DisposableCodexAppServerClient> {
+    params.initializeRequestOptions?.signal?.throwIfAborted();
     const sourceProcessEnv = params.processEnv ?? process.env;
     const rpcLogger = createRpcLogger(sourceProcessEnv);
     const processEnv = sanitizeCodexAppServerEnv(sourceProcessEnv);
@@ -420,6 +422,7 @@ export async function createCodexAppServerClient(params: Readonly<{
             targetLabel: 'Codex app-server',
         });
         const invocation = appendCodexCliConfigOverridesArgs(baseInvocation, [...baseOverrides, ...(params.configOverrides ?? [])]);
+        params.initializeRequestOptions?.signal?.throwIfAborted();
         const windowsInvocation = resolveWindowsCommandInvocation({
             command: invocation.command,
             args: invocation.args,
@@ -840,6 +843,7 @@ export async function createCodexAppServerClient(params: Readonly<{
         })();
         return await disposePromise;
     };
+    params.onCleanup?.(() => dispose());
 
     const onExit = (handler: CodexAppServerExitHandler): (() => void) => {
         if (reportedExitFailure) {

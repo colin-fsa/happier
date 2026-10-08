@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-import type { PreflightSessionControlsProbeAdapter, PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
+import type { PreflightSessionCatalogsRaw, PreflightSessionControlsProbeAdapter, PreflightSessionControlsProbeParams } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { requireProviderCliLaunchSpec } from '@/runtime/managedTools/requireProviderCliLaunchSpec';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
@@ -8,6 +8,7 @@ import { createPiModelCatalogEntry, type PiModelCatalogEntry } from '@/backends/
 import { materializePiModelDiscoveryExtension, parsePiModelDiscoveryLine } from '@/backends/pi/models/piModelDiscoveryExtension';
 import { resolvePiBrokerExtensionArgs } from '@/backends/pi/brokerExtension';
 import { attachPiRpcJsonlLineReader } from '@/backends/pi/rpc/attachPiRpcJsonlLineReader';
+import { PiRpcBackend } from '@/backends/pi/rpc/PiRpcBackend';
 import { logger } from '@/ui/logger';
 
 type PiModelsProbeResult = PiModelCatalogEntry[] | {
@@ -15,6 +16,32 @@ type PiModelsProbeResult = PiModelCatalogEntry[] | {
   source: 'static';
   refreshError: true;
 } | null;
+
+async function probePiCatalogs(params: PreflightSessionControlsProbeParams): Promise<PreflightSessionCatalogsRaw> {
+  const processEnv = params.processEnv ?? process.env;
+  const launch = requireProviderCliLaunchSpec('pi', { processEnv });
+  const backend = new PiRpcBackend({
+    cwd: params.cwd,
+    command: launch.command,
+    args: [...launch.args, '--mode', 'rpc', '--no-session', ...resolvePiBrokerExtensionArgs(processEnv)],
+    env: Object.fromEntries(Object.entries({ ...processEnv, CI: '1' })
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
+  });
+  params.onNativeCleanup?.(() => backend.dispose());
+  try {
+    const commands = await backend.discoverCommands({ timeoutMs: params.timeoutMs, deadlineAt: params.deadlineAt, signal: params.signal });
+    // Native slash skills belong to get_commands. Pi exposes no distinct typed skill-mention channel.
+    if (commands === null) {
+      throw new Error('Pi did not return a valid native command catalog');
+    }
+    return { commands, skills: null };
+  } catch (error) {
+    logger.infoFile('[pi] Native command catalog probe failed');
+    throw error;
+  } finally {
+    await backend.dispose();
+  }
+}
 
 async function probePiModels(params: PreflightSessionControlsProbeParams): Promise<PiModelsProbeResult> {
   const processEnv = params.processEnv ?? process.env;
@@ -92,4 +119,5 @@ export const piPreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter
   connectedServiceAuth: 'materialized-env',
   failureCacheStrategy: 'cooldown',
   probeModelsRaw: probePiModels,
+  probeCatalogsRaw: probePiCatalogs,
 };

@@ -207,6 +207,32 @@ describe("connectRoutes connected service auth groups (integration)", () => {
         await db.account.deleteMany().catch(() => {});
     });
 
+    it("negotiates expiry-first reads without changing stored strategy on unrelated older-client edits", async () => {
+        const user = await createAccount("pk-groups-expiry-first");
+        await createConnectedProfile(user.id, "openai-codex", "work");
+        const app = await createReadyApp();
+        const headers = authHeaders(user.id);
+        const url = "/v3/connect/openai-codex/groups/expiry-pool";
+        const create = await app.inject({ method: "POST", url: "/v3/connect/openai-codex/groups?happierPoolExpiryFirst=1", headers,
+            payload: { groupId: "expiry-pool", members: [{ profileId: "work", priority: 10 }] },
+        });
+        expect(create.statusCode).toBe(200);
+        expect(create.json().group.policy.strategy).toBe("expiry_first");
+        const oldRead = await app.inject({ method: "GET", url, headers });
+        expect(oldRead.json().group.policy.strategy).toBe("least_limited");
+        const edit = await app.inject({ method: "PATCH", url, headers,
+            payload: { expectedGeneration: create.json().group.generation, policy: { cooldownMs: 1234 } },
+        });
+        expect(edit.statusCode).toBe(200);
+        const read = await app.inject({ method: "GET", url: `${url}?happierPoolExpiryFirst=1`, headers });
+        expect(read.json().group.policy).toMatchObject({ strategy: "expiry_first", cooldownMs: 1234 });
+        const explicit = await app.inject({ method: "PATCH", url: `${url}?happierPoolExpiryFirst=1`, headers,
+            payload: { expectedGeneration: read.json().group.generation, policy: { strategy: "least_limited" } },
+        });
+        expect(explicit.statusCode).toBe(200);
+        expect(explicit.json().group.policy.strategy).toBe("least_limited");
+    });
+
     it("negotiates quota-reset policy reads while preserving the opt-in across older-client edits", async () => {
         const user = await createAccount("pk-groups-auto-reset");
         await createConnectedProfile(user.id, "openai-codex", "work");

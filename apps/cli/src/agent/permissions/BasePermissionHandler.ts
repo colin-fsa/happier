@@ -342,7 +342,7 @@ export abstract class BasePermissionHandler {
         this.session.rpcHandlerManager.registerHandler<PermissionResponse, void>(
             SESSION_RPC_METHODS.SESSION_PERMISSION_RESPOND_LEGACY,
             async (response) => {
-                this.tryHandlePermissionRpc(response);
+                await this.tryHandlePermissionRpc(response);
             }
         );
         this.session.rpcHandlerManager.registerHandler<unknown, void>(
@@ -352,7 +352,7 @@ export abstract class BasePermissionHandler {
                 if (!parsed.success) {
                     throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID);
                 }
-                this.tryHandlePermissionRpc({
+                await this.tryHandlePermissionRpc({
                     id: parsed.data.id,
                     approved: true,
                     structuredAnswersV1: parsed.data.structuredAnswersV1,
@@ -361,7 +361,7 @@ export abstract class BasePermissionHandler {
         );
     }
 
-    private tryHandlePermissionRpc(response: SessionPermissionRpcPayload, requireLocalPending: boolean = false): boolean {
+    private async tryHandlePermissionRpc(response: SessionPermissionRpcPayload, requireLocalPending: boolean = false): Promise<boolean> {
         const legacyPending = this.pendingRequests.get(response.id);
         if (requireLocalPending && !legacyPending) return false;
         const hasStructuredAnswers = response.answers !== undefined || response.structuredAnswersV1 !== undefined;
@@ -392,13 +392,12 @@ export abstract class BasePermissionHandler {
                 })
                 : undefined;
 
-        this.handlePermissionResponseWithContext({
+        return await this.handlePermissionResponseWithContext({
             response,
             context,
             legacyPending,
             structuredAnswers,
         });
-        return true;
     }
 
     private requireLocallyOwnedStructuredResponseContext(
@@ -427,12 +426,12 @@ export abstract class BasePermissionHandler {
         return questions as readonly StructuredQuestionLike[];
     }
 
-    private handlePermissionResponseWithContext(params: Readonly<{
+    private async handlePermissionResponseWithContext(params: Readonly<{
         response: PermissionResponse;
         context: PermissionRequestCoordinatorContext;
         legacyPending: PendingRequest | undefined;
         structuredAnswers?: StructuredQuestionAnswersV1;
-    }>): void {
+    }>): Promise<boolean> {
                 const { response, context, legacyPending, structuredAnswers } = params;
                 const responseAllowedTools = response.allowedTools ?? response.allowTools;
                 const updatedPermissions = response.updatedPermissions;
@@ -441,8 +440,23 @@ export abstract class BasePermissionHandler {
 
                 const requestSource = { toolName: context.toolName, input: context.toolInput };
                 if (this.requestCoordinator.isRequestClaimed(response.id)) {
-                    return;
+                    return false;
                 }
+
+                const completedRequest = this.buildCompletedRequestForResponse(
+                    response,
+                    result,
+                    responseAllowedTools,
+                    updatedPermissions,
+                    requestSource,
+                );
+                const completed = structuredAnswers
+                    ? await this.requestCoordinator.completeResponseWithAck({
+                        context,
+                        completion: { result, completedRequest },
+                    })
+                    : this.completePendingPermissionRequest(response.id, context, result, completedRequest);
+                if (structuredAnswers && !completed) return false;
 
                 this.applyPermissionResponseSideEffects({
                     response,
@@ -456,13 +470,7 @@ export abstract class BasePermissionHandler {
                             : `Permission ${response.approved ? 'approved' : 'denied'} for ${context.toolName}`,
                 });
 
-                const completed = this.completePendingPermissionRequest(response.id, context, result, this.buildCompletedRequestForResponse(
-                    response,
-                    result,
-                    responseAllowedTools,
-                    updatedPermissions,
-                    requestSource,
-                ));
+                if (structuredAnswers) this.pendingRequests.delete(response.id);
 
                 if (!legacyPending?.coordinatorManaged) {
                     this.pendingRequests.delete(response.id);
@@ -476,6 +484,7 @@ export abstract class BasePermissionHandler {
                 if (!completed && !legacyPending) {
                     logger.debug(`${this.getLogPrefix()} Permission response did not complete any pending request`);
                 }
+                return true;
     }
 
     private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {

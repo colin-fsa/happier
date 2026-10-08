@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 
 import { ActionOperationDomainRefV1Schema } from '@happier-dev/protocol';
 import type {
   ActionOperationDomainRefV1,
   ActionOperationProgressV1,
+  ActionOperationSnapshotV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 
@@ -18,6 +20,11 @@ import { parseActionOperationProgress } from './actionOperationProgress';
 type Task = Readonly<{
   scope: ActionOperationAccessScope;
   controller: AbortController;
+  actionId: string;
+  request: ActionOperationExecutionRequest;
+  exclusiveKey?: string;
+  receipt: Promise<unknown>;
+  completion: Promise<unknown>;
 }>;
 
 function isInScope(
@@ -27,23 +34,10 @@ function isInScope(
   return snapshot.scope.accountId === scope.accountId && snapshot.scope.machineId === scope.machineId;
 }
 
-function normalizeThrownFailure(error: unknown): ActionExecuteResult {
-  const record = error && typeof error === 'object' ? error as Readonly<Record<string, unknown>> : null;
-  const rawCode = typeof record?.code === 'string' ? record.code.trim() : '';
-  const rawMessage = error instanceof Error
-    ? error.message
-    : typeof error === 'string'
-      ? error
-      : typeof record?.message === 'string'
-        ? record.message
-        : '';
-  return {
-    ok: false,
-    errorCode: (rawCode || 'action_failed').slice(0, 200),
-    // A thrown value is not an ActionExecutor-owned public failure projection.
-    // Keep its contents out of the process-local snapshot exposed over RPC.
-    error: rawMessage || rawCode ? 'Action failed' : 'action_failed',
-  };
+function normalizeThrownFailure(): ActionExecuteResult {
+  // Thrown values are not an executor-owned public failure projection. Neither
+  // their message nor their code is safe to expose through operation RPCs.
+  return { ok: false, errorCode: 'action_failed', error: 'Action failed' };
 }
 
 function isAbortError(error: unknown): boolean {
@@ -134,32 +128,54 @@ export function createActionOperationRunner(params: Readonly<{
     if (snapshot.cancellation === 'unsupported') return { kind: 'unsupported' };
     const task = tasks.get(operationId);
     if (!task || !isInScope(snapshot, task.scope)) return { kind: 'not_found' };
+    params.store.update(operationId, (current) => ({
+      ...current, cancellation: 'unsupported',
+      progress: { kind: 'phase', phase: 'cancelling', label: 'Stopping action' },
+    }));
     task.controller.abort();
     return { kind: 'requested' };
   };
 
-  const executeHistorical = async <T>(input: Readonly<{
+  type ExecutionInput<T, R = T> = Readonly<{
     request: ActionOperationExecutionRequest;
     scope: ActionOperationAccessScope;
     title: string;
     cancellation: 'unsupported' | 'supported';
     scopeSessionId?: string | null;
+    exclusiveKey?: string;
     domainRef?: ActionOperationDomainRefV1;
     execute: (context: Readonly<{
       signal: AbortSignal;
+      acknowledge: (value: R) => void;
       update: (update: Readonly<{
         progress?: ActionOperationProgressV1;
         domainRef?: ActionOperationDomainRefV1;
+        cancellation?: 'unsupported' | 'supported';
       }>) => void;
     }>) => Promise<T>;
     projectResult: (value: T) => ActionExecuteResult | Readonly<{ kind: 'cancelled' }>;
-  }>): Promise<T> => {
+  }>;
+  type StartResult<T, R = T> = Readonly<{ kind: 'conflict' }> | Readonly<{
+    // Domain admission may acknowledge before final completion; otherwise its
+    // historical receipt is the completed result. Both deliveries belong here.
+    kind: 'started'; operation: ActionOperationSnapshotV1; receipt: Promise<T | R>; completion: Promise<T>;
+  }>;
+  const startHistorical = <T, R = T>(input: ExecutionInput<T, R>): StartResult<T, R> => {
     cleanPrunedTasks();
     const key = correlationKey(input.request, input.scope);
     const correlatedOperationId = key ? operationIdsByCorrelation.get(key) : undefined;
-    const correlatedTask = correlatedOperationId ? tasks.get(correlatedOperationId) : undefined;
-    if (correlatedTask && params.store.get(correlatedOperationId!, correlatedTask.scope)) {
-      return await input.execute({ signal: correlatedTask.controller.signal, update: () => {} });
+    for (const [existingId, task] of tasks) {
+      const snapshot = params.store.get(existingId, input.scope);
+      if (!snapshot) continue;
+      const active = snapshot.state === 'accepted' || snapshot.state === 'running';
+      const sameResource = active && input.exclusiveKey !== undefined && task.exclusiveKey === input.exclusiveKey;
+      if (existingId !== correlatedOperationId && !sameResource) continue;
+      if (task.actionId !== input.request.actionId) return { kind: 'conflict' };
+      if (existingId === correlatedOperationId && (!isDeepStrictEqual(task.request.input, input.request.input)
+        || !isDeepStrictEqual(task.request.scope, input.request.scope))) return { kind: 'conflict' };
+      // A scoped action owns its receipt and completion contracts; admission
+      // only joins that same action, so those private result types are unchanged.
+      return { kind: 'started', operation: snapshot, receipt: task.receipt as Promise<T | R>, completion: task.completion as Promise<T> };
     }
     const operationId = createOperationId();
     const resolvedScope = {
@@ -181,12 +197,12 @@ export function createActionOperationRunner(params: Readonly<{
       ...(input.domainRef ? { domainRef: input.domainRef } : {}),
     });
     const controller = new AbortController();
-    tasks.set(operationId, { scope: resolvedScope, controller });
     if (key) operationIdsByCorrelation.set(key, operationId);
     params.store.update(operationId, (snapshot) => ({ ...snapshot, state: 'running', startedAt: now() }));
     const update = (candidate: Readonly<{
       progress?: ActionOperationProgressV1;
       domainRef?: ActionOperationDomainRefV1;
+      cancellation?: 'supported' | 'unsupported';
     }>) => {
       const progress = candidate.progress === undefined ? undefined : parseActionOperationProgress(candidate.progress);
       const domainRef = candidate.domainRef === undefined
@@ -194,25 +210,54 @@ export function createActionOperationRunner(params: Readonly<{
         : ActionOperationDomainRefV1Schema.safeParse(candidate.domainRef);
       if (candidate.progress !== undefined && !progress) return;
       if (candidate.domainRef !== undefined && !domainRef?.success) return;
+      // Cancellation keeps its shared status until acknowledged, while domain
+      // references may still arrive from the owner during cooperative cleanup.
+      if (controller.signal.aborted && !domainRef?.success) return;
       params.store.update(operationId, (snapshot) => ({
         ...snapshot,
-        ...(progress ? { progress } : {}),
+        ...(!controller.signal.aborted && candidate.cancellation ? { cancellation: candidate.cancellation } : {}),
+        ...(!controller.signal.aborted && progress ? { progress } : {}),
         ...(domainRef?.success ? { domainRef: domainRef.data } : {}),
       }));
     };
-    try {
-      const value = await input.execute({ signal: controller.signal, update });
-      settle(operationId, input.projectResult(value));
-      return value;
-    } catch (error) {
-      const acknowledgedCancellation = controller.signal.aborted && isAbortError(error);
-      settle(
-        operationId,
-        acknowledgedCancellation ? { kind: 'cancelled' } : normalizeThrownFailure(error),
-      );
-      throw error;
-    }
+    let receiptSettled = false;
+    let resolveReceipt!: (value: T | R) => void;
+    let rejectReceipt!: (error: unknown) => void;
+    const receipt = new Promise<T | R>((resolve, reject) => {
+      resolveReceipt = resolve;
+      rejectReceipt = reject;
+    });
+    const acknowledge = (value: T | R) => {
+      if (receiptSettled) return;
+      receiptSettled = true;
+      resolveReceipt(value);
+    };
+    const completion = Promise.resolve().then(async () => {
+      try {
+        const value = await input.execute({ signal: controller.signal, acknowledge, update });
+        settle(operationId, input.projectResult(value));
+        acknowledge(value);
+        return value;
+      } catch (error) {
+        const acknowledgedCancellation = controller.signal.aborted && isAbortError(error);
+        settle(operationId, acknowledgedCancellation ? { kind: 'cancelled' } : normalizeThrownFailure());
+        if (!receiptSettled) { receiptSettled = true; rejectReceipt(error); }
+        throw error;
+      }
+    });
+    // Async start acknowledgements do not consume completion; keep failures observed
+    // while preserving rejection for historical completion-waiting callers.
+    void receipt.catch(() => {});
+    void completion.catch(() => {});
+    tasks.set(operationId, { scope: resolvedScope, controller, actionId: input.request.actionId, request: input.request,
+      ...(input.exclusiveKey ? { exclusiveKey: input.exclusiveKey } : {}), receipt, completion });
+    return { kind: 'started', operation: params.store.get(operationId, input.scope)!, receipt, completion };
+  };
+  const executeHistorical = async <T>(input: ExecutionInput<T>): Promise<T> => {
+    const started = startHistorical(input);
+    if (started.kind === 'conflict') throw new Error('Action operation conflicts with an active action');
+    return await started.completion;
   };
 
-  return { executeHistorical, cancel };
+  return { startHistorical, executeHistorical, cancel };
 }

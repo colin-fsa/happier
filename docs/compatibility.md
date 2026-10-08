@@ -153,6 +153,20 @@ native code through OTA. Remove the guard only when no supported binary eligible
 for these updates can lack the SDK. Native renderer fixes and app-link entitlement
 changes still require a native app build.
 
+### Android file actions native runtime (development)
+
+The development UI's Android Save As, Open With, and Share actions require the
+compiled `HappierFileActions` Expo module. Released binaries on the
+`0.2.7-native` OTA runtime do not include it. Non-publicdev lanes use the new
+`0.2.8-native` runtime train for this native surface; publicdev continues to use
+the existing Expo fingerprint policy. Publish a new native build before updates
+for this train, and do not force this JavaScript bundle onto older native runtimes
+using the maintenance override.
+
+This changes the local Android handoff only. Encrypted workspace transfers and
+their daemon-owned limits retain their existing wire contracts. Web and iOS
+downloads keep their existing platform actions.
+
 ### Herdr terminal metadata (development)
 
 The released stable UI `ui-web-v0.2.12` and preview
@@ -197,6 +211,63 @@ do not gain Herdr controls. Current readers normalize the development-only neste
 `terminalHost` shape when the top-level map is absent; an explicit new-map clear
 cannot revive it. Remove this development reader once retained nested development
 settings are no longer encountered.
+
+### Same-machine session handoff (development)
+
+Same-machine session handoff extends the existing tracked handoff operation and target-path field; it adds no session identity, storage format or transport strategy. The v2 daemon capability response adds `sameMachineHandoff`. Admission requires that field to be exactly `true` for a local move and continues to accept older capability responses for cross-machine handoff. Local preparation reuses the source export through the existing direct-peer strategy without requiring a network transfer carrier.
+
+Source start validates a distinct local destination before stopping the session. Once the target is committed, source cleanup preserves its v2 job and does not stop the resumed session on the same daemon. Cancellation addresses that shared job once through the existing abort owner. The v1 cleanup adapter remains available for source cleanup; it cannot mutate an uncommitted v2 target job.
+
+### Direct-session import and takeover operations (development)
+
+The released `cli-v0.2.14` and `cli-v0.2.14-preview.1` daemon at
+`df8241c8b1068aa964ec7723000ff356ba3a00ef` executes
+`daemon.directSessions.takeoverPersist` synchronously. Updated daemons retain that
+method as a completion-waiting adapter to the shared daemon Action Operations
+runner used by handoff, fork, and session creation. `takeoverPersist.start`
+acknowledges admission with the shared operation snapshot. Direct takeover and
+import admission share writer/auth/source checks and exclude competing requests
+for the same linked session; repeat delivery joins the existing completion.
+The runner owns both the early admission receipt and final completion for tracked
+spawn, fork, handoff, and takeover requests. Reusing a request identity with changed
+canonical input is rejected. Spawn admission uses the existing native nonce identity
+(including trimmed padding) while preserving the forwarded nonce bytes. Handoff
+does not keep a second admission receipt registry. These private changes add no
+fields to the released operation snapshot.
+The development-only `import.status` and `import.cancel` endpoints and dedicated
+import operation store are removed. Status and Stop use the shared
+`actionOperation.list.v1`, `actionOperation.get.v1`, and
+`actionOperation.cancel.v1` methods.
+
+Updated UIs start import through the asynchronous method and observe the daemon's
+phase, message counts, cancellation eligibility, and terminal result through the
+existing account-scoped Action Operations revision stream and connection-time
+reconciliation. The footer and Activity read the same store; the footer does not
+poll a separate import lifecycle. Reconciliation decisions use the newest shared
+snapshot after merging transport responses: a delayed start acknowledgment or
+status response cannot revive an older revision, hide a terminal refresh error,
+or settle the pending send of a newer retry. A transport request deadline does not
+set an import deadline. The existing transcript footer
+also renders for empty imports and remains available through metadata conversion.
+Observation retains the original daemon address until terminal refresh succeeds,
+so conversion cannot strand a pending send; failed refresh remains recoverable
+through the same Refresh action. If the start acknowledgement is
+lost, the UI reconciles the shared operation by request identity without starting
+a second import. A missing method on
+an older daemon asks the user to update the daemon before starting work; it does
+not fall back to the synchronous import path. Existing relay RPC routing requires
+no server schema or persistence change.
+
+Cancellation is cooperative during transcript reading and uploading. The current
+page/media/upload effect may finish before cancellation settles; no next message
+or runner startup follows. Accepted messages remain stored with the existing
+stable import IDs, so retry deduplicates them. Cancellation becomes unavailable
+when runner startup begins. Completion still requires the existing metadata
+conversion. Operations follow the shared daemon-local retention and recovery
+rules: reopening the session recovers status, while daemon restart loses the
+operation record. An authoritative missing record marks status unavailable and
+settles pending UI work without claiming completion. Retry uses a new request
+identity and the existing importer IDs to preserve accepted history.
 
 ### ACP session-list browse source
 
@@ -274,9 +345,31 @@ When the field is absent in storage, a negotiated reader receives the explicit
 stored selection.
 
 `windowDurationMs` is an optional additive quota-meter fact. Updated readers use
-it only for presentation; absence preserves the existing meter semantics and older
+it for presentation and expiry-first ranking; absence preserves eligibility semantics and older
 readers safely ignore it. Pool-selected usage projection filters only meters and
 preserves account-, subscription-, freshness-, and recovery-credit fields.
+
+### Account-pool expiry-first strategy (development)
+
+The canonical V1 policy defaults to `expiry_first` for newly created or absent
+policies. Explicitly persisted `least_limited`, `priority`, and `manual` choices
+remain unchanged. The daemon's existing candidate selector first prefers fresh
+headroom above the pool's soft-switch threshold, then the earliest future reset
+of its longest selected usage allowance or independently fresh, non-renewing
+subscription end. Ties and candidates without adequate headroom use the existing
+least-limited ranking and priority tie-break. Missing, stale, renewing, and passed
+subscription dates provide no urgency; eligibility, current-account stickiness,
+switch budgets, and hot-auth application are unchanged.
+
+Updated group readers negotiate `happierPoolExpiryFirst=1`. The existing response
+projection represents this strategy as `least_limited` for older strict readers;
+it does not rewrite storage. Unrelated older-client patches preserve the stored
+strategy, while an explicit strategy patch remains an intentional choice. Updated
+UI clients offer the new choice only when `connectedServices.poolExpiryFirst` is
+advertised; this bit controls authoring, not runtime selection. Older daemons
+continue their supported least-limited behavior. As with the other development
+policy extensions above, rollback to a server whose persisted-policy parser
+rejects this enum is not a preservation guarantee.
 
 ### Session draft rollout
 

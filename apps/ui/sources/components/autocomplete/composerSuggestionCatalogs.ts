@@ -1,6 +1,10 @@
+import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol';
 import type { FileItem } from '@/sync/domains/input/suggestionFile';
 import type { ComposerSessionSuggestionItem } from '@/sync/domains/input/suggestionSession';
 import { storage } from '@/sync/domains/state/storage';
+import { probeMachineSessionCatalogs, type MachineSessionCatalogProbeParams } from '@/sync/ops/sessionCatalogs';
+import type { CommandItem } from '@/sync/domains/input/suggestionCommands';
+import { log } from '@/log';
 
 /**
  * Session catalog snapshots the composer suggestion kinds read from.
@@ -46,6 +50,7 @@ export type ComposerSuggestionSkillItem = Readonly<{
 }>;
 
 export type ComposerSuggestionCatalogs = Readonly<{
+    commands?: readonly Pick<CommandItem, 'command' | 'description'>[];
     files?: readonly FileItem[];
     vendorPlugins?: readonly ComposerSuggestionVendorPluginItem[];
     skills?: readonly ComposerSuggestionSkillItem[];
@@ -56,6 +61,75 @@ export type ComposerSuggestionCatalogs = Readonly<{
      */
     sessions?: readonly ComposerSessionSuggestionItem[];
 }>;
+
+/**
+ * A mounted pre-session selection owns one successful native catalog snapshot, just as
+ * session metadata retains the running composer's snapshot. Query changes share it;
+ * changing the launch scope creates a new source. Failed discovery leaves the next
+ * query free to retry. The lazy params keep unopened controls from decrypting secrets.
+ */
+export type PreflightComposerSuggestionCatalogSource = (() => Promise<ComposerSuggestionCatalogs>) & Readonly<{
+    /** Starts discovery while returning the current snapshot immediately. */
+    read: () => Promise<ComposerSuggestionCatalogs>;
+    getSnapshot: () => ComposerSuggestionCatalogs | undefined;
+    subscribe: (listener: () => void) => () => void;
+}>;
+
+const EMPTY_PREFLIGHT_CATALOGS: ComposerSuggestionCatalogs = Object.freeze({});
+
+export function createPreflightComposerSuggestionCatalogSource(
+    params: Omit<MachineSessionCatalogProbeParams, 'capabilityParams'> & Readonly<{
+        capabilityParams: MachineSessionCatalogProbeParams['capabilityParams'] | (() => MachineSessionCatalogProbeParams['capabilityParams']);
+    }>,
+): PreflightComposerSuggestionCatalogSource {
+    let snapshot: Promise<ComposerSuggestionCatalogs> | null = null;
+    let current: ComposerSuggestionCatalogs | undefined;
+    const listeners = new Set<() => void>();
+    const load = () => {
+        if (!snapshot) {
+            snapshot = Promise.resolve().then(async () => {
+                const catalogs = await probeMachineSessionCatalogs({
+                    ...params,
+                    capabilityParams: typeof params.capabilityParams === 'function' ? params.capabilityParams() : params.capabilityParams,
+                });
+                if (!catalogs) return {};
+                for (const [kind, catalog] of Object.entries(catalogs)) {
+                    if (catalog.diagnostic) log.log(`[composer-suggestions] pre-session ${kind}: ${catalog.diagnostic}`);
+                }
+                return {
+                    commands: catalogs.commands.supported ? catalogs.commands.items : [],
+                    skills: catalogs.skills.supported
+                        ? catalogs.skills.items.map(normalizeSkill).filter((item): item is ComposerSuggestionSkillItem => item !== null)
+                        : [],
+                };
+            }).then((catalogs) => {
+                current = catalogs;
+                listeners.forEach((listener) => listener());
+                return catalogs;
+            }).catch((error: unknown) => {
+                snapshot = null;
+                throw error;
+            });
+        }
+        return snapshot;
+    };
+    return Object.assign(load, {
+        getSnapshot: () => current,
+        subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        },
+        read: () => {
+            if (!snapshot) {
+                void load().catch((error: unknown) => {
+                    const reason = error instanceof Error ? error.message : 'unknown error';
+                    log.log(`[composer-suggestions] pre-session catalog discovery unavailable: ${reason}`);
+                });
+            }
+            return Promise.resolve(current ?? EMPTY_PREFLIGHT_CATALOGS);
+        },
+    });
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -113,7 +187,7 @@ function normalizeSkill(value: unknown): ComposerSuggestionSkillItem | null {
     if (!isRecord(value)) return null;
     const name = readString(value.name);
     if (!name) return null;
-    const id = readString(value.id);
+    const id = readNonBlankOpaqueIdentifier(value.id);
     const displayName = readString(value.displayName);
     const description = readString(value.description);
     const path = readString(value.path);

@@ -10,6 +10,7 @@ import { Typography } from '@/constants/Typography';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { t } from '@/text';
 import { useNowMs } from '@/hooks/time/useNowMs';
+import { isActionOperationCancellationRequested } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 
 import {
@@ -144,7 +145,7 @@ export const ActionOperationDetail = React.memo(function ActionOperationDetail(p
                 <ActionOperationDetailFooter
                     terminal={presentation.terminal}
                     canCancel={!presentation.terminal && props.operation.cancellation === 'supported'}
-                    cancelPending={props.cancelPending}
+                    cancelPending={props.cancelPending || isActionOperationCancellationRequested(props.operation)}
                     onCancel={props.onCancel}
                     openSessionId={presentation.openSessionId}
                     onOpenSession={props.onOpenSession}

@@ -15,6 +15,7 @@ export type ClaudeRemoteProviderAcceptedPrompt<Mode = EnhancedMode> = Readonly<{
     userMessageLocalIds?: readonly string[] | null;
     providerAcceptancePending?: boolean;
     pendingProviderAction?: PendingProviderAction;
+    pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
 
 export type ClaudeRemoteProviderPromptAttribution = Readonly<{
@@ -22,6 +23,7 @@ export type ClaudeRemoteProviderPromptAttribution = Readonly<{
     userMessageLocalIds: readonly string[];
     providerAcceptancePending: boolean;
     pendingProviderAction?: PendingProviderAction;
+    pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
 
 export function readClaudeRemoteProviderPromptAttribution(
@@ -31,6 +33,7 @@ export function readClaudeRemoteProviderPromptAttribution(
         ...readClaudeRemoteProviderPromptAcceptance(prompt),
         providerAcceptancePending: prompt.providerAcceptancePending === true,
         ...(prompt.pendingProviderAction ? { pendingProviderAction: prompt.pendingProviderAction } : {}),
+        ...(prompt.pendingRequestedAction ? { pendingRequestedAction: prompt.pendingRequestedAction } : {}),
     };
 }
 

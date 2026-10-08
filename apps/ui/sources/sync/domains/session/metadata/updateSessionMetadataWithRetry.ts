@@ -30,6 +30,8 @@ export async function updateSessionMetadataWithRetry<M>(params: {
     applySessionMetadata: (next: SessionMetadataSnapshot<M>) => void;
     updater: (base: M) => M;
     maxAttempts?: number;
+    /** A caller's existing account lifetime; retired writes leave its intent pending. */
+    shouldContinue?: () => boolean;
 }): Promise<void> {
     const {
         sessionId,
@@ -41,12 +43,15 @@ export async function updateSessionMetadataWithRetry<M>(params: {
         applySessionMetadata,
         updater,
         maxAttempts = 6,
+        shouldContinue = () => true,
     } = params;
 
     for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex++) {
+        if (!shouldContinue()) return;
         let current = getSession();
         if (!current) {
             await refreshSessions();
+            if (!shouldContinue()) return;
             current = getSession();
             if (!current) {
                 throw new Error('Session metadata not available');
@@ -56,16 +61,19 @@ export async function updateSessionMetadataWithRetry<M>(params: {
         const expectedVersion = current.metadataVersion;
         const updatedMetadata = updater(current.metadata);
         const encryptedMetadata = await encryptMetadata(updatedMetadata);
+        if (!shouldContinue()) return;
 
         const result = await emitUpdateMetadata({
             sid: sessionId,
             expectedVersion,
             metadata: encryptedMetadata,
         });
+        if (!shouldContinue()) return;
 
         if (result.result === 'success') {
             if (typeof result.version === 'number' && typeof result.metadata === 'string') {
                 const decrypted = await decryptMetadata(result.version, result.metadata);
+                if (!shouldContinue()) return;
                 if (decrypted) {
                     applySessionMetadata({ metadataVersion: result.version, metadata: decrypted });
                 }
@@ -77,6 +85,7 @@ export async function updateSessionMetadataWithRetry<M>(params: {
             // Prefer the server-provided current version+metadata; it avoids a whole refresh round-trip.
             if (typeof result.version === 'number' && typeof result.metadata === 'string') {
                 const decrypted = await decryptMetadata(result.version, result.metadata);
+                if (!shouldContinue()) return;
                 if (decrypted) {
                     applySessionMetadata({ metadataVersion: result.version, metadata: decrypted });
                 } else {

@@ -18,8 +18,8 @@ clear answer about whether a feature is available, it treats it as unavailable.
 That is why a feature can seem to vanish when a server is unreachable, and why
 a misconfigured self-hosted server hides features rather than half-enabling them.
 
-There are 76 features in the catalog. 22 of them have a switch you can
-reach; the other 54 are decided before you get there.
+There are 77 features in the catalog. 22 of them have a switch you can
+reach; the other 55 are decided before you get there.
 
 ## Features you can turn on yourself
 
@@ -86,6 +86,7 @@ behaviour but still needs the server to advertise the capability.
 | `connectedServices.accountGroups` | Connected service account groups and member management APIs. | server | `connectedServices` |
 | `connectedServices.autoDisablePlanInvalid` | Opt-in automatic pool-member disable after a model-entitlement failure. | server | `connectedServices.accountFallback` |
 | `connectedServices.autoQuotaReset` | Opt-in banked quota reset spending after account pool exhaustion. | server | `connectedServices.accountFallback`, `connectedServices.quotas` |
+| `connectedServices.poolExpiryFirst` | Expiry-first selection strategy for connected service account pools. | server | `connectedServices.accountGroups` |
 | `connectedServices.poolQuotaLimitSelection` | Provider-limit-aware quota selection for connected service account pools. | server | `connectedServices.accountFallback`, `connectedServices.quotas` |
 | `connectedServices.subscription` | Provider-optional subscription observations with independently fresh account-usage transport. | server | `connectedServices` |
 | `e2ee.keylessAccounts` | Keyless account support (accounts may omit E2EE signing keys). | server | — |

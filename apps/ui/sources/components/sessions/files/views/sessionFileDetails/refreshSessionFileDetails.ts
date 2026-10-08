@@ -2,7 +2,7 @@ import { t } from '@/text';
 import { config } from '@/config';
 import { sessionReadFile, sessionStatFile } from '@/sync/ops';
 import { resolveSessionPathState } from '@/hooks/session/files/sessionPathState';
-import { getImageMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
+import { getImageMimeTypeFromPath, getVideoMimeTypeFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import type { FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
 import type { ScmEntryKind } from '@/sync/domains/state/storageTypes';
@@ -17,6 +17,7 @@ export type SessionFileDetailsFileContent = Readonly<{
     binaryBase64?: string | null;
     binaryMime?: string | null;
     binarySizeBytes?: number | null;
+    binaryPreviewRevision?: string | null;
 }>;
 
 export type SessionFileDetailsRefreshResult =
@@ -103,7 +104,18 @@ export async function refreshSessionFileDetails(input: Readonly<{
         fileTask = (async (): Promise<SessionFileDetailsRefreshResult> => {
             try {
                 const imageMime = getImageMimeTypeFromPath(input.filePath);
-                const wantsBinaryPreview = typeof imageMime === 'string' && imageMime.trim().length > 0;
+                const videoMime = getVideoMimeTypeFromPath(input.filePath);
+                const previewMime = imageMime ?? videoMime;
+                const wantsBinaryPreview = previewMime != null;
+
+                // Classification of an opaque binary needs no inline read or text-size budget.
+                if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
+                    return {
+                        status: 'ready', error: null, diffContent,
+                        fileContent: { content: '', isBinary: true, contentHash: null },
+                        fileWriteSupported: true,
+                    };
+                }
 
                 const genericMaxPreviewBytesRaw = config.filesPreviewMaxBytes;
                 const genericMaxPreviewBytes =
@@ -115,7 +127,9 @@ export async function refreshSessionFileDetails(input: Readonly<{
                     typeof imageMaxPreviewBytesRaw === 'number' && Number.isFinite(imageMaxPreviewBytesRaw) && imageMaxPreviewBytesRaw > 0
                         ? Math.floor(imageMaxPreviewBytesRaw)
                         : null;
-                const maxPreviewBytes = wantsBinaryPreview && imageMaxPreviewBytes != null
+                // Video bytes use the encrypted chunk download lifecycle, independently of
+                // the inline text and image preview limits.
+                const maxPreviewBytes = videoMime ? null : imageMime && imageMaxPreviewBytes != null
                     ? imageMaxPreviewBytes
                     : genericMaxPreviewBytes;
 
@@ -125,11 +139,20 @@ export async function refreshSessionFileDetails(input: Readonly<{
                         ? maxPreviewBytes
                         : null;
                 let statSizeBytes: number | null = null;
-                if (statLimitBytes != null) {
+                let binaryPreviewRevision: string | null = null;
+                if (statLimitBytes != null || videoMime) {
                     const stat = await sessionStatFile(input.sessionId, input.filePath);
+                    // A failed metadata refresh must not publish a permanently reusable null video revision.
+                    // The loading owner retains the last good preview and exposes the ordinary retry error.
+                    if (videoMime && (!stat.success || !stat.exists
+                        || typeof stat.sizeBytes !== 'number' || !Number.isFinite(stat.sizeBytes) || stat.sizeBytes < 0
+                        || typeof stat.modifiedMs !== 'number' || !Number.isFinite(stat.modifiedMs))) {
+                        throw new Error(!stat.success ? stat.error : t('files.fileReadFailed'));
+                    }
                     if (stat.success && stat.exists === true && typeof stat.sizeBytes === 'number') {
                         statSizeBytes = Math.max(0, Math.floor(stat.sizeBytes));
-                        if (stat.sizeBytes > statLimitBytes) {
+                        binaryPreviewRevision = JSON.stringify([statSizeBytes, stat.modifiedMs ?? null]);
+                        if (statLimitBytes != null && stat.sizeBytes > statLimitBytes) {
                             return {
                                 status: 'ready',
                                 error: t('files.fileTooLargeToPreview'),
@@ -142,18 +165,7 @@ export async function refreshSessionFileDetails(input: Readonly<{
                 }
 
                 if (wantsBinaryPreview) {
-                    fileContent = { content: '', isBinary: true, contentHash: null, binaryMime: imageMime, binarySizeBytes: statSizeBytes };
-                    return {
-                        status: 'ready',
-                        error: null,
-                        diffContent,
-                        fileContent,
-                        fileWriteSupported: true,
-                    };
-                }
-
-                if (isKnownBinaryPath(input.filePath) && !wantsBinaryPreview) {
-                    fileContent = { content: '', isBinary: true, contentHash: null };
+                    fileContent = { content: '', isBinary: true, contentHash: null, binaryMime: previewMime, binarySizeBytes: statSizeBytes, binaryPreviewRevision };
                     return {
                         status: 'ready',
                         error: null,

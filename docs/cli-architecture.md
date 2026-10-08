@@ -45,6 +45,20 @@ graph TB
 - **Persistence/config:** `src/persistence.ts` + `src/configuration.ts` manage local state in `~/.happy`.
 - **Agents:** `src/claude`, `src/codex`, `src/gemini` provide provider-specific runners.
 
+## Streamed transcript recovery (development)
+
+`api/session/streamedTranscriptWriter` owns segment text, identity, and durable
+settlement. Closing a segment freezes its completion or interruption intent and
+separates it from subsequent output. A rejected terminal write retains the full
+snapshot for the next flush with the same local id; unresolved delivery is recorded
+in the default file log. This retention is process-local, and does not promise
+automatic reconnect replay or recovery after process exit.
+
+`createKeyedStreamedTranscriptBridge` keeps writers with active, in-flight, or failed
+segments and releases only drained writers. Codex tool boundaries wait for admission
+into the existing session commit queue, while acknowledgement settles in the writer;
+turn-end flushes await settlement and return the durable delivery summaries.
+
 ## CLI entry flow
 
 ```mermaid
@@ -79,6 +93,22 @@ flowchart TD
 ## Desktop-driven setup
 
 The desktop app never asks the user to open a terminal to connect the computer it is running on.
+
+In current development source, the desktop shell registers each release channel's custom URL
+scheme (`happier`, `happier-preview`, or `happier-dev`) through Tauri's deep-link plugin.
+The existing single-instance plugin forwards running-app links on Windows and Linux; macOS
+receives Opened events. The main-window presentation owner handles revealing or recreating the
+window. `installDesktopDeepLinks` subscribes before reading the plugin's startup URL snapshot
+and delegates URL interpretation to the existing system-path and terminal-connect owners.
+Terminal links reach `/terminal/connect` with pairing material in the fragment, where the
+terminal URL reader accepts the bundled webview's `tauri://localhost` route carrier while
+server addresses remain HTTP(S)-only. Router-provided fragments are resolved against the canonical
+terminal route even when browser history still shows the previous page. Existing confirmation,
+sign-in recovery, and URL clearing apply. This adds no automatic pairing approval. Channel-specific schemes allow installed channels
+to coexist; the CLI's default
+`happier://` link targets stable. Registration and cold/running/tray-only launches require live
+OS validation; macOS registration must be checked in the installed application bundle.
+
 It drives the same CLI subcommands the human flow uses, through the bundled `hsetup` sidecar
 (`apps/bootstrap`), which the Tauri shell launches (`apps/ui/src-tauri/src/system_tasks/`). `hsetup`
 is bundled inside the desktop app, not a separately released component.
@@ -1009,6 +1039,13 @@ provider configuration, transcript ingestion, permissions, and recovery. The hos
 owns the terminal process and screen. `terminal/attachment` persists their association
 and dispatches attach, stop, and host disposition.
 
+Zellij command panes inherit the native server's environment. The Zellij adapter
+therefore passes the same launch environment when creating the server and submitting
+the command, including foreground creation where supported. Launch-only passthrough
+values remain in the process environment rather than the one-shot launch-spec file.
+Claude's existing spawn owner disables prompt suggestions through that environment;
+the readiness parser continues to protect genuine user drafts.
+
 Terminal-host setup failures keep the released `SPAWN_FAILED` result and attach optional,
 protocol-owned `terminal_host_unavailable` detail. Missing supported Herdr/Zellij
 installations and an unsupported running Herdr server are setup failures, not provider
@@ -1032,6 +1069,12 @@ does not automatically recreate a pane. Terminal supervision retires the exact
 optional attachment without treating its loss as controller death. An explicit
 switch or attach can request a local client again; this is not a claim that every
 cold host-restoration path has completed live validation.
+Detached tmux creation uses the configured session `default-size` when no client
+is attached to that session. The shared tmux command owner reconciles the exact
+created window instead of inheriting dimensions from clients of unrelated sessions
+under tmux's `latest` sizing policy. It preserves inherited or explicit window
+sizing policy so attaching a client still controls its geometry. An unsuccessful
+geometry reconciliation is logged and does not retry a successful creation.
 Terminal creation submission is distinct from confirmed readiness. A tmux creation
 reply that cannot identify the accepted window does not authorize an ordinary-runner
 fallback: only proven non-creation with complete cleanup permits that fallback.
@@ -1155,6 +1198,13 @@ requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+In development source, Claude prompt staging and consumption wait under the existing
+session cancellation signal, rather than the terminal transport's write deadline.
+An overloaded TUI can display a successful paste late. The shared terminal verifier
+waits for that exact prompt before sending Enter once, and re-observes its consumption
+without resubmitting. Individual transport commands retain their own timeouts.
+The arbiter's existing accepted/retired delivery state also ends verification, so a
+manual submission or cancelled Pending row cannot leave the injection waiting forever.
 The Herdr client stages large text in sequential Unicode-safe requests within
 Herdr's 1 MiB serialized JSON-line limit, including escape expansion and envelope
 bytes. Submission still belongs to the existing verifier: it sends Enter only

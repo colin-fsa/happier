@@ -2,6 +2,7 @@ import type {
   ConnectedServiceAuthGroupQuotaLimitSelectionV1,
   ConnectedServiceQuotaMeterV1,
   ProviderAccountUsageSnapshotV1,
+  ProviderAccountSubscriptionV1,
 } from '@happier-dev/protocol';
 import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
 
@@ -75,6 +76,7 @@ export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
   return buildConnectedServiceAuthGroupRuntimeStateFromMeters({
     capturedAtMs: snapshot.fetchedAtMs,
     meters: snapshot.meters,
+    subscription: snapshot.subscription,
     selection,
   });
 }
@@ -82,23 +84,27 @@ export function projectProviderAccountUsageSnapshotToAuthGroupRuntimeState(
 export function buildConnectedServiceAuthGroupRuntimeStateFromMeters(input: Readonly<{
   capturedAtMs: number;
   meters: readonly ConnectedServiceQuotaMeterV1[];
+  subscription?: ProviderAccountSubscriptionV1;
   selection?: ConnectedServiceAuthGroupQuotaLimitSelectionV1;
 }>): ConnectedServiceAuthGroupMemberRuntimeState {
   const selectedMeters = selectConnectedServiceAuthGroupQuotaMeters(input.meters, input.selection);
   const normalizedMeters = selectedMeters.map(normalizeConnectedServiceAuthGroupQuotaMeter);
   const effectiveMeter = selectEffectiveQuotaMeter(normalizedMeters);
   return {
+    ...(input.subscription ? { subscription: input.subscription } : {}),
     providerResetsAtMs: effectiveMeter?.resetAtMs ?? readProviderResetsAtMs({ meters: selectedMeters }),
     quotaSnapshot: {
       capturedAtMs: input.capturedAtMs,
       effectiveMeterId: effectiveMeter?.meterId ?? null,
       effectiveRemainingPercent: effectiveMeter?.remainingPct ?? null,
-      meters: normalizedMeters.map((meter) => ({
+      meters: normalizedMeters.map((meter, index) => ({
         meterId: meter.meterId,
         limitCategory: meter.limitCategory,
         remainingPct: meter.remainingPct,
         resetAtMs: meter.resetAtMs,
         providerLimitId: meter.providerLimitId,
+        windowDurationMs: selectedMeters[index]?.windowDurationMs ?? null,
+        reliable: meter.reliable && meter.applicable,
       })),
       ...(selectedMeters.length > 0 ? {
         exhausted: isExhausted(normalizedMeters),

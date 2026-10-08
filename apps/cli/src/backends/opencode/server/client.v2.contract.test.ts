@@ -30,7 +30,8 @@ function stubReleasedV2Server(
     if (url.pathname === '/api/health' || url.pathname === '/global/health' || url.pathname === '/mcp') {
       return new Response('{}', { status: 404 });
     }
-    return handle(call, url) ?? new Response(null, { status: 204 });
+    return handle(call, url) ?? (url.pathname === '/api/integration'
+      ? Response.json({ data: [] }) : new Response(null, { status: 204 }));
   }));
   return { calls };
 }
@@ -74,6 +75,43 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
     stubReleasedV2Server((call) => Response.json(call.path === malformedPath ? payload : { data: [] }));
     const client = await makeReleasedV2Client();
     await expect(client.providersList()).rejects.toThrow(/provider inventory/i);
+  });
+
+  it('preserves V1 synthetic text and native agent parts without changing the legacy envelope', async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({
+        path: url.pathname,
+        method: init?.method ?? 'GET',
+        search: url.search,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}),
+      });
+      if (url.pathname === '/global/health') return Response.json({ healthy: true, version: '1.18.33' });
+      if (url.pathname.endsWith('/prompt_async')) return new Response(null, { status: 204 });
+      return new Response(null, { status: 404 });
+    }));
+    const client = await makeReleasedV2Client();
+    const parts = [
+      { type: 'skill', id: 'vendor-skill-id', text: 'Use the reviewer skill.' },
+      { type: 'text', text: 'Review this change' },
+      { type: 'agent', name: 'reviewer' },
+    ];
+    try {
+      await client.sessionPromptAsync({ sessionId: 'ses_v1', messageId: 'msg_1', parts });
+      expect(calls.find((call) => call.path.endsWith('/prompt_async'))).toEqual({
+        path: '/session/ses_v1/prompt_async',
+        method: 'POST',
+        search: '?directory=%2Frepo',
+        body: { messageID: 'msg_1', parts: [
+          { type: 'text', text: 'Use the reviewer skill.', synthetic: true },
+          { type: 'text', text: 'Review this change' },
+          { type: 'agent', name: 'reviewer' },
+        ] },
+      });
+    } finally {
+      await client.dispose();
+    }
   });
 
   it('accepts an explicitly empty provider and model inventory', async () => {
@@ -152,7 +190,10 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
       if (call.path === '/api/session/ses_1/message') {
         return url.searchParams.get('cursor') === 'next'
           ? Response.json({
-            data: [{ id: 'msg_a1', type: 'assistant', time: { created: 3 }, agent: 'build', content: [{ type: 'text', id: 'prt_1', text: 'hi' }] }],
+            data: [
+              { id: 'msg_s1', type: 'synthetic', time: { created: 2 }, text: '<subagent-completion>private injected result</subagent-completion>', metadata: { source: 'subagent', childID: 'ses_child' } },
+              { id: 'msg_a1', type: 'assistant', time: { created: 3 }, agent: 'build', content: [{ type: 'text', id: 'prt_1', text: 'hi' }] },
+            ],
             cursor: {},
           })
           : Response.json({
@@ -170,6 +211,7 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
       sessionId: 'ses_1',
       messageId: 'msg_u2',
       parts: [
+        { type: 'text', text: 'Use the reviewer skill.', synthetic: true },
         { type: 'text', text: 'ship it' },
         { type: 'file', url: 'file:///repo/a.png', mime: 'image/png', filename: 'a.png' },
       ],
@@ -182,7 +224,7 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
     // `PromptInput` is flat: nesting it under `prompt` is rejected by the released schema.
     expect(calls.find((c) => c.path === '/api/session/ses_1/prompt')?.body).toEqual({
       id: 'msg_u2',
-      text: 'ship it',
+      text: 'Use the reviewer skill.\n\nship it',
       files: [{ uri: 'file:///repo/a.png', name: 'a.png' }],
       delivery: 'steer',
     });
@@ -192,10 +234,257 @@ describe('OpenCodeServerRuntimeClient released V2 contract', () => {
     });
 
     // Released assistant messages carry no parentID; the turn anchor is inferred across pages.
-    const messages = await client.sessionMessagesList({ sessionId: 'ses_1' }) as Array<{ info: Record<string, unknown> }>;
-    expect(messages.map((m) => m.info.id)).toEqual(['msg_u1', 'msg_a1']);
-    expect(messages[1]!.info.parentID).toBe('msg_u1');
+    const messages = await client.sessionMessagesList({ sessionId: 'ses_1' }) as Array<{ info: Record<string, unknown>; parts: unknown[] }>;
+    expect(messages.map((m) => m.info.id)).toEqual(['msg_u1', 'msg_s1', 'msg_a1']);
+    expect(messages[1]).toMatchObject({ info: { role: 'synthetic' }, parts: [] });
+    expect(messages[2]!.info.parentID).toBe('msg_u1');
+    expect(messages[2]!.parts).toMatchObject([{ type: 'text', text: 'hi' }]);
     await client.dispose();
+  });
+
+  it.each(['steer', 'queue'] as const)('preserves native agent attachments with %s delivery', async (delivery) => {
+    const { calls } = stubReleasedV2Server(() => undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      await client.sessionPromptAsync({
+        sessionId: 'ses_1',
+        parts: [
+          { type: 'text', text: 'Review this change' },
+          { type: 'agent', name: 'reviewer' },
+          { type: 'skill', id: 'vendor-skill-id', text: 'Use the reviewer skill.' },
+        ],
+        delivery,
+      });
+      expect(calls.find((call) => call.path === '/api/session/ses_1/prompt')?.body).toEqual({
+        text: 'Review this change',
+        agents: [{ name: 'reviewer' }],
+        skills: [{ id: 'vendor-skill-id' }],
+        delivery,
+      });
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it.each(['v1', 'v2'] as const)('discovers catalogs from the %s directory-scoped endpoint after native readiness', async (generation) => {
+    const calls: Call[] = [];
+    const commands = [{ name: 'review', description: 'Review the current change' }];
+    const skills = [{ id: 'native-review', name: 'reviewer', path: '/repo/SKILL.md' }];
+    let ready = false;
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({ path: url.pathname, method: init?.method ?? 'GET', search: url.search });
+      if (url.pathname === '/global/health' && generation === 'v1') {
+        return Response.json({ healthy: true, version: '1.18.33' });
+      }
+      if (url.pathname === '/api/info' && generation === 'v2') {
+        return Response.json({ version: '2.0.15', pid: 4242, urls: ['http://127.0.0.1:9999'], paths: { tmp: '/tmp' } });
+      }
+      if (url.pathname === '/command' && generation === 'v1') return Response.json(commands);
+      if (url.pathname === '/skill' && generation === 'v1') return Response.json(skills);
+      if (url.pathname === '/api/integration' && generation === 'v2') {
+        expect(url.searchParams.get('location[directory]')).toBe('/repo');
+        ready = true;
+        return Response.json({ location: { directory: '/repo' }, data: [] });
+      }
+      if (url.pathname === '/api/command' && generation === 'v2') return Response.json({ data: ready ? commands : [] });
+      if (url.pathname === '/api/skill' && generation === 'v2') return Response.json({ data: ready ? skills : [] });
+      return new Response(null, { status: 404 });
+    }));
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.appCommands()).resolves.toEqual(commands);
+      // A directory-scoped read must still wait after a later native reload.
+      ready = false;
+      await expect(client.appSkills()).resolves.toEqual(skills);
+      expect(calls.find((call) => call.path.endsWith('/command'))).toEqual({
+        path: generation === 'v2' ? '/api/command' : '/command',
+        method: 'GET',
+        search: generation === 'v2' ? '?location%5Bdirectory%5D=%2Frepo' : '?directory=%2Frepo',
+      });
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it('does not publish an empty catalog when V2 native readiness fails', async () => {
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/integration'
+      ? new Response(null, { status: 503 }) : Response.json({ data: [] }));
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.appSkills()).rejects.toThrow(/503/);
+      expect(calls.some((call) => call.path === '/api/skill')).toBe(false);
+    } finally {
+      await client.dispose();
+    }
+  });
+
+  it('executes V1 native commands with the legacy arguments and file envelope', async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      calls.push({ path: url.pathname, method: init?.method ?? 'GET', search: url.search,
+        ...(init?.body ? { body: JSON.parse(String(init.body)) } : {}) });
+      if (url.pathname === '/global/health') return Response.json({ healthy: true, version: '1.18.33' });
+      if (url.pathname.endsWith('/command')) return Response.json({ info: { id: 'msg_native' }, parts: [] });
+      return new Response(null, { status: 404 });
+    }));
+    const client = await makeReleasedV2Client();
+    const parts = [{ type: 'file', url: 'file:///repo/a.png', mime: 'image/png', filename: 'a.png' }];
+    try {
+      await client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: 'main', messageId: 'msg_1',
+        parts, model: { providerID: 'openai', modelID: 'gpt-5' }, agent: 'build', variant: 'high' });
+      expect(calls.find((call) => call.path.endsWith('/command'))).toEqual({
+        path: '/session/ses_1/command', method: 'POST', search: '?directory=%2Frepo',
+        body: { command: 'review', arguments: 'main', messageID: 'msg_1', parts,
+          model: 'openai/gpt-5', agent: 'build', variant: 'high' },
+      });
+    } finally { await client.dispose(); }
+  });
+
+  it.each(['steer', 'queue'] as const)('executes V2 native command callbacks with %s delivery and prompt attachments', async (delivery) => {
+    const { calls } = stubReleasedV2Server(() => undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      await client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: 'main', messageId: 'msg_local',
+        delivery, model: { providerID: 'openai', modelID: 'gpt-5' }, agent: 'build', variant: 'high', parts: [
+          { type: 'skill', id: 'vendor-skill-id', text: 'Use the reviewer skill.' },
+          { type: 'file', url: 'file:///repo/a.png', mime: 'image/png', filename: 'a.png' },
+          { type: 'agent', name: 'reviewer' },
+        ] });
+      expect(calls.filter((call) => call.method === 'POST').map((call) => call.path)).toEqual([
+        '/api/session/ses_1/agent', '/api/session/ses_1/model', '/api/session/ses_1/command',
+      ]);
+      expect(calls.find((call) => call.path.endsWith('/command'))?.body).toEqual({
+        name: 'review', text: 'main', files: [{ uri: 'file:///repo/a.png', name: 'a.png' }],
+        agents: [{ name: 'reviewer' }], skills: [{ id: 'vendor-skill-id' }], delivery,
+      });
+    } finally { await client.dispose(); }
+  });
+
+  it.each([
+    { delivery: 'steer' as const, reason: 'delivery' },
+    { parts: [{ type: 'agent', name: 'reviewer' }], reason: 'attachments' },
+    { parts: [{ type: 'skill', id: 'vendor-skill-id', text: 'Skill instructions' }], reason: 'attachments' },
+  ])('rejects unsupported V1 command input before any write: $reason', async ({ reason, ...input }) => {
+    const writes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (init?.method === 'POST') writes.push(new URL(String(url)).pathname);
+      return new URL(String(url)).pathname === '/global/health'
+        ? Response.json({ healthy: true, version: '1.18.33' }) : new Response(null, { status: 404 });
+    }));
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: '', ...input }))
+        .rejects.toMatchObject({ code: 'opencode_command_unsupported', reason });
+      expect(writes).toEqual([]);
+    } finally { await client.dispose(); }
+  });
+
+  it('does not replay a native command after ambiguous transport loss', async () => {
+    let attempts = 0;
+    stubReleasedV2Server((call) => {
+      if (call.path.endsWith('/command')) { attempts += 1; throw new TypeError('fetch failed'); }
+      return undefined;
+    });
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: '' })).rejects.toThrow('fetch failed');
+      expect(attempts).toBe(1);
+    } finally { await client.dispose(); }
+  });
+
+  it.each(['prompt', 'command'] as const)('rejects a V2 skill without native identity before %s selection or admission writes', async (operation) => {
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/skill' ? Response.json({ data: [] }) : undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      const input = { sessionId: 'ses_1', agent: 'build', model: { providerID: 'openai', modelID: 'gpt-5' },
+        parts: [{ type: 'skill', name: 'Legacy Skill', text: 'Legacy skill context' }] };
+      const outcome = operation === 'prompt' ? client.sessionPromptAsync(input)
+        : client.sessionCommand({ ...input, command: 'review', arguments: '' });
+      await expect(outcome).rejects.toMatchObject({ code: 'opencode_skill_identity_missing' });
+      expect(calls.filter((call) => call.method === 'POST')).toEqual([]);
+    } finally { await client.dispose(); }
+  });
+
+  it.each(['prompt', 'command'] as const)('resolves legacy V2 skill names and paths against the same native catalog before %s admission', async (operation) => {
+    const skillPath = '/repo/.opencode/skills/folder/SKILL.md';
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/skill' ? Response.json({ data: [
+      { id: 'exact-native-id', name: 'Reviewer Skill', path: skillPath, content: 'Instructions' },
+      { id: 'other-native-id', name: 'Reviewer Skill', path: '/other/SKILL.md', content: 'Other instructions' },
+    ] }) : undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      const parts = [{ type: 'skill', name: 'Reviewer Skill', path: skillPath, text: 'Legacy fallback instructions' }];
+      if (operation === 'prompt') await client.sessionPromptAsync({ sessionId: 'ses_1', parts: [{ type: 'text', text: 'Review this' }, ...parts] });
+      else await client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: 'Review this', parts });
+      expect(calls.find((call) => call.path === `/api/session/ses_1/${operation}`)?.body).toEqual({
+        ...(operation === 'command' ? { name: 'review' } : {}), text: 'Review this', skills: [{ id: 'exact-native-id' }],
+      });
+      expect(calls.filter((call) => call.path === '/api/skill')).toHaveLength(1);
+    } finally { await client.dispose(); }
+  });
+
+  it.each([
+    { name: 'Reviewer Skill' },
+    { name: 'Reviewer Skill', path: '/missing/SKILL.md' },
+  ])('rejects ambiguous or unmatched legacy V2 skill identity without native effects: %j', async (legacy) => {
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/skill' ? Response.json({ data: [
+      { id: 'one', name: 'Reviewer Skill', path: '/one/SKILL.md' },
+      { id: 'two', name: 'Reviewer Skill', path: '/two/SKILL.md' },
+    ] }) : undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      await expect(client.sessionPromptAsync({ sessionId: 'ses_1', agent: 'build', parts: [
+        { type: 'skill', text: 'Fallback instructions', ...legacy },
+      ] })).rejects.toMatchObject({ code: 'opencode_skill_identity_missing' });
+      expect(calls.filter((call) => call.method === 'POST')).toEqual([]);
+    } finally { await client.dispose(); }
+  });
+
+  it('resolves a legacy name-only V2 skill when its native catalog identity is unique', async () => {
+    const { calls } = stubReleasedV2Server((call) => call.path === '/api/skill'
+      ? Response.json({ data: [{ id: 'exact-native-id', name: 'Reviewer Skill', path: '/repo/folder/SKILL.md' }] }) : undefined);
+    const client = await makeReleasedV2Client();
+    try {
+      await client.sessionPromptAsync({ sessionId: 'ses_1', parts: [
+        { type: 'text', text: 'Review this' }, { type: 'skill', name: 'Reviewer Skill', text: 'Fallback instructions' },
+      ] });
+      expect(calls.find((call) => call.path === '/api/session/ses_1/prompt')?.body).toEqual({
+        text: 'Review this', skills: [{ id: 'exact-native-id' }],
+      });
+    } finally { await client.dispose(); }
+  });
+
+  it.each(['v1', 'v2'] as const)('keeps a %s native command alive past the control timeout and cancels its transport on disposal', async (generation) => {
+    const observation: { signal: AbortSignal | null } = { signal: null };
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/global/health' && generation === 'v1') return Response.json({ healthy: true, version: '1.18.33' });
+      if (path === '/api/info' && generation === 'v2') return Response.json({ version: '2.0.15', pid: 1, urls: [], paths: { tmp: '/tmp' } });
+      if (path.endsWith('/command')) {
+        observation.signal = init?.signal ?? null;
+        return await new Promise<Response>((_resolve, reject) => {
+          observation.signal?.addEventListener('abort', () => reject(new DOMException('Request aborted', 'AbortError')), { once: true });
+        });
+      }
+      return new Response(null, { status: 404 });
+    }));
+    const client = await makeReleasedV2Client({ HAPPIER_OPENCODE_SERVER_HTTP_TIMEOUT_MS: '1000' });
+    vi.useFakeTimers();
+    const outcome = client.sessionCommand({ sessionId: 'ses_1', command: 'review', arguments: '' })
+      .then(() => null, (error: unknown) => error);
+    try {
+      await vi.waitFor(() => expect(observation.signal).not.toBeNull());
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(observation.signal?.aborted).toBe(false);
+      await client.dispose();
+      expect(observation.signal?.aborted).toBe(true);
+      expect(await outcome).toMatchObject({ name: 'AbortError' });
+    } finally {
+      await client.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('answers permissions and forms through the released routes and payloads', async () => {

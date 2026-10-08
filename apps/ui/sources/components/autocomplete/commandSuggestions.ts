@@ -5,7 +5,7 @@ import { COMMAND_SUGGESTION_ROW_HEIGHT } from './commandSuggestionConstants';
 export async function getCommandSuggestions(
     sessionId: string | null,
     query: string,
-    options?: Readonly<{ limit?: number }>,
+    options?: Readonly<{ limit?: number; nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[] }>,
 ): Promise<AutocompleteSuggestion[]> {
     const searchTerm = query.startsWith('/') ? query.slice(1) : query;
 
@@ -14,7 +14,10 @@ export async function getCommandSuggestions(
     // shape that let a completely dead `@` look like an empty repository. The
     // dispatcher already turns a rejected kind into "no rows plus one diagnostic"
     // (`suggestions.ts`), and it is the single place that decision belongs.
-    const commands = await searchCommands(sessionId, searchTerm, { limit: options?.limit ?? 8 });
+    const commands = await searchCommands(sessionId, searchTerm, {
+        limit: options?.limit ?? 8,
+        ...(options?.nativeCommands ? { nativeCommands: options.nativeCommands } : {}),
+    });
 
     return commands.map((cmd: CommandItem) => ({
         kind: 'slashCommand' as const,

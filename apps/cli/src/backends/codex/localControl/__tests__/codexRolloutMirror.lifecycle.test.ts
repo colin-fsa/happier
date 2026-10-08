@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+
 const state = vi.hoisted(() => ({
   followers: [] as Array<{
     start: ReturnType<typeof vi.fn>;
@@ -10,7 +12,6 @@ const state = vi.hoisted(() => ({
   }>,
   resolveStart: null as (() => void) | null,
   operationLog: [] as string[],
-  appendAfterFlushCount: 0,
   rolloutFiles: [] as Array<{ filePath: string }>,
 }));
 
@@ -58,21 +59,6 @@ vi.mock('../../directSessions/collectCodexSessionRolloutFiles', () => ({
   collectCodexSessionRolloutFiles: vi.fn(async () => state.rolloutFiles),
 }));
 
-vi.mock('@/api/session/streamedTranscriptWriter', () => ({
-  createStreamedTranscriptWriter: () => ({
-    appendAssistantDelta: (text: string) => {
-      state.operationLog.push(`append:${text}`);
-      if (state.operationLog.includes('flush:turn-end')) {
-        state.appendAfterFlushCount += 1;
-      }
-    },
-    appendThinkingDelta: () => {},
-    flushAll: vi.fn(async (opts: { reason: 'tool-call-boundary' | 'turn-end' | 'abort' }) => {
-      state.operationLog.push(`flush:${opts.reason}`);
-    }),
-  }),
-}));
-
 import { CodexRolloutMirror } from '../codexRolloutMirror';
 
 async function waitForPendingStart(): Promise<void> {
@@ -88,7 +74,6 @@ describe('CodexRolloutMirror lifecycle', () => {
     state.followers.length = 0;
     state.resolveStart = null;
     state.operationLog.length = 0;
-    state.appendAfterFlushCount = 0;
     state.rolloutFiles.length = 0;
   });
 
@@ -119,16 +104,24 @@ describe('CodexRolloutMirror lifecycle', () => {
     expect(follower.stop).toHaveBeenCalledTimes(2);
   });
 
-  it('stops the follower before the final transcript flush', async () => {
+  it('stops the follower before persisting the complete final transcript', async () => {
+    const terminalMessages: unknown[] = [];
+    const session = createMutableApiSessionClientFixture({
+      overrides: {
+        sendAgentMessageCommitted: async (_provider, body, opts) => {
+          const streamMeta = opts.meta?.happierStreamSegmentV1;
+          if (streamMeta && typeof streamMeta === 'object' && 'segmentState' in streamMeta && streamMeta.segmentState === 'complete') {
+            state.operationLog.push('flush:complete');
+            terminalMessages.push(body);
+          }
+        },
+      },
+    });
     const mirror = new CodexRolloutMirror({
       filePath: '/tmp/mock.jsonl',
       debug: false,
       onCodexSessionId: () => {},
-      session: {
-        sendUserTextMessage: () => {},
-        sendCodexMessage: () => {},
-        sendSessionEvent: () => {},
-      } as any,
+      session,
     });
 
     const startPromise = mirror.start();
@@ -149,8 +142,8 @@ describe('CodexRolloutMirror lifecycle', () => {
 
     await mirror.stop();
 
-    expect(state.appendAfterFlushCount).toBe(0);
-    expect(state.operationLog).toEqual(['stop:start', 'append:late delta', 'stop:end', 'flush:turn-end']);
+    expect(terminalMessages).toEqual([{ type: 'message', message: 'late delta' }]);
+    expect(state.operationLog).toEqual(['stop:start', 'stop:end', 'flush:complete']);
   });
 
   it('retains closed subagent ids without keeping child follower resources alive', async () => {

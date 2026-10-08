@@ -19,20 +19,6 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { claimSessionRunnerOwnership, withSessionRunnerOwnership } from '@/daemon/sessionRunnerLock';
 import { reloadConfiguration } from '@/configuration';
 
-const binaryBoundary = vi.hoisted(() => ({ file: '' }));
-// Only the selected Herdr executable's installed-version probe is replaced.
-// Recovery uses real attachment files, endpoint ports and Herdr socket requests.
-vi.mock('node:child_process', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('node:child_process')>();
-    const { promisify } = await import('node:util');
-    return { ...actual, execFile: Object.assign(actual.execFile.bind(null), {
-        [Symbol.for('nodejs.util.promisify.custom')]: async (file: string, args: readonly string[], options?: import('node:child_process').ExecFileOptions) =>
-            binaryBoundary.file === file && args[0] === '--version'
-                ? { stdout: 'herdr 0.9.3', stderr: '' }
-                : await promisify(actual.execFile)(file, [...args], options ?? {}),
-    }) };
-});
-
 const originalEndpointStateEnv = process.env[HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY];
 
 async function reservePort(): Promise<Readonly<{ port: number; close: () => Promise<void> }>> {
@@ -155,11 +141,12 @@ describe('resolveClaudeAdoptEndpointRecovery', () => {
             const home = await mkdtemp(join(tmpdir(), 'happier-explicit-endpoint-'));
             tempDirs.push(home);
             const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HERDR_BIN_PATH', HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]);
-            binaryBoundary.file = join(home, 'isolated-herdr');
-            env.patch({ HAPPIER_HOME_DIR: home, HERDR_BIN_PATH: binaryBoundary.file, [HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]: undefined });
+            env.patch({ HAPPIER_HOME_DIR: home, [HAPPIER_CLAUDE_ENDPOINT_STATE_ENV_KEY]: undefined });
             reloadConfiguration();
             try {
                 await withHerdrApi(async (api) => {
+                    // Exercise installed-binary admission with the same external Herdr fixture as the socket.
+                    env.patch({ HERDR_BIN_PATH: api.binary });
                     api.panes.add('managed');
                     const sessionId = 'sid_retained_controller';
                     const attachmentId = createTerminalAttachmentId();
@@ -182,7 +169,6 @@ describe('resolveClaudeAdoptEndpointRecovery', () => {
                     expect(api.requests.some(request => request.method === 'pane.close' || request.method === 'layout.apply')).toBe(false);
                 });
             } finally {
-                binaryBoundary.file = '';
                 env.restore(); reloadConfiguration();
             }
         },

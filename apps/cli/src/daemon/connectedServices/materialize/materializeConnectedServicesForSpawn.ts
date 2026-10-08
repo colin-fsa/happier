@@ -13,6 +13,7 @@ import type {
 import type { CatalogAgentId } from '@/backends/types';
 import { getConnectedServiceMaterializer } from '@/backends/catalog';
 import { replaceDirectoryAtomically } from '@/utils/fs/replaceDirectoryAtomically';
+import { logger } from '@/ui/logger';
 import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_ENV_KEY,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
@@ -76,12 +77,14 @@ export class ConnectedServiceMaterializationSupersededError extends Error {
   }
 }
 
-function bestEffortCleanupDirectory(path: string): () => void {
-  let cleaned = false;
+function bestEffortCleanupDirectory(path: string): () => Promise<void> {
+  let cleanup: Promise<void> | undefined;
   return () => {
-    if (cleaned) return;
-    cleaned = true;
-    void rm(path, { recursive: true, force: true }).catch(() => {});
+    if (!cleanup) {
+      cleanup = rm(path, { recursive: true, force: true });
+      void cleanup.catch((error) => logger.warn('Could not remove connected-service materialization artifacts', error));
+    }
+    return cleanup;
   };
 }
 
@@ -283,6 +286,8 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   vendorResumeId?: string | null;
   candidatePersistedSessionFile?: string | null;
+  signal?: AbortSignal;
+  onCleanup?: (cleanup: () => Promise<void>) => void;
   validateGroupMutationCurrentness?: ConnectedServicesProviderMaterializerInput['validateGroupMutationCurrentness'];
   validatePromotedMaterialization?: (input: Readonly<{
     env: Readonly<Record<string, string>>;
@@ -301,6 +306,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     materializationIdentity: params.connectedServiceMaterializationIdentityV1 ?? null,
   });
   return await runSerializedMaterializationForRoot(rootDir, async () => {
+  params.signal?.throwIfAborted();
   const freshMaterial = await resolveFreshMaterializationRecords({
     recordsByServiceId: params.recordsByServiceId,
     ...(params.selectionsByServiceId ? { selectionsByServiceId: params.selectionsByServiceId } : {}),
@@ -318,9 +324,36 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
     return null;
   }
-  await mkdir(attemptRoot, { recursive: true });
+  let disposed = false;
+  let artifactWrite: Promise<unknown> | undefined;
+  let cleanup: Promise<void> | undefined;
+  const assertOpen = () => {
+    params.signal?.throwIfAborted();
+    if (disposed) throw new Error('Connected-service materialization was disposed');
+  };
+  const writeArtifacts = async <T>(write: () => Promise<T>): Promise<T> => {
+    assertOpen();
+    const pending = write();
+    artifactWrite = pending;
+    try {
+      const result = await pending;
+      assertOpen();
+      return result;
+    } finally {
+      if (artifactWrite === pending) artifactWrite = undefined;
+    }
+  };
+  params.onCleanup?.(() => {
+    disposed = true;
+    return cleanup ??= (async () => {
+      await artifactWrite?.catch(() => {});
+      await cleanupRoot();
+      await rm(rootDir, { recursive: true, force: true });
+    })();
+  });
   let materialized: ConnectedServicesMaterializeResult | null;
   try {
+    await writeArtifacts(() => mkdir(attemptRoot, { recursive: true }));
     materialized = await materializer({
       agentId: params.agentId,
       activeServerDir: params.activeServerDir,
@@ -334,18 +367,20 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
       vendorResumeId: params.vendorResumeId ?? null,
       candidatePersistedSessionFile: params.candidatePersistedSessionFile ?? null,
       cleanupRoot,
+      writeArtifacts,
       ...(params.validateGroupMutationCurrentness
         ? { validateGroupMutationCurrentness: params.validateGroupMutationCurrentness }
         : {}),
     });
+    assertOpen();
   } catch (error) {
-    cleanupRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
+    await cleanupRoot();
     throw error;
   }
   if (!materialized) {
-    cleanupRoot();
     forgetActiveAttemptIfCurrent(rootDir, attemptId);
+    await cleanupRoot();
     return null;
   }
   const materializedEnv = rewriteEnvRoot(materialized.env, attemptRoot, rootDir);
@@ -377,6 +412,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
       await replaceDirectoryAtomically({
         stagedDir: attemptRoot,
         targetDir: rootDir,
+        writeArtifacts,
         afterPromote: async () => {
           await materialized.afterPromote?.({
             env: materializedEnv,

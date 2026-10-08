@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Optional routing is owned by the sibling 0.3 executor. Standalone 0.2
+# checkouts retain dependency-free local command execution.
+case "${HAPPIER_ROUTED_EXECUTOR-}" in
+  0|off|false|disabled) ;;
+  *)
+    case "$0" in
+      /*) launcher_path=$0 ;;
+      */*) launcher_path="$PWD/$0" ;;
+      *) launcher_path=$(command -v -- "$0") || exit 1 ;;
+    esac
+    launcher_dir=${launcher_path%/*}
+    repo_root=$(CDPATH= cd -- "$launcher_dir/../../.." && pwd -P) || exit 1
+    sibling_executor="$repo_root/../0.3/apps/stack/bin/hstack-exec"
+    if [ -f "$sibling_executor" ] && [ -x "$sibling_executor" ]; then
+      exec "$sibling_executor" "--repo=$repo_root" "$@"
+    fi
+    ;;
+esac
+
+[ "${1-}" != -- ] || shift
+exec "$@"

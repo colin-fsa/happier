@@ -520,8 +520,8 @@ export type AgentCatalogEntry = Readonly<{
     processEnv?: NodeJS.ProcessEnv;
   }>) => Readonly<Record<string, unknown>> | null;
   /**
-   * Optional provider-owned adapter for probing dynamic session controls (models/modes/config options)
-   * without starting a full ACP session.
+   * Optional provider-owned adapter for probing dynamic controls and native command/skill catalogs
+   * before starting a Happier session or submitting a user turn.
    *
    * Keep provider-specific implementations in the backend folder and expose them via this catalog hook.
    */

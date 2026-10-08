@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PermissionResult } from '@/agent/permissions/permissionResult';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
+import { SESSION_CONNECTION_STATE_EVENT } from '@/api/session/connection/sessionConnectionStateEvent';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { AgentState, Metadata, PermissionMode } from '@/api/types';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
@@ -2395,6 +2396,12 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
     };
 
+    let asyncQuestionReconnectSubscribed = false;
+    const onAsyncQuestionSessionConnectionState = (state: unknown): void => {
+        if (!state || typeof state !== 'object' || !('phase' in state) || state.phase !== 'online') return;
+        startDetachedProviderProjection('async-user-input-recovery', recoverPersistedCodexAsyncQuestionAnswers);
+    };
+
     const recoverPendingCodexAsyncQuestions = async (): Promise<void> => {
         const permissionHandler = params.permissionHandler;
         if (!permissionHandler || !asyncQuestionSession) return;
@@ -4765,6 +4772,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
         startDetachedProviderProjection('async-user-input-recovery', recoverPendingCodexAsyncQuestions);
         startDetachedProviderProjection('async-user-input-recovery', recoverPersistedCodexAsyncQuestionAnswers);
+        if (asyncQuestionSession && !asyncQuestionReconnectSubscribed && typeof params.session.on === 'function') {
+            params.session.on(SESSION_CONNECTION_STATE_EVENT, onAsyncQuestionSessionConnectionState);
+            asyncQuestionReconnectSubscribed = true;
+        }
     };
 
     const prepareThreadForCliAttach = async (): Promise<string> => {
@@ -5098,6 +5109,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
             await activeTurn.promise.catch(() => undefined);
         },
         reset: async () => {
+            if (asyncQuestionReconnectSubscribed) {
+                params.session.off?.(SESSION_CONNECTION_STATE_EVENT, onAsyncQuestionSessionConnectionState);
+                asyncQuestionReconnectSubscribed = false;
+            }
             threadId = null;
             nativeReadyThreadId = null;
             currentModeId = null;
@@ -5215,7 +5230,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
             if (pendingTurn?.promise !== activeTurn.promise || !canSteerPrompt()) {
                 throw new Error('Codex app-server active turn is not steerable');
             }
-            const textOnlyInput: CodexAppServerTurnInputItem[] = [{ type: 'text', text: prompt }];
             const pendingProviderPrompt = trackPendingProviderPrompt(prompt, options);
             const clientUserMessageId = pendingProviderPrompt.localIds?.length === 1
                 ? pendingProviderPrompt.localIds[0]
@@ -5231,76 +5245,22 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 }
                 options?.onProviderPromptAccepted?.();
             };
-            const requestSteer = async (
-                input: CodexAppServerTurnInputItem[],
-                turnIdKey: 'expectedTurnId' | 'turnId',
-            ): Promise<void> => {
-                if (pendingTurn?.promise !== activeTurn.promise || !canSteerPrompt()) {
-                    throw new Error('Codex app-server active turn is not steerable');
-                }
+            try {
                 await client.request('turn/steer', {
                     ...payload,
-                    input,
-                    [turnIdKey]: expectedTurnId,
+                    input: structuredInput,
+                    expectedTurnId,
                 });
-            };
-            const requestSteerWithStaleTurnRecovery = async (
-                input: CodexAppServerTurnInputItem[],
-                turnIdKey: 'expectedTurnId' | 'turnId',
-            ): Promise<void> => {
-                try {
-                    await requestSteer(input, turnIdKey);
-                } catch (error) {
-                    if (
-                        isCodexAppServerNoActiveTurnToSteerError(error)
-                        && pendingTurn?.promise === activeTurn.promise
-                    ) {
-                        logger.debug('[codex-app-server] Native turn already inactive during steer; clearing local pending turn state');
-                        await finishPendingTurn({ flushReason: 'abort' });
-                    }
-                    throw error;
-                }
-            };
-            try {
-                await requestSteerWithStaleTurnRecovery(structuredInput, 'expectedTurnId');
             } catch (error) {
-                if (structuredInput.length > 1 && isCodexAppServerInvalidParamsError(error)) {
-                    try {
-                        await requestSteerWithStaleTurnRecovery(textOnlyInput, 'expectedTurnId');
-                    } catch (fallbackError) {
-                        clearPendingProviderPrompt(pendingProviderPrompt);
-                        throw fallbackError;
-                    }
-                    await finishAcceptedSteer();
-                    return;
+                if (
+                    isCodexAppServerNoActiveTurnToSteerError(error)
+                    && pendingTurn?.promise === activeTurn.promise
+                ) {
+                    logger.debug('[codex-app-server] Native turn already inactive during steer; clearing local pending turn state');
+                    await finishPendingTurn({ flushReason: 'abort' });
                 }
-                // Backward compatibility: older experimental app-server builds used `turnId` instead
-                // of `expectedTurnId`.
-                const message = error instanceof Error ? error.message : String(error ?? '');
-                const normalized = message.toLowerCase();
-                const looksLikeParamMismatch =
-                    (normalized.includes('expectedturnid') || normalized.includes('expected turn') || normalized.includes('turnid'))
-                    && (normalized.includes('require') || normalized.includes('missing') || normalized.includes('unknown') || normalized.includes('invalid'));
-                if (!looksLikeParamMismatch) {
-                    clearPendingProviderPrompt(pendingProviderPrompt);
-                    throw error;
-                }
-                try {
-                    await requestSteerWithStaleTurnRecovery(structuredInput, 'turnId');
-                } catch (legacyError) {
-                    if (structuredInput.length > 1 && isCodexAppServerInvalidParamsError(legacyError)) {
-                        try {
-                            await requestSteerWithStaleTurnRecovery(textOnlyInput, 'turnId');
-                        } catch (fallbackError) {
-                            clearPendingProviderPrompt(pendingProviderPrompt);
-                            throw fallbackError;
-                        }
-                        await finishAcceptedSteer();
-                        return;
-                    }
-                    clearPendingProviderPrompt(pendingProviderPrompt);
-                    throw legacyError;
-                }
+                clearPendingProviderPrompt(pendingProviderPrompt);
+                throw error;
             }
             await finishAcceptedSteer();
         },
@@ -5363,7 +5323,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
                         }
                         : null;
                     const input = await buildCodexTurnInputForPrompt(promptForAttempt, params.directory, optionsForAttempt);
-                    const textOnlyInput = [{ type: 'text', text: promptForAttempt }] satisfies CodexAppServerTurnInputItem[];
                     const baseTurnStartParams = {
                         threadId: activeThreadId,
                         input,
@@ -5390,26 +5349,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                                 ...baseTurnStartParams,
                                 ...buildCurrentLegacyPermissionParams('turn'),
                             };
-                            try {
-                                response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams);
-                            } catch (legacyError) {
-                                if (input.length > 1 && isCodexAppServerInvalidParamsError(legacyError)
-                                    && !isCodexAppServerInvalidParamsForFieldError(legacyError, 'approval_policy')) {
-                                    response = await client.request('turn/start', {
-                                        ...turnStartParams,
-                                        ...buildCurrentLegacyPermissionParams('turn'),
-                                        input: textOnlyInput,
-                                    });
-                                } else {
-                                    throw legacyError;
-                                }
-                            }
-                        } else if (input.length > 1 && isCodexAppServerInvalidParamsError(error)
-                            && !isCodexAppServerInvalidParamsForFieldError(error, 'approval_policy')) {
-                            response = await client.request('turn/start', {
-                                ...turnStartParams,
-                                input: textOnlyInput,
-                            });
+                            response = await requestWithManagedPermissionFallback(client, 'turn/start', 'turn', turnStartParams);
                         } else {
                             throw error;
                         }

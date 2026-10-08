@@ -182,6 +182,7 @@ type ClaudeUnifiedTerminalQueuedInput<Mode> = Readonly<{
    */
   providerAcceptancePending?: boolean | null;
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
 }>;
 
 type ClaudeUnifiedTerminalAcceptedInput<Mode> =
@@ -785,6 +786,7 @@ function normalizeMessageBatch<Mode>(input: ClaudeUnifiedTerminalQueuedInput<Mod
     userMessageLocalIds: input.userMessageLocalIds ?? [],
     ...(input.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
     ...(input.pendingProviderAction ? { pendingProviderAction: input.pendingProviderAction } : {}),
+    ...(input.pendingRequestedAction ? { pendingRequestedAction: input.pendingRequestedAction } : {}),
   };
 }
 
@@ -1188,6 +1190,11 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
   };
   const runtimeAbortController = new AbortController();
   const processSignalAbortController = new AbortController();
+  const terminalSubmissionSignal = AbortSignal.any([
+    runtimeAbortController.signal,
+    processSignalAbortController.signal,
+    ...(opts.signal ? [opts.signal] : []),
+  ]);
   let fatalRuntimeError: unknown = null;
   const expectedProviderResumeSessionId =
     typeof opts.expectedProviderResumeSessionId === 'string'
@@ -1837,6 +1844,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
     const hostInputInjection: TerminalInputInjectionV1 = {
       hostKind: hostResolution.adapter.kind,
       injectUserPrompt: async (input, writeBoundary) => {
+        if (terminalSubmissionSignal.aborted) {
+          return { status: 'failed', reason: 'no_target', phase: 'before_write', duplicateRisk: 'none', recoverable: false };
+        }
         // Lane X: every text we attempt to write is recorded so a later leftover composer draft
         // can be exact-match classified as OUR OWN residue (vs an untouchable genuine user draft).
         ownComposerTextLog.record(input.text);
@@ -1852,9 +1862,10 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
           : undefined;
         let result: TerminalInputInjectionResult;
         try {
+          const sessionInput = { ...input, signal: terminalSubmissionSignal };
           result = adapterWriteBoundary
-            ? await hostResolution.adapter.injectUserPrompt(activeHandle, input, adapterWriteBoundary)
-            : await hostResolution.adapter.injectUserPrompt(activeHandle, input);
+            ? await hostResolution.adapter.injectUserPrompt(activeHandle, sessionInput, adapterWriteBoundary)
+            : await hostResolution.adapter.injectUserPrompt(activeHandle, sessionInput);
         } catch {
           result = {
             status: 'failed',
@@ -2165,6 +2176,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               userMessageLocalIds: batch.userMessageLocalIds ?? [],
               ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
               ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+              ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
             });
           }
         },
@@ -2340,6 +2352,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
             userMessageLocalIds: batch.userMessageLocalIds ?? [],
             ...(batch.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
             ...(batch.pendingProviderAction ? { pendingProviderAction: batch.pendingProviderAction } : {}),
+            ...(batch.pendingRequestedAction ? { pendingRequestedAction: batch.pendingRequestedAction } : {}),
           });
         },
         onProviderAcceptancePendingPrompt: (batch) => {
@@ -2663,6 +2676,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
       throw fatalRuntimeError;
     }
   } finally {
+    runtimeAbortController.abort('claude-unified-runtime-disposed');
     arbiterForResumeSummaryCompaction = null;
     if (turnInterruptRegistered) {
       opts.setTurnInterrupt?.(null);

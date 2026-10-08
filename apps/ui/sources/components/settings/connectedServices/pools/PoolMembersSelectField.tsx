@@ -6,7 +6,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { computePoolMembershipDiff } from './commitPoolMembershipBatch';
-import { PoolMultiSelectField } from './PoolMultiSelectField';
+import { MultiSelectField } from '@/components/ui/forms/dropdown/MultiSelectField';
 
 /** A profile eligible for pool membership. */
 export type PoolMembershipCandidate = Readonly<{
@@ -68,7 +68,7 @@ export const PoolMembersSelectField = React.memo(function PoolMembersSelectField
     }, [candidates, onCommit, selectedProfileIds]);
 
     return (
-        <PoolMultiSelectField
+        <MultiSelectField
             candidates={candidates.map((candidate) => ({ id: candidate.profileId, title: candidate.title, subtitle: candidate.subtitle }))}
             selectedIds={selectedProfileIds}
             onCommit={commitDraft}

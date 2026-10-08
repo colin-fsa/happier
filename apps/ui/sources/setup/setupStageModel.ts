@@ -5,7 +5,7 @@ import {
     readCliAcquisitionFailurePhase,
     type CliAcquisitionPhase,
 } from '@happier-dev/protocol';
-import { SETUP_SERVICE_STEP_STATUS_KEY } from '@/components/systemTasks/resolveSystemTaskStepLabel';
+import { resolveSystemTaskStepLabel, SETUP_SERVICE_STEP_STATUS_KEY } from '@/components/systemTasks/resolveSystemTaskStepLabel';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
@@ -235,7 +235,7 @@ function resolveOwnCliUpdateCommand(run: SystemTaskRunState | null, facts: Setup
     return null;
 }
 
-function blockedStatus(code: string, facts: SetupLocalFacts, ownCliUpdateCommand: string | null): string {
+function blockedStatus(code: string, facts: SetupLocalFacts, ownCliUpdateCommand: string | null, run: SystemTaskRunState | null): string {
     if (code === 'cli_below_setup_floor' && facts.cliUpdateFailure) return facts.cliUpdateFailure;
     // RV-9 — this computer follows its default channel (D2), whose newest CLI is still below the
     // floor. No Update can fix that here, so the sentence names the channel it is waiting on.
@@ -250,7 +250,16 @@ function blockedStatus(code: string, facts: SetupLocalFacts, ownCliUpdateCommand
     if (code === 'cli_own_below_setup_floor' && ownCliUpdateCommand) {
         return t('setupSurface.blockedCliOwnOutdatedStatus', { command: ownCliUpdateCommand });
     }
-    return cliAcquisitionFailureStatus(code) ?? t(BLOCKED_STATUS_KEY[code] ?? 'setupSurface.blockedStatusFallback');
+    const acquisitionFailure = cliAcquisitionFailureStatus(code);
+    if (acquisitionFailure) return acquisitionFailure;
+    const key = BLOCKED_STATUS_KEY[code] ?? 'setupSurface.blockedStatusFallback';
+    // Generic CLI errors also come from setup writes. Only the ambient read/start failure has
+    // no executor step; a failed setup run names the exact current step that Details displays.
+    if (key === 'setupSurface.blockedCliFailedStatus' && facts.entry === 'setup' && !facts.startFailure) {
+        const step = resolveSystemTaskStepLabel(run?.currentStepId ?? null, { fallbackToStepId: false });
+        return step ? t('setupSurface.blockedStepStatus', { step }) : t('setupSurface.blockedStatusFallback');
+    }
+    return t(key);
 }
 
 type SetupServiceStepId = keyof typeof SETUP_SERVICE_STEP_STATUS_KEY;
@@ -310,7 +319,7 @@ export function deriveSetupStageModel(run: SystemTaskRunState | null, facts: Set
             title: blocked.canceled ? t('setupSurface.canceledTitle') : t('setupSurface.blockedTitle'),
             statusSentence: blocked.canceled
                 ? t('setupSurface.canceledStatus')
-                : blockedStatus(blocked.code, facts, resolveOwnCliUpdateCommand(run, facts)),
+                : blockedStatus(blocked.code, facts, resolveOwnCliUpdateCommand(run, facts), run),
             stepAnnouncement,
         };
     }

@@ -109,8 +109,14 @@ test.describe('ui e2e: desktop setup veil screens (R11)', () => {
             await page.reload();
             await expect(page.getByTestId('desktop-setup-panel:blocked')).toBeVisible({ timeout: 180_000 });
             await expect(page.getByTestId('desktop-setup-panel:retry')).toBeVisible();
+            const headline = page.getByTestId('desktop-setup-panel:status');
+            await expect(headline).toContainText('Installing the background service');
+            await expect(headline).not.toContainText('reading');
             await shot(page, `${theme}-desktop-3-blocked`);
             await page.getByTestId('desktop-setup-panel:details').click();
+            const failedStep = await page.getByTestId('system-task-step-label').innerText();
+            await expect(headline).toContainText(failedStep);
+            await expect(page.getByTestId('desktop-setup-panel:diagnostic')).toHaveText('Access is denied.');
             await shot(page, `${theme}-desktop-4-blocked-details`);
 
             // The rest of the app stays usable beside it: the sidebar still navigates.

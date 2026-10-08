@@ -742,7 +742,7 @@ describe('useCreateNewSession permission seeding', () => {
                 agentType: 'opencode' as any,
                 permissionMode: 'default' as PermissionMode,
                 modelMode: 'gpt' as any,
-                promptStore: createNewSessionPromptStore('see @session:peer-abc123'),
+                promptStore: createNewSessionPromptStore('see @session:peer-abc123 $project-check'),
                 resumeSessionId: '',
                 agentNewSessionOptions: null,
                 machineEnvPresence,
@@ -769,6 +769,10 @@ describe('useCreateNewSession permission seeding', () => {
                 token: '@session:peer-abc123',
                 start: 4,
                 end: 24,
+            }, {
+                kind: 'happier.skill',
+                ref: 'skill:vendor:opencode:project-check',
+                token: '$project-check',
             }],
         };
 
@@ -780,7 +784,7 @@ describe('useCreateNewSession permission seeding', () => {
 
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
-            initialMessageText: 'see @session:peer-abc123',
+            initialMessageText: 'see @session:peer-abc123 $project-check',
             metaOverrides: {
                 model: 'gpt',
                 happierStructuredInputV1: envelope,

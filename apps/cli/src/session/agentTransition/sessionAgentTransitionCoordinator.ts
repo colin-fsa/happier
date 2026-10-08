@@ -20,7 +20,6 @@ import {
 import {
   projectCurrentAgentSessionView,
   resolveAgentIdFromSessionMetadata,
-  resolvePermissionIntentFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
 
@@ -34,6 +33,7 @@ import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionSe
 import type { Credentials } from '@/persistence';
 import { resolveTrustedSessionAttachmentLocalImagePaths } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { admitSessionUserMessageToPendingQueue } from '@/session/services/admitSessionUserMessage';
+import { resolveSessionMessagePermissionIntent } from '@/session/services/resolveSessionMessagePermissionIntent';
 import { requestInactiveSessionResume } from '@/session/services/requestInactiveSessionResume';
 import { requestSessionStop } from '@/session/services/requestSessionStop';
 import { resolveSessionUserMessageRequestedAction } from '@/session/services/resolveSessionUserMessageRequestedAction';
@@ -278,17 +278,24 @@ async function admitInputAndActivateTarget(params: Readonly<{
   mode: SessionStoredContentEncryptionMode;
   ctx: Parameters<typeof encryptSessionPayload>[0]['ctx'];
   sanitizedMeta: ReturnType<typeof sanitizeSessionUserMessageSendMeta>;
-  /** The committed target current view — the source of permission intent and the resume basis. */
+  /** The committed target current view — the permission fallback and resume basis. */
   targetMetadata: Record<string, unknown>;
   /** Proof that the target current view is committed; the source of every arm here. */
   committed: SessionAgentTransitionCurrentViewCommitted;
 }>): Promise<SessionAgentTransitionResultV1> {
   const { committed, localId, request } = params;
 
-  // Permission intent is Session-global safety intent, carried across the
-  // transition rather than reset. `default` is the same fallback the ordinary
-  // send path uses when metadata declares none.
-  const permissionIntent = resolvePermissionIntentFromSessionMetadata(params.targetMetadata)?.intent ?? 'default';
+  // The frozen user input may carry a newer Session-global permission choice
+  // that has not been published yet (`next_prompt`). The ordinary message
+  // intent owner keeps it authoritative; older inputs still use the committed
+  // post-stop metadata, rather than a stale preflight snapshot.
+  const permission = resolveSessionMessagePermissionIntent({
+    permissionModeOverride: typeof request.input.meta.permissionMode === 'string'
+      ? request.input.meta.permissionMode
+      : undefined,
+    decryptedMetadata: params.targetMetadata,
+  });
+  if (!permission.ok) return committed.committed('input_rejected');
   const admission = await admitSessionUserMessageToPendingQueue({
     credentials: params.credentials,
     sessionId: request.sessionId,
@@ -297,7 +304,7 @@ async function admitInputAndActivateTarget(params: Readonly<{
     localId,
     text: request.input.text,
     meta: params.sanitizedMeta,
-    permissionIntent,
+    permissionIntent: permission.permissionIntent,
     requestedAction: resolveSessionUserMessageRequestedAction({ deliveryIntent: 'runtime_bootstrap' }),
     ...(request.selection.modelId ? { modelId: request.selection.modelId } : {}),
   });
@@ -492,6 +499,24 @@ export async function runSessionAgentTransition(params: Readonly<{
   const localId = readPendingLocalId(request.input.localId);
   // No usable correlation id, so the transition was never dispatched at all.
   if (!localId) return rejectUndispatchedSessionAgentTransition('unsupported_operation');
+
+  // Generic user-message metadata is an opaque wire record. Validate an
+  // explicitly authored permission through the existing intent owner before
+  // any source effect; absence preserves the incumbent metadata fallback.
+  if (Object.prototype.hasOwnProperty.call(request.input.meta, 'permissionMode')) {
+    const permissionModeOverride = request.input.meta.permissionMode;
+    if (typeof permissionModeOverride !== 'string' || permissionModeOverride.trim().length === 0) {
+      return rejectUndispatchedSessionAgentTransition('unsupported_operation');
+    }
+    try {
+      resolveSessionMessagePermissionIntent({ permissionModeOverride, decryptedMetadata: null });
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'invalid_arguments') {
+        return rejectUndispatchedSessionAgentTransition('unsupported_operation');
+      }
+      throw error;
+    }
+  }
 
   // One effect ledger per invocation. The handle in scope is the proof of how
   // far the transition got, and it is the ONLY source of result arms. This tree

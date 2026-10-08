@@ -6,6 +6,7 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
+import { ActionOperationDetail } from './ActionOperationDetail';
 import { ItemGroupRowPositionProvider } from '@/components/ui/lists/ItemGroupRowPosition';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +73,16 @@ function runningOperation(): ActionOperationSnapshotV1 {
 }
 
 describe('ActionOperationLedger', () => {
+    it('retains shared stopping feedback when Activity is reopened and observes the cancellation cutoff', async () => {
+        const snapshot = { ...runningOperation(), actionId: 'session.direct.takeover_persist',
+            progress: { kind: 'phase' as const, phase: 'cancelling', label: 'Stopping import' } };
+        const onCancel = vi.fn();
+        const screen = await renderScreen(<ActionOperationDetail operation={snapshot} observation="available" onClose={() => {}} onCancel={onCancel} />);
+        expect(screen.findByTestId('action-operation-stop')?.props.disabled).toBe(true);
+        await screen.update(<ActionOperationDetail operation={{ ...snapshot, cancellation: 'unsupported', progress: { kind: 'phase', phase: 'starting', label: 'Starting' } }} observation="available" onClose={() => {}} onCancel={onCancel} />);
+        expect(screen.findByTestId('action-operation-stop')).toBeNull();
+    });
+
     it('distributes a parent ItemGroup row across every rendered operation row', async () => {
         const { ActionOperationRows } = await import('./ActionOperationLedger');
         const secondOperation = { ...runningOperation(), operationId: 'operation-2' };
@@ -267,7 +278,6 @@ describe('ActionOperationLedger', () => {
     });
 
     it('renders a successful handoff cleanup warning and terminal Done affordance', async () => {
-        const { ActionOperationDetail } = await import('./ActionOperationDetail');
         const operation: ActionOperationSnapshotV1 = {
             ...runningOperation(),
             revision: 7,
@@ -297,7 +307,6 @@ describe('ActionOperationLedger', () => {
     });
 
     it('keeps an active detail collapsible and exposes its acknowledged Stop action', async () => {
-        const { ActionOperationDetail } = await import('./ActionOperationDetail');
         const onCancel = vi.fn();
         const screen = await renderScreen(
             <ActionOperationDetail

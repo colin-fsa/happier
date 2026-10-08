@@ -171,6 +171,44 @@ describe('CodexLikePermissionHandler', () => {
     }
   });
 
+  it('keeps a structured question answerable until its completed state is acknowledged', async () => {
+    const session = new FakeSession();
+    const originalUpdate = session.updateAgentState.bind(session);
+    let rejectCompletion = true;
+    let rejectCompletionWrite: ((error: Error) => void) | null = null;
+    vi.spyOn(session, 'updateAgentState').mockImplementation((updater) => {
+      const next = updater(session.agentState);
+      if (rejectCompletion && next.completedRequests?.['question-ack']) {
+        return new Promise<void>((_resolve, reject) => { rejectCompletionWrite = reject; });
+      }
+      return originalUpdate(updater);
+    });
+    const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
+    const pending = handler.handleToolCall('question-ack', 'AskUserQuestion', {
+      questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }] }],
+    });
+    const rpc = session.rpcHandlerManager.handlers.get('session.structuredQuestion.respond.v1');
+    expect(rpc).toBeDefined();
+
+    const firstAnswer = rpc!({
+      id: 'question-ack',
+      structuredAnswersV1: { 'Proceed?': ['Yes'] },
+    });
+    expect(await settledState(firstAnswer)).toBe('pending');
+    expect(await settledState(pending)).toBe('pending');
+    expect(rejectCompletionWrite).not.toBeNull();
+    rejectCompletionWrite!(new Error('session socket disconnected'));
+    await expect(firstAnswer).rejects.toBeDefined();
+    expect(await settledState(pending)).toBe('pending');
+    expect(session.agentState.requests['question-ack']).toBeDefined();
+
+    rejectCompletion = false;
+    await rpc!({ id: 'question-ack', structuredAnswersV1: { 'Proceed?': ['Yes'] } });
+    await expect(pending).resolves.toEqual({ decision: 'approved', answers: { 'Proceed?': ['Yes'] } });
+    expect(session.agentState.requests['question-ack']).toBeUndefined();
+    expect(session.agentState.completedRequests['question-ack']?.structuredAnswersV1).toEqual({ 'Proceed?': ['Yes'] });
+  });
+
   it('prompts for write-like tools in safe-yolo mode', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });

@@ -30,7 +30,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
 
     let resolved: { command: string; args: string[] };
     try {
-      resolved = resolveCodexAcpSpawn();
+      resolved = resolveCodexAcpSpawn({ env: runtimeSelection.environmentVariables });
     } catch (error) {
       return {
         ok: false,
@@ -41,7 +41,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
       };
     }
 
-    const availability = validateCodexAcpSpawnAvailability(resolved);
+    const availability = validateCodexAcpSpawnAvailability(resolved, { env: runtimeSelection.environmentVariables });
     if (availability.ok) return { ok: true };
 
     if (resolved.command === 'codex-acp') {

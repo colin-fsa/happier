@@ -113,6 +113,7 @@ export const UI_FEATURE_REGISTRY = {
     'connectedServices.autoQuotaReset': { settingsToggle: undefined },
     'connectedServices.autoDisablePlanInvalid': { settingsToggle: undefined },
     'connectedServices.poolQuotaLimitSelection': { settingsToggle: undefined },
+    'connectedServices.poolExpiryFirst': { settingsToggle: undefined },
     'connectedServices.accountFallback': {
         settingsToggle: undefined,
     },

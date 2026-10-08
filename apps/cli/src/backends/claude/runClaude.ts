@@ -1085,6 +1085,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             userMessageLocalId: message.localId ?? null,
             providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
             ...(deliveryInfo?.pendingProviderAction ? { pendingProviderAction: deliveryInfo.pendingProviderAction } : {}),
+            ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
         };
 
         // Structured Happier user messages must be treated as plain text (no special command parsing).
@@ -2029,6 +2030,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         userMessageLocalId: message.localId ?? null,
                         providerAcceptancePending: deliveryInfo?.providerAcceptancePending === true,
                         ...(deliveryInfo?.pendingProviderAction ? { pendingProviderAction: deliveryInfo.pendingProviderAction } : {}),
+                        ...(deliveryInfo?.pendingRequestedAction ? { pendingRequestedAction: deliveryInfo.pendingRequestedAction } : {}),
                     };
 
                     if (!structuredRouting) {

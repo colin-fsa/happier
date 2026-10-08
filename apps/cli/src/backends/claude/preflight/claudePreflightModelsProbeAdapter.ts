@@ -2,6 +2,7 @@ import type { AgentModelDescriptor } from '@happier-dev/agents';
 
 import type { PreflightSessionControlsProbeAdapter } from '@/capabilities/probes/preflightSessionControlsProbeAdapterTypes';
 import { resolveClaudeModelCatalogResolution } from '@/backends/claude/models/resolveClaudeModelCatalog';
+import { probeClaudeCatalogs } from './probeClaudeCatalogs';
 import {
   isClaudeModelOptionSupportedByInstalledRuntime,
   probeClaudeInstalledRuntimeCapabilities,
@@ -31,6 +32,8 @@ function toProbeRawModel(
  * effort tiers.
  */
 export const claudePreflightModelsProbeAdapter: PreflightSessionControlsProbeAdapter = {
+  connectedServiceAuth: 'materialized-env-for-catalogs',
+  probeCatalogsRaw: probeClaudeCatalogs,
   modelProbeCachePolicy: 'provider-owned',
   failureCacheStrategy: 'cooldown',
   probeModelsRaw: async ({ cwd, timeoutMs, connectedServices, credentials, accountSettings, profileId, processEnv, bypassCache }) => {

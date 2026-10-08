@@ -46,6 +46,102 @@ function waitForSteerWork() {
 }
 
 describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
+  it('preserves native command syntax and resolves selections without consuming replay context', async () => {
+    const { session, emitUserMessage, setMetadataSnapshot } = createSessionHarness();
+    const { queue } = createQueue();
+    setMetadataSnapshot({ replaySeedV1: {
+      v: 1, seedText: 'SEED', sourceSessionId: 'parent', sourceCutoffSeqInclusive: 3, createdAtMs: 123,
+    } });
+    const delivered: unknown[] = [];
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        isProviderNativeCommand: async (text) => text.startsWith('/project'),
+        listSkills: async () => ({ supported: true, skills: [{ id: 'review', name: 'review', path: '/skills/review/SKILL.md', origin: 'opencode_native' }] }),
+        steerText: async (text, options, callbacks) => {
+          delivered.push({ text, options });
+          callbacks?.onProviderPromptAccepted?.();
+        },
+      },
+    });
+    await emitUserMessage({
+      content: { text: '/project $review' }, localId: 'native-command-steer',
+      meta: { happierStructuredInputV1: {
+        v: 1, mentions: [{ kind: 'happier.skill', ref: 'skill:review', token: '$review', start: 9, end: 16 }],
+      } },
+    });
+    expect(delivered).toEqual([{ text: '/project $review', options: expect.objectContaining({
+      metadata: { happierStructuredInputV1: { v: 1, skillMentions: [expect.objectContaining({ name: 'review' })] } },
+    }) }]);
+    expect(session.getMetadataSnapshot().replaySeedV1.seedText).toBe('SEED');
+  });
+
+  it('resolves native skill references and preserves their metadata through in-flight dispatch', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    const delivered: unknown[] = [];
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        listSkills: async () => ({ supported: true, skills: [{ id: 'review', name: 'review', path: '/skills/review/SKILL.md', origin: 'opencode_native' }] }),
+        steerText: async (text, options) => {
+          delivered.push({ text, options });
+        },
+      },
+    });
+    await emitUserMessage({
+      content: { text: 'Use $review' },
+      localId: 'native-skill-steer',
+      meta: { happierStructuredInputV1: {
+        v: 1,
+        mentions: [{ kind: 'happier.skill', ref: 'skill:review', token: '$review', start: 4, end: 11 }],
+      } },
+    });
+    expect(delivered).toEqual([{ text: 'Use $review', options: expect.objectContaining({
+      localId: 'native-skill-steer',
+      metadata: { happierStructuredInputV1: {
+        v: 1,
+        skillMentions: [expect.objectContaining({ name: 'review', path: '/skills/review/SKILL.md' })],
+      } },
+    }) }]);
+    expect(queue.size()).toBe(0);
+  });
+
+  it('keeps an unresolved native selection queued instead of accepting a text-only steer', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue } = createQueue();
+    const delivered: string[] = [];
+    const meta = { happierStructuredInputV1: {
+      v: 1,
+      mentions: [{ kind: 'happier.skill', ref: 'skill:removed', token: '$removed', start: 4, end: 12 }],
+    } };
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        listSkills: async () => ({ supported: true, skills: [] }),
+        steerText: async (text) => { delivered.push(text); },
+      },
+    });
+    await emitUserMessage({ content: { text: 'Use $removed' }, localId: 'unresolved-steer', meta });
+    expect(delivered).toEqual([]);
+    expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({ message: { text: 'Use $removed', meta } });
+  });
+
   it('executes a claimed send action by queueing without steering an active turn', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
@@ -155,9 +251,10 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     });
   });
 
-  it('proves no provider effect when a claimed steer is unavailable before invocation', async () => {
+  it.each(['idle', 'unsupported', 'ended_before_dispatch', 'conditional_ended_before_dispatch'] as const)('queues a non-interrupting steer when live steering is unavailable (%s)', async (state) => {
+    let active = state !== 'idle';
     const { session, emitUserMessage } = createSessionHarness();
-    const { queue, spyPush } = createQueue();
+    const { queue } = createQueue();
     const steerText = vi.fn(async () => {});
 
     registerPermissionModeMessageQueueBinding({
@@ -166,25 +263,38 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
       getCurrentPermissionMode: () => 'default',
       setCurrentPermissionMode: () => {},
       inFlightSteer: {
-        isTurnInFlight: () => true,
-        supportsInFlightSteer: () => false,
+        isTurnInFlight: () => active,
+        supportsInFlightSteer: () => state !== 'unsupported',
         steerText,
       },
     });
 
     emitUserMessage(
-      { content: { text: 'conditional steer' }, localId: 'pending-conditional-steer', meta: {} },
-      { seq: 12, providerAcceptancePending: true, pendingProviderAction: 'steer' },
+      { content: { text: 'non-interrupting steer' }, localId: 'pending-explicit-steer', meta: {} },
+      { seq: 12, providerAcceptancePending: true, pendingProviderAction: 'steer',
+        pendingRequestedAction: { v: 1, kind: state === 'conditional_ended_before_dispatch' ? 'steer_if_active' : 'steer_now' } },
     );
+    if (state.endsWith('ended_before_dispatch')) active = false;
     await waitForSteerWork();
 
     expect(steerText).not.toHaveBeenCalled();
-    expect(spyPush).not.toHaveBeenCalled();
-    expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['pending-conditional-steer'],
-      reason: 'steering_unavailable',
-      providerEffect: 'none',
+    if (state === 'conditional_ended_before_dispatch') {
+      expect(queue.size()).toBe(0);
+      expect(session.blockPendingMessageDelivery).toHaveBeenCalledWith({
+        localIds: ['pending-explicit-steer'], reason: 'steering_unavailable', providerEffect: 'none',
+      });
+      return;
+    }
+    expect(queue.size()).toBe(1);
+    const next = await queue.waitForMessagesAndGetAsString();
+    expect(next).toMatchObject({
+      message: { text: 'non-interrupting steer', localId: 'pending-explicit-steer' },
+      userMessageLocalIds: ['pending-explicit-steer'],
+      providerAcceptancePending: true,
+      pendingProviderAction: 'send',
+      pendingRequestedAction: { v: 1, kind: 'steer_now' },
     });
+    expect(session.blockPendingMessageDelivery).not.toHaveBeenCalled();
   });
 
   it('executes a claimed interrupt_and_send action by cancelling before queueing the send', async () => {
@@ -393,7 +503,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
         'Reviewed the change.',
         '</happier_execution_run_notification>',
       ].join('\n'),
-      { localId: 'execution-run-completion', localIds: ['execution-run-completion'] },
+      expect.objectContaining({ localId: 'execution-run-completion', localIds: ['execution-run-completion'] }),
     );
     expect(spyPush).not.toHaveBeenCalled();
     expect(spyIsolate).not.toHaveBeenCalled();
@@ -1011,7 +1121,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight config-delta appl
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(calls).toEqual(['applyConfig:read-only', 'steerText']);
-    expect(steerText).toHaveBeenCalledWith('mode change steer');
+    expect(steerText).toHaveBeenCalledWith('mode change steer', { metadata: { permissionMode: 'read-only' } });
     expect(spyPush).not.toHaveBeenCalled();
   });
 
@@ -1038,7 +1148,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight config-delta appl
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(steerText).toHaveBeenCalledWith('scheduled mode steer');
+    expect(steerText).toHaveBeenCalledWith('scheduled mode steer', { metadata: { permissionMode: 'read-only' } });
     expect(spyPush).not.toHaveBeenCalled();
   });
 

@@ -178,6 +178,7 @@ describe('Grok ACP backend options', () => {
     expect(steer?.buildParams({
       sessionId: 'grok-session-1',
       prompt: 'change direction',
+      content: [{ type: 'text', text: 'change direction' }],
       deliveryIdentity: {
         localId: 'pending-message-1',
         localIds: ['pending-message-1'],
@@ -187,6 +188,7 @@ describe('Grok ACP backend options', () => {
     })).toEqual({
       sessionId: 'grok-session-1',
       text: 'change direction',
+      content: [{ type: 'text', text: 'change direction' }],
       interjectionId: 'pending-message-1',
     });
     expect(steer?.isAccepted({ status: 'queued' })).toBe(true);

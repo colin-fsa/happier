@@ -924,7 +924,7 @@ describe('runGemini input consumer migration', () => {
     expect(fakeBackend.cancel).not.toHaveBeenCalled();
   });
 
-  it('reports an unsupported active steer as rejected before provider effect', async () => {
+  it.each(['steer_now', 'steer_if_active'] as const)('handles %s without interrupting the active Gemini turn', async (kind) => {
     const session = createFakeSession();
     setFakeSession(session);
     waitForNextInputMock.mockReset();
@@ -941,6 +941,15 @@ describe('runGemini input consumer migration', () => {
         },
         isolate: false,
         hash: 'mode-hash-1',
+      })
+      .mockImplementationOnce(async () => {
+        const queue = createSessionProviderInputConsumerMock.mock.calls[0]?.[0].messageQueue;
+        if (kind === 'steer_if_active') {
+          expect(queue?.size()).toBe(0);
+          return null;
+        }
+        expect(queue?.size()).toBe(1);
+        return queue ? await queue.waitForMessagesAndGetAsString() : null;
       })
       .mockResolvedValueOnce(null);
 
@@ -959,6 +968,7 @@ describe('runGemini input consumer migration', () => {
       }, {
         seq: 52,
         pendingProviderAction: 'steer',
+        pendingRequestedAction: { v: 1, kind },
         providerAcceptancePending: true,
       });
       return { kind: 'completed', stopReason: 'end_turn' };
@@ -967,11 +977,20 @@ describe('runGemini input consumer migration', () => {
     const { runGemini } = await import('./runGemini');
     await expect(runGemini({ credentials })).resolves.toBeUndefined();
 
-    expect(providerInputOutcomeObserverMock).toHaveBeenCalledWith({
-      kind: 'rejected_before_effect',
-      localId: 'local-gemini-steer',
-      reason: 'steering_unavailable',
+    if (kind === 'steer_if_active') {
+      expect(providerInputOutcomeObserverMock).toHaveBeenCalledWith({
+        kind: 'rejected_before_effect', localId: 'local-gemini-steer', reason: 'steering_unavailable',
+      });
+      expect(fakeBackend.cancel).not.toHaveBeenCalled();
+      return;
+    }
+    expect(sendGeminiPromptWithRetryMock.mock.calls[1]?.[0]).toMatchObject({
+      prompt: expect.stringContaining('exact active steer'),
     });
+    expect(fakeBackend.cancel).not.toHaveBeenCalled();
+    expect(providerInputOutcomeObserverMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'rejected_before_effect', localId: 'local-gemini-steer',
+    }));
     expect(session.blockPendingMessageDelivery).not.toHaveBeenCalled();
   });
 

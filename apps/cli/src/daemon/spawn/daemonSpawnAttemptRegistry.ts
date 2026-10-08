@@ -13,7 +13,7 @@ type SpawnAttemptRecord = Readonly<{
   expiresAtMs: number;
 }>;
 
-function normalizeSpawnNonce(value: unknown): string {
+export function normalizeSpawnNonce(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 

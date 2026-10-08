@@ -106,29 +106,12 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
     let moveToFolderItem: DropdownMenuItem | null = null;
     for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'rowMenu' })) {
         if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
-            const folderMoveMenuItems = params.folderMoveMenuItems ?? [];
-            if (params.canMoveToFolder === false && folderMoveMenuItems.length === 0) {
-                continue;
-            }
-            if (params.canMoveToFolder !== false) {
-                moveToFolderItem = {
-                    id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
-                    title: t('sessionsList.moveToFolder'),
-                    icon: <Icon name="folder" size={16} color={params.iconColor} />,
-                    disabled: folderMoveMenuItems.every((item) => item.disabled === true),
-                };
-                continue;
-            }
+            if (params.canMoveToFolder === false) continue;
             moveToFolderItem = {
                 id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
                 title: t('sessionsList.moveToFolder'),
                 icon: <Icon name="folder" size={16} color={params.iconColor} />,
-                disabled: !folderMoveMenuItems.some((item) => item.disabled !== true),
-                submenu: {
-                    items: folderMoveMenuItems,
-                    search: folderMoveMenuItems.length > 8,
-                    searchPlaceholder: t('sessionsList.moveToFolder'),
-                },
+                disabled: false,
             };
             continue;
         }

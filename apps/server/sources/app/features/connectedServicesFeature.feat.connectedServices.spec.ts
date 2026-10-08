@@ -15,6 +15,7 @@ describe("resolveConnectedServicesFeature", () => {
             autoQuotaReset: { enabled: true },
             autoDisablePlanInvalid: { enabled: true },
             poolQuotaLimitSelection: { enabled: true },
+            poolExpiryFirst: { enabled: true },
         });
         expect(feature.capabilities?.connectedServices).toEqual({
             credentialDelete: { revisionGuard: true },
@@ -38,6 +39,7 @@ describe("resolveConnectedServicesFeature", () => {
             autoQuotaReset: { enabled: true },
             autoDisablePlanInvalid: { enabled: true },
             poolQuotaLimitSelection: { enabled: true },
+            poolExpiryFirst: { enabled: true },
         });
     });
 
@@ -56,6 +58,7 @@ describe("resolveConnectedServicesFeature", () => {
             autoQuotaReset: { enabled: true },
             autoDisablePlanInvalid: { enabled: true },
             poolQuotaLimitSelection: { enabled: true },
+            poolExpiryFirst: { enabled: true },
         });
     });
 });

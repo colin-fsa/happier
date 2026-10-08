@@ -321,6 +321,7 @@ jobs:
               - 'apps/ui/src-tauri/**'
               - 'scripts/install/**'
               - 'scripts/release/installers/**'
+              - 'scripts/release/installers_windows_payload_promotion.contract.test.mjs'
               - 'scripts/pipeline/release/lib/minisign*'
               - 'scripts/pipeline/tauri/**'
             binary_smoke:
@@ -658,7 +659,6 @@ jobs:
     env:
       HAPPIER_UI_VITEST_PART: ${{ matrix.part }}
       HAPPIER_UI_VITEST_PARTS: "4"
-      HAPPIER_UI_VITEST_SHARDS: "8"
       VITEST_UI_MAX_FORKS: "3"
     steps:
       - name: Checkout

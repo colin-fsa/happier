@@ -54,6 +54,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [sessionListActiveColorMode, setSessionListActiveColorMode] = useSettingMutable('sessionListActiveColorModeV1');
     const [sessionListAttentionPromotionMode, setSessionListAttentionPromotionMode] = useSettingMutable('sessionListAttentionPromotionModeV1');
     const [sessionListAttentionStandingDefault, setSessionListAttentionStandingDefault] = useSettingMutable('sessionListAttentionStandingDefaultV1');
+    const [sessionReminderAutoClearOnOpen, setSessionReminderAutoClearOnOpen] = useSettingMutable('sessionReminderAutoClearOnOpen');
     const [sessionListWorkingPlacementMode, setSessionListWorkingPlacementMode] = useSettingMutable('sessionListWorkingPlacementModeV1');
     const [workspacePathDisplayModeV1, setWorkspacePathDisplayModeV1] = useSettingMutable('workspacePathDisplayModeV1');
     const [workspaceFaviconsEnabled, setWorkspaceFaviconsEnabled] = useSettingMutable('workspaceFaviconsEnabled');
@@ -855,6 +856,21 @@ export default React.memo(function SessionSettingsScreen() {
                     }}
                     items={sessionListAttentionPromotionModeItems}
                     onSelect={handleSessionListAttentionPromotionModeSelect}
+                />
+                <Item
+                    testID="settings-session-reminderAutoClearOnOpen-item"
+                    title={t('settingsSession.sessionList.reminderAutoClearOnOpenTitle')}
+                    subtitle={t('settingsSession.sessionList.reminderAutoClearOnOpenSubtitle')}
+                    icon={<Icon name="clock" size={29} color={theme.colors.accent.blue} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-session-reminderAutoClearOnOpen-toggle"
+                            value={sessionReminderAutoClearOnOpen !== false}
+                            onValueChange={setSessionReminderAutoClearOnOpen}
+                        />
+                    }
+                    showChevron={false}
+                    onPress={() => setSessionReminderAutoClearOnOpen(sessionReminderAutoClearOnOpen === false)}
                 />
                 <Item
                     testID="settings-session-attentionStandingDefault-item"

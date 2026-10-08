@@ -76,6 +76,7 @@ const ATTENTION_REASON_PRIORITY: Readonly<Record<SessionListAttentionPromotionRe
     // Standing is the floor of the band: it only reaches sessions whose own
     // signals place them nowhere, so it always sorts behind every earned reason.
     standing: 5,
+    reminder: 5,
 };
 
 function normalizeRetainedKeys(retained: ReadonlySet<string> | ReadonlyArray<string> | null | undefined): ReadonlySet<string> {
@@ -196,7 +197,7 @@ function createAttentionCandidate(params: Readonly<{
     // floor fires the moment `unread` clears and reason priority drops the row
     // to the bottom of the band under the reader. Every earned reason still
     // wins over a retained one — only the floor yields.
-    const resolvedReason = reason === 'standing' && retainedReason
+    const resolvedReason = (reason === 'standing' || reason === 'reminder') && retainedReason
         ? retainedReason
         : reason ?? retainedReason;
     if (!resolvedReason) return null;

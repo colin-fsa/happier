@@ -367,6 +367,7 @@ export class ApiMachineClient {
         let additionalAllowedWriteDirs: string[] = [];
         this.rpcLifecycleRegistrations.push(registerSessionHandlers(this.rpcHandlerManager, machineRpcWorkingDirectory, {
             accessPolicy: filesystemAccessPolicy,
+            hasSessionAgentTransition: () => this.rpcHandlerManager.hasHandler(RPC_METHODS.SESSION_AGENT_TRANSITION),
             setAdditionalAllowedReadDirs: (dirs) => {
                 additionalAllowedReadDirs = dirs;
             },

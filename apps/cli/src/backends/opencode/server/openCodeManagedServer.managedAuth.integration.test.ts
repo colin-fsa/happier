@@ -1,14 +1,15 @@
-import { statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 
 import { startManagedOpenCodeServer } from './openCodeManagedServer';
+import { openCodePreflightSessionControlsProbeAdapter } from '../preflight/openCodePreflightSessionControlsProbeAdapter';
 import { resolveOpenCodeManagedServerStateCredential } from './openCodeManagedServerCredential';
 import {
   resolveOpenCodeServerAuthHeaders,
@@ -32,6 +33,8 @@ import {
 const FAKE_OPEN_CODE_V2_SERVE = `#!/usr/bin/env node
 const http = require('node:http');
 const { randomBytes } = require('node:crypto');
+const { appendFileSync, writeFileSync } = require('node:fs');
+if (process.env.OPENCODE_TEST_PID_FILE) writeFileSync(process.env.OPENCODE_TEST_PID_FILE, String(process.pid));
 
 function parseArg(name) {
   const prefix = name + '=';
@@ -49,6 +52,7 @@ if (!Number.isFinite(port) || port <= 0) {
 const environmentPassword = process.env.OPENCODE_PASSWORD || process.env.OPENCODE_SERVER_PASSWORD || '';
 const password = environmentPassword || randomBytes(32).toString('base64url');
 const expected = 'Basic ' + Buffer.from('opencode:' + password, 'utf8').toString('base64');
+let catalogsReady = false;
 
 const server = http.createServer((req, res) => {
   if ((req.headers.authorization || '') !== expected) {
@@ -56,9 +60,38 @@ const server = http.createServer((req, res) => {
     res.end();
     return;
   }
+  if (req.url && req.url.startsWith('/global/health') && process.env.OPENCODE_TEST_LEGACY_API) {
+    if (process.env.OPENCODE_TEST_READY_FILE) writeFileSync(process.env.OPENCODE_TEST_READY_FILE, 'ready');
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ healthy: true, version: '1.18.33' })); return;
+  }
+  if (req.url && req.url.startsWith('/api/info') && process.env.OPENCODE_TEST_LEGACY_API) { res.writeHead(404); res.end(); return; }
   if (req.url && req.url.startsWith('/api/info')) {
+    if (process.env.OPENCODE_TEST_READY_FILE) writeFileSync(process.env.OPENCODE_TEST_READY_FILE, 'ready');
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ version: '2.0.15', pid: process.pid, urls: [], paths: {} }));
+    return;
+  }
+  // V2 2.0.20: integration.list awaits Plugin.awaitActivation for this location;
+  // command.list and skill.list read the registry without waiting themselves.
+  if (req.url && req.url.startsWith('/api/integration')) {
+    if (process.env.OPENCODE_TEST_CATALOG_READ_FILE) appendFileSync(process.env.OPENCODE_TEST_CATALOG_READ_FILE, '/api/integration;');
+    if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
+    catalogsReady = true;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [] })); return;
+  }
+  if (req.url && (req.url.startsWith('/api/command') || req.url.startsWith('/command'))) {
+    if (process.env.OPENCODE_TEST_CATALOG_READ_FILE) appendFileSync(process.env.OPENCODE_TEST_CATALOG_READ_FILE, req.url.split('?')[0] + ';');
+    if (process.env.OPENCODE_TEST_HANG_COMMANDS) return;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(process.env.OPENCODE_TEST_LEGACY_API ? [] : { data: catalogsReady ? [{ name: 'review' }] : [] })); return;
+  }
+  if (req.url && req.url.startsWith('/skill')) {
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify([])); return;
+  }
+  if (req.url && req.url.startsWith('/api/skill')) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: catalogsReady ? [{ id: 'native-reviewer', name: 'reviewer', path: '/fixture/SKILL.md' }] : [] }));
     return;
   }
   res.writeHead(404);
@@ -88,6 +121,7 @@ const envKeys = [
 ] as const;
 
 const TEMP_DIRS = new Set<string>();
+const TEST_NATIVE_PIDS = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
 async function prepareManagedServerEnv(): Promise<Readonly<{ root: string; logsDir: string }>> {
@@ -108,6 +142,11 @@ async function prepareManagedServerEnv(): Promise<Readonly<{ root: string; logsD
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
+  for (const path of TEST_NATIVE_PIDS) {
+    try { process.kill(Number(readFileSync(path, 'utf8')), 'SIGKILL'); } catch {}
+  }
+  TEST_NATIVE_PIDS.clear();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
   for (const dir of TEMP_DIRS) removeTempDirSync(dir);
@@ -115,6 +154,88 @@ afterEach(() => {
 });
 
 describe('startManagedOpenCodeServer managed credential', () => {
+  it('reports failure when the OS refuses to terminate its owned native server', async () => {
+    const { root, logsDir } = await prepareManagedServerEnv();
+    const pidPath = join(root, 'refused-termination-pid');
+    TEST_NATIVE_PIDS.add(pidPath);
+    const started = await startManagedOpenCodeServer({ logsDir, timeoutMs: 10_000,
+      env: { ...process.env, OPENCODE_TEST_PID_FILE: pidPath } });
+    const realKill = process.kill.bind(process);
+    // Process signaling is the genuine OS boundary; health, tracking and stop policy stay real.
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (Math.abs(pid) === started.pid && signal !== 0) {
+        throw Object.assign(new Error('Operation not permitted'), { code: 'EPERM' });
+      }
+      return realKill(pid, signal);
+    });
+    try {
+      await expect(started.close()).rejects.toMatchObject({ code: 'open_code_server_termination_incomplete' });
+    } finally {
+      kill.mockRestore();
+      try { realKill(started.pid, 'SIGKILL'); } catch {}
+    }
+  }, 30_000);
+
+  it('discovers cold V2 catalogs after native activation without creating a session', async () => {
+    const { root } = await prepareManagedServerEnv();
+    await expect(openCodePreflightSessionControlsProbeAdapter.probeCatalogsRaw?.({
+      cwd: root, timeoutMs: 15_000, processEnv: { ...process.env },
+    })).resolves.toMatchObject({ commands: [{ name: 'review' }], skills: [{ id: 'native-reviewer', name: 'reviewer' }] });
+  }, 30_000);
+
+  it.each(['v1', 'v2'] as const)('bounds %s native catalog readiness/reads by the caller deadline after a slow server startup', async (generation) => {
+    const { root } = await prepareManagedServerEnv();
+    const pidPath = join(root, 'catalog-native-pid');
+    TEST_NATIVE_PIDS.add(pidPath);
+    const readyPath = join(root, 'catalog-native-ready');
+    const catalogReadPath = join(root, 'catalog-native-read');
+    const startedAt = Date.now();
+    const realNow = Date.now.bind(Date);
+    let readinessObservedAt: number | undefined;
+    // The clock is a genuine system boundary: reproduce startup consuming nearly the
+    // whole caller budget without a timing-sensitive slow subprocess fixture.
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      if (!existsSync(readyPath)) return startedAt;
+      readinessObservedAt ??= realNow();
+      return startedAt + 9_500 + realNow() - readinessObservedAt;
+    });
+    const pending = openCodePreflightSessionControlsProbeAdapter.probeCatalogsRaw?.({
+      cwd: root, timeoutMs: 10_000,
+      processEnv: { ...process.env, OPENCODE_TEST_PID_FILE: pidPath,
+        OPENCODE_TEST_READY_FILE: readyPath, OPENCODE_TEST_CATALOG_READ_FILE: catalogReadPath,
+        OPENCODE_TEST_HANG_COMMANDS: '1', ...(generation === 'v1' ? { OPENCODE_TEST_LEGACY_API: '1' } : {}),
+        HAPPIER_OPENCODE_CLI_GENERATION: generation === 'v1' ? 'stable' : 'v2', OPENCODE_SERVER_PASSWORD: 'deadline-fixture-password' },
+    });
+    try {
+      await expect(pending).rejects.toThrow(/timed out/i);
+      expect(existsSync(readyPath)).toBe(true);
+      expect(await readFile(catalogReadPath, 'utf8')).toContain(generation === 'v1' ? '/command' : '/api/integration');
+      expect(readinessObservedAt).toBeDefined();
+      // The remaining 500ms may include real process cleanup. This generous observation
+      // window still distinguishes a fresh 10s read budget from the containing budget.
+      expect(realNow() - readinessObservedAt!).toBeLessThan(2_000);
+    } finally {
+      const pid = Number(await readFile(pidPath, 'utf8').catch(() => ''));
+      if (pid > 0) { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+  }, 15_000);
+
+  it('uses the selected probe environment without changing the daemon environment', async () => {
+    const { logsDir } = await prepareManagedServerEnv();
+    const env = { ...process.env, OPENCODE_PASSWORD: 'selected-probe-password' };
+    const started = await startManagedOpenCodeServer({ timeoutMs: 15_000, logsDir, env });
+    try {
+      expect(started.authPassword).toBeUndefined();
+      const response = await fetch(`${started.baseUrl}/api/info`, {
+        headers: resolveOpenCodeServerAuthHeaders({ username: 'opencode', password: env.OPENCODE_PASSWORD }),
+      });
+      expect(response.status).toBe(200);
+      expect(process.env.OPENCODE_PASSWORD).toBeUndefined();
+    } finally {
+      await started.close();
+    }
+  }, 25_000);
+
   it('reaches readiness against a password-protected server without any password in the environment', async () => {
     const { logsDir } = await prepareManagedServerEnv();
 

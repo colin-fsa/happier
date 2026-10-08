@@ -10,6 +10,7 @@ import {
     CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
     CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY,
     CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY,
+    CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY,
     CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE,
     type ConnectedServiceAuthGroupV1,
     type ConnectedServiceAuthGroupReaderCapabilitiesQueryV1,
@@ -107,6 +108,8 @@ function parsePolicyPatchForRequest(policy: unknown, serviceId: string): Connect
         && !isServerFeatureEnabledForRequest("connectedServices.autoDisablePlanInvalid", process.env)) return null;
     if (parsed.success && parsed.data.quotaLimitSelection !== undefined
         && !isServerFeatureEnabledForRequest("connectedServices.poolQuotaLimitSelection", process.env)) return null;
+    if (parsed.success && parsed.data.strategy === 'expiry_first'
+        && !isServerFeatureEnabledForRequest("connectedServices.poolExpiryFirst", process.env)) return null;
     return parsed.success ? parsed.data : null;
 }
 
@@ -233,6 +236,10 @@ function projectAuthGroupForReader(
 ): ConnectedServiceAuthGroupV1 {
     // Released V1 readers are strict. Preserve each negotiated response shape, not a second policy owner.
     let policy = group.policy;
+    if (policy.strategy === 'expiry_first'
+        && reader.query[CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY] !== CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE) {
+        policy = { ...policy, strategy: 'least_limited' };
+    }
     if (!canReadAutomaticQuotaResetPolicy(reader.headers)) {
         const { autoUseQuotaResetsWhenExhausted: _quotaReset, ...projected } = policy;
         policy = projected;

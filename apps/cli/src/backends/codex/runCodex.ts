@@ -4,6 +4,7 @@ import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { logger } from '@/ui/logger';
+import { isConditionalPendingSteerClaim } from '@happier-dev/protocol';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { Credentials } from '@/persistence';
 import type { Metadata } from '@/api/types';
@@ -47,7 +48,7 @@ import {
     createSessionProviderInputConsumer,
     type SessionProviderInputConsumerSession,
 } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
-import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
+import type { MessageBatch, SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import {
     resolveRuntimeAwarePendingForegroundSteerability,
     resolveSessionPendingQueueDeliveryTiming,
@@ -1143,6 +1144,10 @@ export async function runCodex(opts: {
         const special = parseSpecialCommand(text);
         const runtime = getCodexRemoteRuntime();
         const pendingProviderAction = info?.pendingProviderAction;
+        const isConditionalSteer = isConditionalPendingSteerClaim({
+            requestedAction: info?.pendingRequestedAction,
+            providerAction: pendingProviderAction,
+        });
         const hasActiveProviderTurn = runtime
             ? (runtime.hasActiveProviderTurn?.() ?? runtime.isTurnInFlight())
             : false;
@@ -1255,12 +1260,9 @@ export async function runCodex(opts: {
                         });
                         return;
                     }
-                    if (pendingProviderAction === 'steer') {
+                    if (isConditionalSteer) {
                         await blockProviderPromptDeliveryBeforeAcceptance({
-                            localIds,
-                            reason: 'steering_unavailable',
-                            userMessageSeq,
-                            providerEffect: 'none',
+                            localIds, reason: 'steering_unavailable', userMessageSeq, providerEffect: 'none',
                         });
                         return;
                     }
@@ -1272,25 +1274,21 @@ export async function runCodex(opts: {
                         userMessageSeq,
                         userMessageLocalIds: localIds,
                         providerAcceptancePending: info?.providerAcceptancePending === true,
+                        ...(pendingProviderAction ? { pendingProviderAction: 'send' as const, prioritize: true } : {}),
+                        ...(info?.pendingRequestedAction ? { pendingRequestedAction: info.pendingRequestedAction } : {}),
                     });
                 }
             })();
             return;
         }
 
-        if (
-            pendingProviderAction === 'steer'
-        ) {
-            const localIds = normalizeProviderPromptLocalIds([message.localId ?? null]);
+        if (isConditionalSteer) {
             await blockProviderPromptDeliveryBeforeAcceptance({
-                localIds,
-                reason: 'steering_unavailable',
-                userMessageSeq,
-                providerEffect: 'none',
+                localIds: normalizeProviderPromptLocalIds([message.localId ?? null]),
+                reason: 'steering_unavailable', userMessageSeq, providerEffect: 'none',
             });
             return;
         }
-
         pushMessageToQueueWithSpecialCommands({
             queue: messageQueue,
             message: text,
@@ -1299,7 +1297,8 @@ export async function runCodex(opts: {
             userMessageSeq,
             userMessageLocalIds: normalizeProviderPromptLocalIds([message.localId ?? null]),
             providerAcceptancePending: info?.providerAcceptancePending === true,
-            pendingProviderAction,
+            pendingProviderAction: pendingProviderAction === 'steer' ? 'send' : pendingProviderAction,
+            ...(info?.pendingRequestedAction ? { pendingRequestedAction: info.pendingRequestedAction } : {}),
             prioritize: pendingProviderAction !== undefined,
         });
     });
@@ -2170,16 +2169,7 @@ export async function runCodex(opts: {
     let sharedThreadNeedsSystemPrompt = false;
 
 	    try {
-	            let pending: {
-                    message: string;
-                    mode: EnhancedMode;
-                    isolate: boolean;
-                    hash: string;
-                    maxUserMessageSeq?: number | null;
-                    userMessageLocalIds?: readonly string[] | null;
-                    providerAcceptancePending?: boolean;
-                    pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-                } | null = null;
+	            let pending: MessageBatch<EnhancedMode, string> | null = null;
 
 	        const codexRemoteRuntimeForSync = getCodexRemoteRuntime();
 	        const modelSync =
@@ -2499,16 +2489,7 @@ export async function runCodex(opts: {
         while (!shouldExit && !requestedSwitchToLocal) {
             logActiveHandles('loop-top');
             // Get next batch; respect mode boundaries like Claude
-            let message: {
-                message: string;
-                mode: EnhancedMode;
-                isolate: boolean;
-                hash: string;
-                maxUserMessageSeq?: number | null;
-                userMessageLocalIds?: readonly string[] | null;
-                providerAcceptancePending?: boolean;
-                pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
-            } | null = pending;
+            let message: MessageBatch<EnhancedMode, string> | null = pending;
                 pending = null;
                 if (!message) {
                     // Capture the current signal to distinguish idle-abort from queue close
@@ -2644,6 +2625,17 @@ export async function runCodex(opts: {
                     const canUseInFlightSteerForQueuedMessage =
                         (message.pendingProviderAction === 'steer' || message.pendingProviderAction === undefined)
                         && (codexRuntime.canSteerPrompt ? codexRuntime.canSteerPrompt() : codexRuntime.isTurnInFlight());
+                    const isConditionalSteer = isConditionalPendingSteerClaim({
+                        requestedAction: message.pendingRequestedAction,
+                        providerAction: message.pendingProviderAction,
+                    });
+                    if (isConditionalSteer && !canUseInFlightSteerForQueuedMessage) {
+                        await blockProviderPromptDeliveryBeforeAcceptance({
+                            localIds, reason: 'steering_unavailable',
+                            userMessageSeq: message.maxUserMessageSeq ?? null, providerEffect: 'none',
+                        });
+                        continue;
+                    }
                     if (wasCreated && useCodexAppServer && specialCommand.type === null && canUseInFlightSteerForQueuedMessage) {
                         if (shouldLogAcpDebug) {
                             logger.debug('[CodexAppServer] steerPrompt begin for queued message while turn is in flight');
@@ -2670,13 +2662,16 @@ export async function runCodex(opts: {
                             if (!isCodexAppServerNoActiveTurnToSteerError(error)) {
                                 throw error;
                             }
-                            await blockProviderPromptDeliveryBeforeAcceptance({
-                                localIds,
-                                reason: 'steering_unavailable',
-                                userMessageSeq: message.maxUserMessageSeq ?? null,
-                                providerEffect: 'none',
-                            });
-                            continue;
+                            if (isConditionalSteer) {
+                                await blockProviderPromptDeliveryBeforeAcceptance({
+                                    localIds, reason: 'steering_unavailable',
+                                    userMessageSeq: message.maxUserMessageSeq ?? null, providerEffect: 'none',
+                                });
+                                continue;
+                            }
+                            // The provider proved that the steer had no effect. Deliver the same
+                            // prompt through the ordinary turn path without cancelling a turn.
+                            didAttemptProviderSend = false;
                         }
                     }
                     codexRuntime.beginTurn();

@@ -1,11 +1,13 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
+import { Platform, Pressable } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { t } from '@/text';
-import { useWorkspaceFileTransfers } from '@/hooks/session/files/useWorkspaceFileTransfers';
+import { useWorkspaceFileTransfers, type WorkspaceFileDownloadAction } from '@/hooks/session/files/useWorkspaceFileTransfers';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Modal } from '@/modal';
 
 export const FileDownloadButton = React.memo((props: Readonly<{
     sessionId: string;
@@ -14,6 +16,7 @@ export const FileDownloadButton = React.memo((props: Readonly<{
     testID?: string;
 }>) => {
     const { theme } = useUnistyles();
+    const [menuOpen, setMenuOpen] = React.useState(false);
 
     const transfers = useWorkspaceFileTransfers({
         sessionId: props.sessionId,
@@ -21,8 +24,14 @@ export const FileDownloadButton = React.memo((props: Readonly<{
 
     const busy = transfers.downloadState.status === 'downloading';
     const disabled = busy;
+    const android = Platform.OS === 'android';
 
-    return (
+    const download = async (action?: WorkspaceFileDownloadAction) => {
+        const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true, action });
+        if (!res.ok && !res.canceled) Modal.alert(t('common.error'), res.error);
+    };
+
+    const renderButton = (onPress: () => void) => (
         <Pressable
             testID={props.testID}
             accessibilityRole="button"
@@ -30,21 +39,11 @@ export const FileDownloadButton = React.memo((props: Readonly<{
             disabled={disabled}
             onPress={(event) => {
                 event?.stopPropagation?.();
-                void (async () => {
-                    const res = await transfers.startDownload({ path: props.path, asZip: props.asZip === true });
-                    if (!res.ok) {
-                        try {
-                            const { Modal } = await import('@/modal');
-                            Modal.alert(t('common.error'), res.error);
-                        } catch {
-                            // Best-effort only.
-                        }
-                    }
-                })();
+                onPress();
             }}
             style={({ pressed }) => ({
-                width: 28,
-                height: 28,
+                width: android ? 48 : 28,
+                height: android ? 48 : 28,
                 borderRadius: 10,
                 borderWidth: 1,
                 borderColor: theme.colors.border.default,
@@ -61,4 +60,25 @@ export const FileDownloadButton = React.memo((props: Readonly<{
             )}
         </Pressable>
     );
+
+    if (!android) return renderButton(() => { void download(); });
+
+    return <DropdownMenu
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        items={[
+            { id: 'save', title: t('common.saveAs'), disabled },
+            { id: 'open', title: t('files.repositoryTree.actions.openWith'), disabled },
+            { id: 'share', title: t('files.repositoryTree.actions.share'), disabled },
+        ]}
+        onSelect={async (action) => {
+            setMenuOpen(false);
+            if (action === 'save' || action === 'open' || action === 'share') await download(action);
+        }}
+        search={false}
+        matchTriggerWidth={false}
+        placement="bottom"
+        popoverAnchorAlign="end"
+        trigger={({ toggle }) => renderButton(toggle)}
+    />;
 });

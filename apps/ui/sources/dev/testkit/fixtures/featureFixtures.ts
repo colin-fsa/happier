@@ -91,6 +91,7 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             autoQuotaReset: { enabled: false },
             autoDisablePlanInvalid: { enabled: false },
             poolQuotaLimitSelection: { enabled: false },
+            poolExpiryFirst: { enabled: false },
         },
         updates: {
             ota: { enabled: true },

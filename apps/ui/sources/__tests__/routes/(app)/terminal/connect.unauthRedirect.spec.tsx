@@ -12,6 +12,7 @@ const upsertActivateAndSwitchServerMock = vi.fn(async (_params: { serverUrl: str
 const getCredentialsMock = vi.fn(async () => null as null | { token: string; secret: string });
 const refreshFromActiveServerMock = vi.fn(async () => {});
 const authState = vi.hoisted(() => ({ isAuthenticated: false }));
+let routeHash: string | undefined;
 let activeServerUrl = 'https://api.happier.dev';
 
 installTerminalRouteCommonModuleMocks({
@@ -19,6 +20,7 @@ installTerminalRouteCommonModuleMocks({
         createExpoRouterMock({
             router: { back: vi.fn(), replace: replaceMock, push: vi.fn(), setParams: vi.fn() },
             pathname: '/terminal/connect',
+            params: () => routeHash ? { '#': routeHash } : {},
         }).module,
 });
 
@@ -65,6 +67,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         vi.resetModules();
         vi.unmock('@/utils/path/terminalConnectUrl');
         authState.isAuthenticated = false;
+        routeHash = undefined;
         replaceMock.mockClear();
         upsertActivateAndSwitchServerMock.mockClear();
         getCredentialsMock.mockReset();
@@ -95,6 +98,23 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
             scope: 'device',
             refreshAuth: refreshFromActiveServerMock,
         });
+        expect(replaceMock).toHaveBeenCalledWith('/');
+    });
+
+    it('retains router pairing parameters before browser history reaches the terminal route', async () => {
+        routeHash = 'key=abc123&server=https%3A%2F%2Fcompany.example.test&pairingSecret=pairing&createdAt=1000&expiresAt=61000';
+        Object.assign((globalThis as typeof globalThis & { window: Window }).window.location, {
+            href: 'tauri://localhost/',
+            pathname: '/',
+            hash: '',
+        });
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+
+        await renderScreen(<Screen />);
+        await act(async () => {});
+
+        expect(readReactNativeMmkvStubValues()).toContainEqual(expect.stringContaining('abc123'));
+        expect(readReactNativeMmkvStubValues()).toContainEqual(expect.stringContaining('pairing'));
         expect(replaceMock).toHaveBeenCalledWith('/');
     });
 
@@ -139,6 +159,26 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
 
         expect(refreshFromActiveServerMock).toHaveBeenCalledTimes(1);
         expect(replaceMock).not.toHaveBeenCalled();
+    });
+
+    it('uses a second desktop pairing link while the confirmation screen remains mounted', async () => {
+        authState.isAuthenticated = true;
+        const Screen = (await import('@/app/(app)/terminal/connect')).default;
+        const screen = await renderScreen(<Screen />);
+        expect(readReactNativeMmkvStubValues()).toContainEqual(expect.stringContaining('abc123'));
+
+        // Expo Router exposes a pushed URL fragment as the '#' route parameter.
+        routeHash = 'key=second&server=https%3A%2F%2Fcompany.example.test&pairingSecret=next&createdAt=1000&expiresAt=61000';
+        await screen.update(<Screen />);
+        const storedRecords = readReactNativeMmkvStubValues().map((raw) => {
+            try { return JSON.parse(String(raw)); } catch { return null; }
+        });
+        expect(storedRecords).toContainEqual(expect.objectContaining({
+            record: expect.objectContaining({
+                publicKeyB64Url: 'second',
+                pairing: { secretB64Url: 'next', createdAtMs: 1000, expiresAtMs: 61000 },
+            }),
+        }));
     });
 
     it('honors loopback server overrides when redirecting terminal auth', async () => {

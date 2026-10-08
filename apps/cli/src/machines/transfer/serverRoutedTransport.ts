@@ -532,15 +532,6 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 
 		            const rawMessage = error instanceof Error ? (error.message || error.name) : String(error);
 		            const sanitized = rawMessage.replace(/\s+/gu, ' ').slice(0, 200);
-		            try {
-		              const { logger } = await import('@/utils/logger');
-		              logger.debug('[MACHINE TRANSFER] Unexpected server-routed responder failure', {
-		                transferId: envelope.transferId,
-		                error: sanitized,
-		              });
-		            } catch {
-		              // Best-effort: logging must not interfere with aborting the transfer.
-		            }
 		            params.machineTransferChannel.sendEnvelope({
 		              targetMachineId: payload.sourceMachineId,
 		              envelope: {
@@ -549,6 +540,13 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
 		                reason: 'internal_error',
 	              },
 	            });
+	            // Optional diagnostics must not delay abort or retain a pending transfer slot.
+	            void import('@/utils/logger').then(({ logger }) => {
+	              logger.debug('[MACHINE TRANSFER] Unexpected server-routed responder failure', {
+	                transferId: envelope.transferId,
+	                error: sanitized,
+	              });
+	            }).catch(() => {});
 	            return;
 	          }
 

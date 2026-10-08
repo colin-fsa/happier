@@ -1,6 +1,12 @@
 import readline from 'node:readline';
-import { existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+if (process.env.HAPPIER_TEST_CATALOG_START_FILE) appendFileSync(process.env.HAPPIER_TEST_CATALOG_START_FILE, `${process.pid}\n`);
+if (process.env.HAPPIER_TEST_CATALOG_ENV_FILE) writeFileSync(process.env.HAPPIER_TEST_CATALOG_ENV_FILE, JSON.stringify({ HAPPIER_HOME_DIR: process.env.HAPPIER_HOME_DIR }));
+if (process.env.HAPPIER_TEST_CATALOG_SHUTDOWN_DELAY_MS) {
+  process.on('SIGTERM', () => setTimeout(() => process.exit(0), Number(process.env.HAPPIER_TEST_CATALOG_SHUTDOWN_DELAY_MS)));
+}
 
 const delayMs = Number.parseInt(process.env.HAPPIER_FAKE_CODEX_APP_SERVER_DELAY_MS ?? '', 10) || 600;
 
@@ -81,6 +87,16 @@ rl.on('line', (line) => {
 
   const method = msg.method;
   if (method === 'initialized') return;
+
+  if (method === 'skills/list' && msg.id !== undefined) {
+    const respond = () => write({ id: msg.id, result: { data: [{ cwd: msg.params.cwds[0], skills: [{
+      name: 'review', path: `${msg.params.cwds[0]}/SKILL.md`, description: 'Review code', enabled: true,
+    }], errors: [] }] } });
+    const catalogDelayMs = Number(process.env.HAPPIER_TEST_CATALOG_DELAY_MS ?? 0);
+    if (catalogDelayMs > 0) setTimeout(respond, catalogDelayMs);
+    else respond();
+    return;
+  }
 
   if (method === 'initialize' && msg.id !== undefined) {
     handleInitialize(msg);

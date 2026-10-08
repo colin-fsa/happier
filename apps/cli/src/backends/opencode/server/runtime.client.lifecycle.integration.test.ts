@@ -447,16 +447,20 @@ describe('OpenCode client/runtime lifecycle composition', () => {
         emit('session.text.started', { sessionID: nativeSessionId, assistantMessageID: 'msg_native_assistant', ordinal: 0 });
         emit('session.text.delta', { sessionID: nativeSessionId, assistantMessageID: 'msg_native_assistant', ordinal: 0, delta: 'native terminal answer' });
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
-        await expect.poll(() => imported()).toHaveLength(2);
+        // Native assistant activity commits through the live stream owner. Only its user row
+        // is backfilled from settled history; both durable messages must survive exactly once.
+        await expect.poll(() => committed).toHaveLength(2);
+        expect(imported()).toHaveLength(1);
         expect(imported().map((body) => body.localId)).toEqual([
           `opencode:import:history:${nativeSessionId}:msg_native_user`,
-          `opencode:import:history:${nativeSessionId}:msg_native_assistant`,
         ]);
-        expect(imported().map((body) => body.message)).toEqual([
+        expect(committed.map((body) => body.message)).toEqual(expect.arrayContaining([
           { t: 'plain', v: expect.objectContaining({ role: 'user', content: { type: 'text', text: 'native terminal prompt' },
             meta: expect.objectContaining({ source: 'cli', importedFrom: 'acp-history' }) }) },
-          { t: 'plain', v: expect.objectContaining({ role: 'agent', content: expect.objectContaining({ data: { type: 'message', message: 'native terminal answer' } }) }) },
-        ]);
+          { t: 'plain', v: expect.objectContaining({ role: 'agent',
+            content: expect.objectContaining({ data: { type: 'message', message: 'native terminal answer' } }),
+            meta: expect.objectContaining({ opencodeMessageId: 'msg_native_assistant', opencodeRemoteSessionId: nativeSessionId }) }) },
+        ]));
         const readsAfterCompletion = messageReads;
         emit('session.execution.succeeded', { sessionID: 'ses_other' });
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
@@ -464,7 +468,8 @@ describe('OpenCode client/runtime lifecycle composition', () => {
         disconnectEvents();
         await expect.poll(() => connections).toBe(2);
         await expect.poll(() => messageReads).toBeGreaterThan(readsAfterCompletion + 1);
-        expect(imported()).toHaveLength(2);
+        expect(committed).toHaveLength(2);
+        expect(imported()).toHaveLength(1);
 
         historyUnavailable = true;
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
@@ -472,6 +477,7 @@ describe('OpenCode client/runtime lifecycle composition', () => {
           String(message).includes('opencode_passive_transcript_projection_failed'))).toBe(true);
         expect(defaultDiagnostic.mock.calls.flat().join(' ')).not.toContain('private upstream response');
         historyUnavailable = false;
+        expect(committed).toHaveLength(2);
 
         // A control-plane idle is only a wake: authoritative completion still excludes partial text.
         messages.push(
@@ -482,13 +488,13 @@ describe('OpenCode client/runtime lifecycle composition', () => {
             time: { created: 1790950000004 } },
         );
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
-        await expect.poll(() => imported()).toHaveLength(3);
+        await expect.poll(() => imported()).toHaveLength(2);
         expect(imported().some((body) => String(body.localId).endsWith(':msg_native_partial'))).toBe(false);
         messages[messages.length - 1] = { id: 'msg_native_partial', type: 'assistant', sessionID: nativeSessionId,
           parentID: 'msg_native_user_2', content: [{ id: 'part_partial', type: 'text', text: 'settled answer' }],
           time: { created: 1790950000004, completed: 1790950000005 }, finish: 'stop' };
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
-        await expect.poll(() => imported()).toHaveLength(4);
+        await expect.poll(() => imported()).toHaveLength(3);
         expect(promptCount).toBe(0);
 
         // A passive inventory can be in flight when the app starts its next turn. It must not
@@ -509,11 +515,11 @@ describe('OpenCode client/runtime lifecycle composition', () => {
         emit('session.text.ended', { sessionID: nativeSessionId, assistantMessageID: 'msg_happier_assistant', ordinal: 0 });
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
         await prompt;
-        expect(imported()).toHaveLength(4);
+        expect(imported()).toHaveLength(3);
         expect(JSON.stringify(committed.map((body) => body.message))).toContain('Happier answer');
         // A later native wake can catch up, but the completed Happier pair is never passively copied.
         emit('session.execution.succeeded', { sessionID: nativeSessionId });
-        await expect.poll(() => imported()).toHaveLength(5);
+        await expect.poll(() => imported()).toHaveLength(4);
         expect(imported().some((body) => String(body.localId).includes('msg_happier_assistant'))).toBe(false);
         expect(promptCount).toBe(1);
         emit('message.part.updated', { part: { id: 'part_task', type: 'tool', sessionID: nativeSessionId,
@@ -522,7 +528,7 @@ describe('OpenCode client/runtime lifecycle composition', () => {
         await expect.poll(() => defaultDiagnostic.mock.calls.some(([message]) =>
           String(message).includes('opencode_task_sidechain_import_failed'))).toBe(true);
         expect(defaultDiagnostic.mock.calls.flat().join(' ')).not.toContain('private sidechain baseline response');
-        expect(imported()).toHaveLength(5);
+        expect(imported()).toHaveLength(4);
       } finally {
         defaultDiagnostic.mockRestore();
         await runtime.reset();

@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed, type MachineTransferReceiveEnvelope, type MachineTransferSendEnvelope } from '@happier-dev/protocol';
+
+import { registerServerRoutedTransferResponder } from './serverRoutedTransport';
 
 type Listener = (payload: MachineTransferReceiveEnvelope) => void;
 type MachineTransferSendOpenEnvelope = Extract<MachineTransferSendEnvelope['envelope'], { kind: 'open' }>;
@@ -405,10 +407,8 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('does not leak responder-side errors in abort reasons', async () => {
+  it('does not leak responder-side errors in abort reasons', () => {
     const { source, target, sentEnvelopes } = createLoopbackChannels();
-    const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
-    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
@@ -432,21 +432,20 @@ describe('server routed machine transfer', () => {
         },
       });
 
-      await vi.waitFor(() => {
-        const abort = sentEnvelopes.find(
-          (entry) =>
-            entry.targetMachineId === 'machine_target'
-            && entry.envelope.kind === 'abort'
-            && entry.envelope.transferId === 'transfer_error_leak',
-        );
-        expect(abort).toBeTruthy();
-        if (!abort || abort.envelope.kind !== 'abort') {
-          throw new Error('Expected abort envelope');
-        }
-        expect(abort.envelope.reason).toBe('internal_error');
-        expect(abort.envelope.reason).not.toContain('secret-details');
-        expect(abort.envelope.reason).not.toContain('transfer_error_leak');
-      });
+      // The loader has already failed synchronously; optional diagnostics must not delay abort.
+      const abort = sentEnvelopes.find(
+        (entry) =>
+          entry.targetMachineId === 'machine_target'
+          && entry.envelope.kind === 'abort'
+          && entry.envelope.transferId === 'transfer_error_leak',
+      );
+      expect(abort).toBeTruthy();
+      if (!abort || abort.envelope.kind !== 'abort') {
+        throw new Error('Expected abort envelope');
+      }
+      expect(abort.envelope.reason).toBe('internal_error');
+      expect(abort.envelope.reason).not.toContain('secret-details');
+      expect(abort.envelope.reason).not.toContain('transfer_error_leak');
     } finally {
       unregister();
     }

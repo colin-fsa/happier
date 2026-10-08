@@ -30,6 +30,7 @@ export type ClaudeUnifiedPromptBatch<Mode = unknown> = Readonly<{
    */
   userMessageLocalIds?: readonly string[];
   pendingProviderAction?: import('@/agent/runtime/modeMessageQueue').PendingProviderAction;
+  pendingRequestedAction?: import('@happier-dev/protocol').PendingRequestedActionV1;
   providerAcceptancePending?: boolean;
 }>;
 
@@ -73,6 +74,7 @@ export type ClaudeUnifiedPromptInjectionFailureHandler<Mode = unknown> = (
 ) => ClaudeUnifiedPromptInjectionFailureHandling | Promise<ClaudeUnifiedPromptInjectionFailureHandling>;
 
 export type ClaudeUnifiedPromptInjectionOptions = Readonly<{
+  resolveDeliveryState?: TerminalPromptInput['resolveDeliveryState'];
   /**
    * The prompt is being steered into a RUNNING turn (Claude's TUI queues it natively and submits it
    * at turn end). The injector must skip quiet-screen deferral: a generating screen is never quiet,

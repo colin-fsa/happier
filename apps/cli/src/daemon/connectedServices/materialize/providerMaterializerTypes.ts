@@ -76,6 +76,8 @@ export type ConnectedServicesProviderMaterializerInput = Readonly<{
   vendorResumeId?: string | null;
   candidatePersistedSessionFile?: string | null;
   cleanupRoot: () => void;
+  /** Retain only owned filesystem work, never credential HTTP or provider callbacks. */
+  writeArtifacts?: <T>(write: () => Promise<T>) => Promise<T>;
   validateGroupMutationCurrentness?: (
     input: ConnectedServiceGroupMutationTarget,
   ) => Promise<ConnectedServiceSharedGenerationMutationCurrentness>;
