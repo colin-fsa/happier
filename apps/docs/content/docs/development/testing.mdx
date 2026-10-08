@@ -5,6 +5,15 @@ description: Test tiers, how to run them locally, and how they are gated in CI/r
 
 ## Test tiers (repo-wide model)
 
+The release-control follow-up adds notes-only selection to the existing CI
+planner. A protected-branch push changing only `apps/ui/CHANGELOG.md` validates
+the final commit's note projections and their contracts, and verifies full
+source CI for its unchanged preceding source. The completed check still names
+the final child SHA. If that baseline evidence is unavailable or insufficient,
+CI runs the complete source lane set. Versions, manifests, lockfiles, native
+configuration and generated runtime files do not qualify. This shortcut becomes
+available after the workflow follow-up is integrated.
+
 We use these lanes consistently across scripts and GitHub Actions.
 
 ### 1) Unit

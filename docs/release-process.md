@@ -141,6 +141,59 @@ range and completes the semantic compatibility review while inspecting that
 same diff for notes and version recommendations. After commit/push, only an
 unexpected runtime-reachable delta invalidates the affected analysis.
 
+Materialize the approved notes and versions for the selected products once on
+that source, commit them, and require completed CI for the resulting exact SHA.
+Prepare the pinned operation from that final SHA; another dev merge does not
+require another editorial or version pass. Version files, manifests, lockfiles,
+native configuration and generated runtime inputs still receive full source CI.
+
+The release-control speed follow-up adds a narrow exception in the existing
+`tests.yml` CI planner: a push changing only `apps/ui/CHANGELOG.md` can select
+note projection checks instead of runtime suites. It proves that the previous
+push SHA is an ancestor with successful canonical full-source CI, downloads and
+validates that run's lane summary, and validates the final commit's canonical
+note projections plus the projection contract suite. The new completed run and
+summary identify the final child SHA; a parent run ID is never accepted as child
+evidence. Missing, expired or insufficient baseline evidence selects full source
+CI with an explicit diagnostic. An earlier notes-only run is not a full-source
+baseline, so repeated editorial pushes can fall back to full CI. This follow-up
+must be integrated before relying on the shortcut; it changes no waiver policy.
+
+### Targeted bug-fix releases (release-control follow-up)
+
+Choose scope deliberately from `release-analyze` over the actual range, including
+its shared-package and packaged dependency impacts. Use the existing
+`deploy_targets` input to bound both deployment and artifact publication. The
+follow-up removes independent change-flag fanout that previously built excluded
+products; `force_deploy` remains limited to selected products. Resume preserves
+the saved scope and candidate identities. This is an explicit selection, not an
+automatic folder-only scope inference.
+
+| Fix scope | Existing release inputs | Retained work |
+| --- | --- | --- |
+| UI web and compatible OTA | `deploy_targets=ui`, `ui_expo_action=ota`, `ui_desktop_mode=none` | UI web and matching-runtime OTA; excluded CLI/server, desktop and stores keep their versions/assets |
+| CLI | `deploy_targets=cli` | CLI npm, signed platform binaries and selected dev-box image; excluded UI/server/stack stay unchanged |
+| Server | `deploy_targets=server` (add `server_runner` when publishing the runner package) | Selected server runtime/deployment and relay image; runner npm only when selected |
+
+Materialize only selected component versions, preserving publication's existing
+version checks. Include every affected product required by a shared dependency
+or compatibility change. Native dependencies/configuration/runtime-version
+changes need new native binaries; OTA cannot repair those changes or reach an
+incompatible installed runtime. An all-product release remains all-product.
+
+### Early preparation (release-control follow-up)
+
+Exact-source credential-free OTA exports and unsigned Tauri desktop builds can
+start once their source/product admission is satisfied, alongside unrelated
+software builds. The existing workflows expose preparation and consumption
+phases and reuse their existing named artifacts within the same workflow run.
+Consumers validate source, environment and version metadata before using those
+bytes. Signing/notarization, updater signatures, checksums and publication retain
+their existing admission and verification boundaries. Credential-bearing native
+iOS/Android build/submission jobs remain behind those boundaries. This is a
+preparation scheduling change, not a measured release-time guarantee, and is
+available only after the follow-up workflow controls are integrated.
+
 `node scripts/pipeline/run.mjs release --release-profile integrated` is the
 normal preview path; preview and dev default to `integrated`, while production
 defaults to `stable`. `stable` remains a normal dispatch only after its

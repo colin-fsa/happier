@@ -77,7 +77,7 @@ test('promote-ui passes the exact candidate release-note projection to desktop a
   );
   assert.equal(
     workflow.jobs?.desktop?.with?.release_message,
-    '${{ needs.promote.outputs.release_notes_github_markdown }}',
+    '${{ needs.validate_candidate.outputs.release_notes_github_markdown }}',
   );
   assert.equal(
     source.includes('appendFileSync(process.env.GITHUB_OUTPUT, `${key}<<${delimiter}\\n${value}\\n${delimiter}\\n`);'),

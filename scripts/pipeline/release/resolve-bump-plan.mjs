@@ -110,6 +110,7 @@ function main() {
       'bump-cli-override': { type: 'string', default: 'preset' },
       'bump-stack-override': { type: 'string', default: 'preset' },
       'deploy-targets': { type: 'string', default: '' },
+      'force-deploy': { type: 'string', default: 'false' },
       'changed-ui': { type: 'string' },
       'changed-cli': { type: 'string' },
       'changed-stack': { type: 'string' },
@@ -159,6 +160,7 @@ function main() {
   }
 
   const deployTargets = parseCsvList(String(values['deploy-targets'] ?? ''));
+  const forceDeploy = parseBoolString(values['force-deploy'], '--force-deploy');
   for (const t of deployTargets) {
     if (!releaseTargets.includes(t)) {
       fail(`--deploy-targets contains unsupported entry '${t}'`);
@@ -187,6 +189,13 @@ function main() {
   const changedCli = versionedCliChanged ?? (changedCliRaw || changedShared);
   const changedStack = versionedStackChanged ?? (changedStackRaw || changedShared);
   const changedServer = versionedServerChanged ?? (changedServerRaw || changedShared);
+
+  // Selection bounds publication too; a shared change or force cannot add an excluded product.
+  const publishCliBinaries = publishCli;
+  const publishServerRuntime = publishServer || (deployTargets.includes('server') && (changedServer || forceDeploy));
+  const publishUiWeb = deployTargets.includes('ui');
+  const publishDockerRelay = publishServerRuntime;
+  const publishDockerDevBox = publishCliBinaries;
 
   const bumpApp = shouldBumpComponent(changedApp, resolveOverride(bumpAppOverride, bumpPreset));
   const bumpCli = shouldBumpComponent(changedCli, resolveOverride(bumpCliOverride, bumpPreset));
@@ -250,6 +259,11 @@ function main() {
     publish_cli: publishCli,
     publish_stack: publishStack,
     publish_server: publishServer,
+    publish_cli_binaries: publishCliBinaries,
+    publish_server_runtime: publishServerRuntime,
+    publish_ui_web: publishUiWeb,
+    publish_docker_relay: publishDockerRelay,
+    publish_docker_dev_box: publishDockerDevBox,
     bump_app: bumpApp,
     bump_cli: bumpCli,
     bump_stack: bumpStack,
@@ -262,6 +276,11 @@ function main() {
     publish_cli: publishCli ? 'true' : 'false',
     publish_stack: publishStack ? 'true' : 'false',
     publish_server: publishServer ? 'true' : 'false',
+    publish_cli_binaries: publishCliBinaries ? 'true' : 'false',
+    publish_server_runtime: publishServerRuntime ? 'true' : 'false',
+    publish_ui_web: publishUiWeb ? 'true' : 'false',
+    publish_docker_relay: publishDockerRelay ? 'true' : 'false',
+    publish_docker_dev_box: publishDockerDevBox ? 'true' : 'false',
     bump_app: bumpApp,
     bump_cli: bumpCli,
     bump_stack: bumpStack,

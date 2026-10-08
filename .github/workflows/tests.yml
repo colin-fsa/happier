@@ -210,34 +210,37 @@ jobs:
     name: Resolve affected source-CI lanes
     permissions:
       contents: read
+      actions: read
       pull-requests: read
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      # A protected-branch push is admissible as whole-source release evidence, so its established
-      # fast source set must cover the complete head. Pull requests retain path-selected feedback,
-      # while release/deep-only lanes below remain selected by their actual changed seams.
-      run_ui: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' || steps.unmatched.outputs.ui == 'true' }}
-      run_server: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' || steps.unmatched.outputs.server == 'true' }}
-      run_cli: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' || steps.unmatched.outputs.cli == 'true' }}
-      run_stack: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' || steps.unmatched.outputs.stack == 'true' }}
-      run_shared_packages: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' }}
-      run_build_smoke: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' }}
-      run_ui_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' }}
-      run_server_db_contract: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' }}
-      run_release_contracts: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' }}
-      run_installers_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' }}
-      run_binary_smoke: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' }}
-      run_cli_daemon_e2e: ${{ steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' }}
-      run_e2e_core: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' }}
-      run_typecheck: ${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' }}
+      # Pushes cover the complete head. The canonical planner alone admits an editorial-only
+      # delta after checking its exact full-source baseline and the final note projections.
+      notes_only: ${{ steps.notes.outputs.notes_only }}
+      notes_base_sha: ${{ steps.notes.outputs.notes_base_sha }}
+      notes_base_run_id: ${{ steps.notes.outputs.notes_base_run_id }}
+      run_ui: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui == 'true' || steps.unmatched.outputs.ui == 'true' ) }}
+      run_server: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server == 'true' || steps.unmatched.outputs.server == 'true' ) }}
+      run_cli: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli == 'true' || steps.unmatched.outputs.cli == 'true' ) }}
+      run_stack: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.stack == 'true' || steps.unmatched.outputs.stack == 'true' ) }}
+      run_shared_packages: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' ) }}
+      run_build_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' ) }}
+      run_ui_e2e: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.ui_e2e == 'true' ) }}
+      run_server_db_contract: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.server_db_contract == 'true' ) }}
+      run_release_contracts: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.release_contracts == 'true' ) }}
+      run_installers_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.installers_smoke == 'true' ) }}
+      run_binary_smoke: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.binary_smoke == 'true' ) }}
+      run_cli_daemon_e2e: ${{ steps.notes.outputs.notes_only != 'true' && (steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.cli_daemon_e2e == 'true' ) }}
+      run_e2e_core: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.e2e_core == 'true' ) }}
+      run_typecheck: ${{ steps.notes.outputs.notes_only != 'true' && (github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.changes.outputs.typecheck == 'true' ) }}
     steps:
       - name: Checkout
         if: ${{ !inputs.select_jobs_explicitly }}
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Classify affected source-CI lanes once
         id: changes
@@ -371,6 +374,20 @@ jobs:
           CLASSIFIED_PATHS_E2E_CORE: ${{ steps.changes.outputs.e2e_core_files }}
           CLASSIFIED_PATHS_TYPECHECK: ${{ steps.changes.outputs.typecheck_files }}
         run: node scripts/ci/classify-source-ci-paths.mjs --github-output "$GITHUB_OUTPUT"
+
+      - name: Validate editorial-only source against its exact checked baseline
+        id: notes
+        if: ${{ !inputs.select_jobs_explicitly && github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_BASE_SHA: ${{ github.event.before }}
+          CI_SOURCE_SHA: ${{ github.sha }}
+          CI_SOURCE_BRANCH: ${{ github.ref_name }}
+        run: |
+          node scripts/ci/classify-source-ci-paths.mjs --notes-only --github-output "$GITHUB_OUTPUT"
+          if grep -q '^notes_only=true$' "$GITHUB_OUTPUT"; then
+            node --test scripts/release/release_notes_projection.contract.test.mjs
+          fi
 
   build-cli:
     if: ${{ (inputs.select_jobs_explicitly && (inputs.run_cli || inputs.run_cli_daemon_e2e || inputs.run_e2e_core || inputs.run_e2e_core_slow || inputs.run_binary_smoke || (inputs.run_installers_smoke && inputs.installers_source == 'local-build'))) || (!inputs.select_jobs_explicitly && (needs.ci_plan.outputs.run_cli == 'true' || needs.ci_plan.outputs.run_cli_daemon_e2e == 'true' || needs.ci_plan.outputs.run_e2e_core == 'true' || needs.ci_plan.outputs.run_binary_smoke == 'true' || needs.ci_plan.outputs.run_installers_smoke == 'true')) }}

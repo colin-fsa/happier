@@ -241,6 +241,7 @@ test('malicious branch and release inputs remain opaque publisher arguments', ()
       INPUT_TARGET: 'main',
       INPUT_MODE: 'fast_forward',
       INPUT_ALLOW_RESET: 'false',
+      INPUT_PRESERVE_TARGET_DESCENDANT: 'false',
       INPUT_CONFIRM: 'promote main from safe',
       INPUT_DRY_RUN: 'true',
       GITHUB_STEP_SUMMARY: join(tmpdir(), 'unused-release-summary'),

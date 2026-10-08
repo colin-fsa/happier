@@ -318,8 +318,8 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.match(workflow.jobs.ci_plan.outputs.run_server, /steps\.unmatched\.outputs\.server == 'true'/);
   assert.match(workflow.jobs.ci_plan.outputs.run_cli, /steps\.unmatched\.outputs\.cli == 'true'/);
   assert.match(workflow.jobs.ci_plan.outputs.run_stack, /steps\.unmatched\.outputs\.stack == 'true'/);
-  assert.equal(workflow.jobs.ci_plan.outputs.run_shared_packages, "${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.all == 'true' || steps.unmatched.outputs.shared_packages == 'true' }}");
-  assert.equal(workflow.jobs.ci_plan.outputs.run_build_smoke, "${{ github.event_name == 'push' || steps.unmatched.outputs.all == 'true' || steps.changes.outputs.changed == 'true' }}");
+  assert.match(workflow.jobs.ci_plan.outputs.run_shared_packages, /steps\.unmatched\.outputs\.shared_packages == 'true'/);
+  assert.match(workflow.jobs.ci_plan.outputs.run_build_smoke, /steps\.changes\.outputs\.changed == 'true'/);
   assert.match(workflow.jobs['shared-packages-unit'].if, /needs\.ci_plan\.outputs\.run_shared_packages == 'true'/);
 
   assert.match(workflow.jobs['shared-packages-unit'].steps.map((step) => step.run ?? '').join('\n'), /yarn -s test:shared-packages:local/u);
@@ -331,12 +331,13 @@ test('the source-CI classifier fail-closes shared tooling and reaches direct roo
   assert.match(unmatchedStep.run, /classify-source-ci-paths\.mjs/);
   assert.equal(unmatchedStep.env.CHANGED_PATHS_JSON, '${{ steps.changes.outputs.changed_files }}');
   assert.equal(unmatchedStep.env.DOCUMENTATION_PATHS_JSON, '${{ steps.changes.outputs.documentation_files }}');
-  for (const output of Object.values(workflow.jobs.ci_plan.outputs)) {
+  for (const [name, output] of Object.entries(workflow.jobs.ci_plan.outputs)) {
+    if (!name.startsWith('run_')) continue;
     assert.match(output, /steps\.unmatched\.outputs\.all == 'true'/);
   }
 });
 
-test('protected release-source pushes always run the complete fast source CI set', async () => {
+test('protected pushes cover the complete source except planner-validated notes-only deltas', async () => {
   const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8'));
   assert.deepEqual(workflow.on.push.branches, ['dev', 'preview', 'main']);
 
@@ -346,6 +347,17 @@ test('protected release-source pushes always run the complete fast source CI set
       /github\.event_name == 'push'/,
       `${outputName} must cover the whole protected-branch head instead of only the latest push delta`,
     );
+  }
+
+  const notes = workflow.jobs.ci_plan.steps.find((step) => step.id === 'notes');
+  assert.equal(workflow.jobs.ci_plan.permissions.actions, 'read');
+  assert.equal(notes.env.CI_BASE_SHA, '${{ github.event.before }}');
+  assert.equal(notes.env.CI_SOURCE_SHA, '${{ github.sha }}');
+  assert.match(notes.run, /classify-source-ci-paths\.mjs --notes-only/);
+  assert.match(notes.run, /node --test scripts\/release\/release_notes_projection\.contract\.test\.mjs/);
+  for (const [name, output] of Object.entries(workflow.jobs.ci_plan.outputs)) {
+    if (!name.startsWith('run_')) continue;
+    assert.match(output, /steps\.notes\.outputs\.notes_only != 'true' && \(/);
   }
 
   for (const outputName of [

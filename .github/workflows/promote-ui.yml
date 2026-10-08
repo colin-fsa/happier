@@ -71,6 +71,16 @@ on:
           - build_and_publish
   workflow_call:
     inputs:
+      preparation_only:
+        description: "Prepare exact-source OTA and unsigned desktop artifacts without promotion"
+        required: false
+        default: false
+        type: boolean
+      use_prepared:
+        description: "Consume artifacts prepared for this exact source in the current run"
+        required: false
+        default: false
+        type: boolean
       environment:
         description: "Target — Environment (deploy branch)"
         required: true
@@ -262,9 +272,17 @@ jobs:
           SOURCE_REF: ${{ inputs.source_ref }}
           ALLOW_CROSS_PROMOTE: ${{ inputs.allow_cross_promote }}
           BUMP: ${{ inputs.bump }}
+          PREPARATION_ONLY: ${{ inputs.preparation_only }}
+          USE_PREPARED: ${{ inputs.use_prepared }}
         run: |
           set -euo pipefail
           src="$SOURCE_REF"
+          if [ "${PREPARATION_ONLY:-false}" = true ] || [ "${USE_PREPARED:-false}" = true ]; then
+            if [[ ! "$src" =~ ^[a-f0-9]{40}$ ]] || [ "$BUMP" != none ] || { [ "${PREPARATION_ONLY:-false}" = true ] && [ "${USE_PREPARED:-false}" = true ]; }; then
+              echo "Same-run UI preparation requires an exact SHA, no version bump, and one phase." >&2
+              exit 1
+            fi
+          fi
           if [ "$src" = auto ]; then
             if [ "$DEPLOY_ENVIRONMENT" = preview ]; then src=preview; else src=main; fi
           fi
@@ -401,8 +419,10 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
       - name: Enable Corepack
+        if: ${{ !inputs.use_prepared }}
         uses: ./.github/actions/enable-corepack-yarn
       - name: Install candidate dependencies
+        if: ${{ !inputs.use_prepared }}
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
@@ -413,15 +433,18 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
       - name: Verify generated Mermaid WebView bundle
+        if: ${{ !inputs.use_prepared }}
         run: yarn --cwd apps/ui verify:mermaid-webview-bundle
       - name: Run app tests
-        if: inputs.run_tests
+        if: ${{ inputs.run_tests && !inputs.use_prepared }}
         run: |
           yarn --cwd apps/ui test:unit
           yarn --cwd apps/ui test:integration
       - name: Generate release notes manifest
+        if: ${{ !inputs.use_prepared }}
         run: yarn --cwd apps/ui tsx sources/scripts/parseReleaseNotes.ts
       - name: Build release notes assets
+        if: ${{ !inputs.use_prepared }}
         run: node scripts/pipeline/release/release-notes/build-release-notes-assets.mjs --out-dir "$RUNNER_TEMP/release-notes-assets"
       - name: Project approved release notes from exact candidate
         id: release_notes
@@ -457,6 +480,7 @@ jobs:
               }
             '
       - name: Upload release notes assets
+        if: ${{ !inputs.use_prepared }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-release-notes-${{ inputs.environment }}-${{ needs.apply_bump.outputs.release_sha }}
@@ -464,7 +488,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Prepare Android OTA artifact without credentials
-        if: ${{ !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
+        if: ${{ !inputs.use_prepared && !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -474,7 +498,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/android" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Prepare iOS OTA artifact without credentials
-        if: ${{ !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
+        if: ${{ !inputs.use_prepared && !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_SHA: ${{ needs.apply_bump.outputs.release_sha }}
@@ -484,7 +508,7 @@ jobs:
             --input-dir "$RUNNER_TEMP/prepared-ota/ios" --source-sha "$RELEASE_SHA" \
             --eas-cli-version "$EAS_CLI_VERSION"
       - name: Upload prepared OTA artifacts
-        if: ${{ !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
+        if: ${{ !inputs.use_prepared && !inputs.ui_ota_complete && (inputs.expo_action == 'ota' || inputs.expo_action == 'full') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ui-ota-${{ inputs.environment }}-${{ needs.apply_bump.outputs.release_sha }}
@@ -494,6 +518,7 @@ jobs:
           retention-days: 1
 
   promote:
+    if: ${{ !inputs.preparation_only }}
     needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -672,8 +697,8 @@ jobs:
 
   desktop:
     name: Desktop bundles (Tauri)
-    if: ${{ inputs.desktop_mode != 'none' }}
-    needs: [promote]
+    if: ${{ !cancelled() && inputs.desktop_mode != 'none' && needs.validate_candidate.result == 'success' && (inputs.preparation_only || needs.promote.result == 'success') }}
+    needs: [apply_bump, validate_candidate, promote]
     permissions:
       contents: write
       actions: read
@@ -681,10 +706,12 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
-      source_ref: ${{ needs.promote.outputs.release_sha }}
+      source_ref: ${{ needs.apply_bump.outputs.release_sha }}
+      preparation_only: ${{ inputs.preparation_only }}
+      use_prepared: ${{ inputs.use_prepared }}
       publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       candidate_cli_version: ${{ inputs.candidate_cli_version }}
-      release_message: ${{ needs.promote.outputs.release_notes_github_markdown }}
+      release_message: ${{ needs.validate_candidate.outputs.release_notes_github_markdown }}
       release_notes_id: ${{ inputs.release_notes_id }}
       resume_desktop_artifacts: ${{ inputs.resume_desktop_artifacts }}
       resume_desktop_finalized_artifacts: ${{ inputs.resume_desktop_finalized_artifacts }}

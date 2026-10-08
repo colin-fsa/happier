@@ -81,7 +81,7 @@ export function validateCanonicalCiRun(runValue, expected) {
 
 /**
  * @param {unknown} summaryValue
- * @param {{ runId: string; sourceSha: string; requiredLanes: string[] }} expected
+ * @param {{ runId: string; sourceSha: string; requiredLanes: string[]; allowNotesOnly?: boolean }} expected
  */
 export function validateCiLaneSummary(summaryValue, expected) {
   const summary = requireRecord(summaryValue);
@@ -99,7 +99,21 @@ export function validateCiLaneSummary(summaryValue, expected) {
     if (lane.result !== 'success' && lane.result !== 'skipped') throw new Error(`CI lane summary lane ${lane.id} has an invalid result`);
     lanes.set(lane.id, lane);
   }
-  for (const laneId of expected.requiredLanes) {
+  const planOutputs = lanes.get('ci_plan')?.outputs;
+  const notesOnly = expected.allowNotesOnly !== false
+    && expected.requiredLanes.length === DEFAULT_RELEASE_CI_LANES.length
+    && DEFAULT_RELEASE_CI_LANES.every((lane) => expected.requiredLanes.includes(lane))
+    && planOutputs?.notes_only === 'true';
+  if (notesOnly) {
+    const outputs = requireRecord(planOutputs);
+    if (typeof outputs.notes_base_sha !== 'string' || !/^[0-9a-f]{40}$/u.test(outputs.notes_base_sha)
+      || outputs.notes_base_sha === expected.sourceSha || !/^[1-9][0-9]*$/u.test(String(outputs.notes_base_run_id))
+      || String(outputs.notes_base_run_id) === expected.runId
+      || Object.keys(CLASSIFIED_CI_LANE_GROUPS).some((selection) => outputs[selection] !== 'false')) {
+      throw new Error('CI notes-only source basis is invalid');
+    }
+  }
+  for (const laneId of notesOnly ? ['ci_plan', 'trusted_ref_guard'] : expected.requiredLanes) {
     if (lanes.get(laneId)?.result !== 'success') throw new Error(`CI lane summary required lane ${laneId} did not succeed`);
   }
   if (expected.requiredLanes.includes('ci_plan')) {
@@ -121,6 +135,23 @@ function runGh(args) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(String(result.stderr || result.stdout || '').trim());
   return String(result.stdout ?? '');
+}
+
+/** Verify the existing exact-run artifact, without selecting a different source.
+ * @param {{repository: string; sourceSha: string; sourceBranch: string; runId: string; requiredLanes: string[]; allowNotesOnly?: boolean}} expected
+ */
+export async function verifyCanonicalCiEvidence(expected) {
+  const run = JSON.parse(runGh(['api', `repos/${expected.repository}/actions/runs/${expected.runId}`]));
+  validateCanonicalCiRun(run, expected);
+  const evidenceRoot = await mkdtemp(join(tmpdir(), 'happier-ci-evidence-'));
+  try {
+    runGh(['run', 'download', expected.runId, '--repo', expected.repository, '--name', 'ci-lane-summary', '--dir', evidenceRoot]);
+    const summary = JSON.parse(await readFile(join(evidenceRoot, 'ci-summary.json'), 'utf8'));
+    validateCiLaneSummary(summary, expected);
+  } finally {
+    await rm(evidenceRoot, { recursive: true, force: true });
+  }
+  return run;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -149,17 +180,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (!/^[1-9][0-9]*$/u.test(runId)) throw new Error('--run-id must be a positive integer');
   if (new Set(requiredLanes).size !== requiredLanes.length) throw new Error('--required-lanes must not contain duplicates');
 
-  const run = JSON.parse(runGh(['api', `repos/${repository}/actions/runs/${runId}`]));
-  validateCanonicalCiRun(run, { repository, sourceSha, sourceBranch, runId });
-
-  const evidenceRoot = await mkdtemp(join(tmpdir(), 'happier-ci-evidence-'));
-  try {
-    runGh(['run', 'download', runId, '--repo', repository, '--name', 'ci-lane-summary', '--dir', evidenceRoot]);
-    const summary = JSON.parse(await readFile(join(evidenceRoot, 'ci-summary.json'), 'utf8'));
-    validateCiLaneSummary(summary, { runId, sourceSha, requiredLanes });
-  } finally {
-    await rm(evidenceRoot, { recursive: true, force: true });
-  }
+  const run = await verifyCanonicalCiEvidence({ repository, sourceSha, sourceBranch, runId, requiredLanes });
 
   const output = { runId: Number(runId), runUrl: String(requireRecord(run).html_url ?? ''), sourceSha, sourceBranch };
   const githubOutput = String(values['github-output'] ?? '').trim();

@@ -299,10 +299,19 @@ test('remote release uses one publication decision for publishers and their admi
   const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'));
   const outputs = workflow.jobs.plan.outputs;
 
-  assert.match(outputs.publish_server_runtime_needed, /inputs\.force_deploy == true/);
-  assert.match(outputs.publish_server_runtime_needed, /steps\.plan\.outputs\.changed_server == 'true'/);
-  assert.match(outputs.publish_cli_binaries_needed, /inputs\.force_deploy == true/);
-  assert.match(outputs.publish_cli_binaries_needed, /steps\.plan\.outputs\.changed_cli == 'true'/);
+  for (const [output, planOutput] of [
+    ['publish_server_runtime_needed', 'publish_server_runtime'],
+    ['publish_cli_binaries_needed', 'publish_cli_binaries'],
+    ['publish_ui_web_needed', 'publish_ui_web'],
+    ['publish_docker_relay_needed', 'publish_docker_relay'],
+    ['publish_docker_dev_box_needed', 'publish_docker_dev_box'],
+  ]) {
+    assert.match(outputs[output], new RegExp(`steps\\.bump_plan\\.outputs\\.${planOutput} == 'true'`));
+    assert.doesNotMatch(outputs[output], /steps\.plan\.outputs\.changed_|inputs\.force_deploy/);
+  }
+  const planner = workflow.jobs.plan.steps.find((step) => step.id === 'bump_plan');
+  assert.equal(planner.env.FORCE_DEPLOY, '${{ inputs.force_deploy }}');
+  assert.match(planner.run, /--force-deploy "\$\{FORCE_DEPLOY\}"/);
   assert.match(workflow.jobs.publish_server_runtime.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
   assert.match(workflow.jobs.publish_cli_binaries.if, /needs\.plan\.outputs\.publish_cli_binaries_needed == 'true'/);
   assert.doesNotMatch(JSON.stringify(workflow.jobs.mysql_db_contract), /deploy_targets/);

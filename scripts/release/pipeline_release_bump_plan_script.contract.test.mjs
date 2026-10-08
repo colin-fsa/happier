@@ -5,9 +5,77 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { classifyChangedPaths, deriveVersionedComponentChanges } from '../pipeline/release/component-registry.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
+
+for (const scenario of [
+  { targets: 'ui', force: false, cli: false, server: false, ui: true, relay: false, devBox: false },
+  { targets: 'cli', force: false, cli: true, server: false, ui: false, relay: false, devBox: true },
+  { targets: 'server', force: false, cli: false, server: true, ui: false, relay: true, devBox: false },
+  { targets: 'server_runner', force: false, cli: false, server: true, ui: false, relay: true, devBox: false },
+  { targets: 'ui', force: true, cli: false, server: false, ui: true, relay: false, devBox: false },
+]) {
+  test(`materialized ${scenario.targets} release bounds artifact work to its selected products (force=${scenario.force})`, () => {
+    const output = execFileSync(process.execPath, [
+      resolve(repoRoot, 'scripts/pipeline/release/resolve-bump-plan.mjs'),
+      '--environment', 'preview', '--bump-preset', 'none', '--require-materialized',
+      '--deploy-targets', scenario.targets, ...(scenario.force ? ['--force-deploy', 'true'] : []),
+      '--changed-ui', 'true', '--changed-cli', 'true', '--changed-stack', 'true',
+      '--changed-server', 'true', '--changed-website', 'true', '--changed-shared', 'true',
+    ], { cwd: repoRoot, encoding: 'utf8' });
+    const plan = JSON.parse(output);
+    assert.equal(plan.publish_cli_binaries, scenario.cli);
+    assert.equal(plan.publish_server_runtime, scenario.server);
+    assert.equal(plan.publish_ui_web, scenario.ui);
+    assert.equal(plan.publish_docker_relay, scenario.relay);
+    assert.equal(plan.publish_docker_dev_box, scenario.devBox);
+    for (const component of ['app', 'cli', 'stack', 'server', 'website']) {
+      assert.equal(plan[`bump_${component}`], 'none');
+    }
+    assert.equal(plan.should_bump, false);
+  });
+}
+
+test('unchanged server deployment retains its artifacts until a selected force-deploy', () => {
+  const args = [
+    resolve(repoRoot, 'scripts/pipeline/release/resolve-bump-plan.mjs'),
+    '--environment', 'preview', '--bump-preset', 'none', '--require-materialized',
+    '--deploy-targets', 'server', '--changed-ui', 'true', '--changed-cli', 'true',
+    '--changed-stack', 'true', '--changed-server', 'false', '--changed-website', 'false',
+    '--changed-shared', 'false', '--versioned-server-changed', 'false',
+  ];
+  for (const force of [false, true]) {
+    const output = execFileSync(process.execPath, [...args, '--force-deploy', String(force)], { cwd: repoRoot, encoding: 'utf8' });
+    const plan = JSON.parse(output);
+    assert.equal(plan.publish_server_runtime, force);
+    assert.equal(plan.publish_docker_relay, force);
+    assert.equal(plan.publish_cli_binaries, false);
+    assert.equal(plan.publish_ui_web, false);
+  }
+});
+
+test('shared protocol changes inform the component map without expanding an explicit UI scope', () => {
+  const changed = deriveVersionedComponentChanges(classifyChangedPaths(['packages/protocol/src/index.ts']));
+  assert.deepEqual({ ...changed }, { app: true, cli: true, stack: true, server: true });
+  const output = execFileSync(process.execPath, [
+    resolve(repoRoot, 'scripts/pipeline/release/resolve-bump-plan.mjs'),
+    '--environment', 'preview', '--bump-preset', 'none', '--require-materialized',
+    '--deploy-targets', 'ui', '--changed-ui', String(changed.app),
+    '--changed-cli', String(changed.cli), '--changed-stack', String(changed.stack),
+    '--changed-server', String(changed.server), '--changed-website', 'false', '--changed-shared', 'true',
+  ], { cwd: repoRoot, encoding: 'utf8' });
+  const plan = JSON.parse(output);
+  assert.equal(plan.publish_ui_web, true);
+  assert.equal(plan.publish_cli, false);
+  assert.equal(plan.publish_stack, false);
+  assert.equal(plan.publish_server, false);
+  assert.equal(plan.publish_cli_binaries, false);
+  assert.equal(plan.publish_server_runtime, false);
+  assert.equal(plan.publish_docker_relay, false);
+  assert.equal(plan.publish_docker_dev_box, false);
+});
 
 test('resolve-bump-plan computes bump + publish flags from changed components and deploy_targets', async () => {
   const out = execFileSync(
@@ -47,6 +115,11 @@ test('resolve-bump-plan computes bump + publish flags from changed components an
     publish_cli: true,
     publish_stack: true,
     publish_server: false,
+    publish_cli_binaries: true,
+    publish_server_runtime: false,
+    publish_ui_web: true,
+    publish_docker_relay: false,
+    publish_docker_dev_box: true,
     bump_app: 'patch',
     bump_cli: 'none',
     bump_stack: 'patch',
@@ -173,6 +246,11 @@ test('resolve-bump-plan honors per-component versioned change inputs over global
     publish_cli: true,
     publish_stack: true,
     publish_server: true,
+    publish_cli_binaries: true,
+    publish_server_runtime: true,
+    publish_ui_web: true,
+    publish_docker_relay: true,
+    publish_docker_dev_box: true,
     bump_app: 'none',
     bump_cli: 'patch',
     bump_stack: 'none',

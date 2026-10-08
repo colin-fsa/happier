@@ -485,16 +485,47 @@ jobs:
       allow_stable: false
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
 
+  prepare_ui_mobile:
+    name: Prepare UI mobile OTA (dev)
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
+    needs: [prepare_release_candidate, verify_source_ci]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-ui-mobile-dev.yml
+    secrets: inherit
+    with:
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      preparation_only: true
+      publish_ota: true
+      publish_android_apk: false
+      submit_ios_testflight: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
+  prepare_ui_desktop:
+    name: Prepare unsigned UI desktop (dev)
+    if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
+    needs: [prepare_release_candidate, verify_source_ci]
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      environment: dev
+      resume_run_id: ${{ inputs.resume_run_id }}
+      source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      preparation_only: true
+      publish_release: false
+      release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
+
   ui_mobile:
     name: UI mobile (dev)
     permissions:
       actions: write
       contents: write
-    needs: [prepare_release_candidate, release_verify]
+    needs: [prepare_release_candidate, release_verify, prepare_ui_mobile]
     uses: ./.github/workflows/publish-ui-mobile-dev.yml
     secrets: inherit
     with:
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      use_prepared: true
       publish_ota: true
       publish_android_apk: true
       submit_ios_testflight: true
@@ -503,13 +534,14 @@ jobs:
 
   ui_desktop:
     name: UI desktop (Tauri) (dev)
-    needs: [prepare_release_candidate, cli, release_verify]
+    needs: [prepare_release_candidate, cli, release_verify, prepare_ui_desktop]
     uses: ./.github/workflows/build-tauri.yml
     secrets: inherit
     with:
       environment: dev
       resume_run_id: ${{ inputs.resume_run_id }}
       source_ref: ${{ needs.prepare_release_candidate.outputs.source_sha }}
+      use_prepared: true
       publish_release: true
       candidate_cli_version: ${{ needs.cli.outputs.version }}
       release_message: ${{ needs.prepare_release_candidate.outputs.release_message }}
