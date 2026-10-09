@@ -28,7 +28,7 @@ test('iOS submission uses trusted control while retaining candidate build bytes 
 
 test('build-ui-mobile-local workflow delegates selectable cloud or local builds to ui-mobile-release pipeline command', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
-  assert.match(src, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(src, /node \.mobile-control\/scripts\/pipeline\/run\.mjs ui-mobile-release/);
   assert.match(src, /native_build_mode:/);
   assert.match(src, /description: "EAS build runner"/);
   assert.match(src, /default: local/);
