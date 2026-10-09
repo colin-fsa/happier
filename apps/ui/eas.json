@@ -292,7 +292,7 @@
       },
       "android": {
         "track": "production",
-        "releaseStatus": "draft"
+        "releaseStatus": "completed"
       }
     }
   }

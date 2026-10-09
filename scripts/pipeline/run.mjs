@@ -31,6 +31,8 @@ import {
   supportsMobileNativeSubmit,
 } from './expo/mobile-release-environments.mjs';
 import { resolveTestflightDistributionConfig } from './expo/testflight-distribution-config.mjs';
+import { readBoundStoreNotes } from './release/release-notes/project-release-notes.mjs';
+import { requireGooglePlayCredential } from './expo/google-play-publish.mjs';
 import {
   formatPublicReleaseChannel,
   formatPublicReleaseChannelChoices,
@@ -684,7 +686,7 @@ function runExpoNativeBuild({ repoRoot, env, args, dryRun }) {
  * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
  */
 function runExpoSubmit({ repoRoot, env, args, dryRun }) {
-  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'submit.mjs');
+  const scriptPath = fileURLToPath(new URL('./expo/submit.mjs', import.meta.url));
   const fullArgs = [scriptPath, ...args];
   if (dryRun) {
     console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
@@ -700,7 +702,7 @@ function runExpoSubmit({ repoRoot, env, args, dryRun }) {
  * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
  */
 function runExpoTestflightDistribute({ repoRoot, env, args, dryRun }) {
-  const scriptPath = path.join(repoRoot, 'scripts', 'pipeline', 'expo', 'testflight-distribute.mjs');
+  const scriptPath = fileURLToPath(new URL('./expo/testflight-distribute.mjs', import.meta.url));
   const fullArgs = [scriptPath, ...args];
   if (dryRun) {
     console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
@@ -710,6 +712,16 @@ function runExpoTestflightDistribute({ repoRoot, env, args, dryRun }) {
     env,
     stdio: 'inherit',
   });
+}
+
+/**
+ * @param {{ repoRoot: string; env: Record<string, string>; args: string[]; dryRun: boolean }} opts
+ */
+function runExpoStorePublish({ repoRoot, env, args, dryRun }) {
+  const scriptPath = fileURLToPath(new URL('./expo/store-publish.mjs', import.meta.url));
+  const fullArgs = [scriptPath, ...args];
+  if (dryRun) console.log(`[pipeline] exec: node ${fullArgs.map((a) => JSON.stringify(a)).join(' ')}`);
+  execFileSync(process.execPath, fullArgs, { cwd: repoRoot, env, stdio: 'inherit' });
 }
 
 /**
@@ -2352,7 +2364,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     return;
   }
 
-    if (subcommand === 'expo-submit') {
+  if (subcommand === 'expo-submit') {
       const { values } = parseArgs({
         args: rest,
         options: {
@@ -2364,6 +2376,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           interactive: { type: 'string', default: 'auto' },
           'eas-cli-version': { type: 'string', default: '' },
           'android-release-status': { type: 'string', default: 'draft' },
+          'release-notes-json': { type: 'string', default: '' },
+          'source-sha': { type: 'string', default: '' },
+          'release-id': { type: 'string', default: '' },
+          'app-version': { type: 'string', default: '' },
+          'android-version-code': { type: 'string', default: '' },
           wait: { type: 'string', default: 'true' },
           'dry-run': { type: 'boolean', default: false },
           'secrets-source': { type: 'string', default: 'auto' },
@@ -2438,6 +2455,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
           '--android-release-status',
           androidReleaseStatus,
+          ...['release-notes-json', 'source-sha', 'release-id', 'app-version', 'android-version-code'].flatMap((flag) => {
+            const value = String(values[flag] ?? '').trim();
+            return value ? [`--${flag}`, value] : [];
+          }),
           ...(wait ? ['--wait', wait] : []),
           ...(dryRun ? ['--dry-run'] : []),
         ],
@@ -2780,6 +2801,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
         'fingerprint-mode': { type: 'string', default: 'always' },
         'preflight-only': { type: 'boolean', default: false },
         'testflight-distribution-mode': { type: 'string', default: 'inline' },
+        'release-notes-json': { type: 'string', default: '' },
+        'source-sha': { type: 'string', default: '' },
+        'release-id': { type: 'string', default: '' },
+        'app-version': { type: 'string', default: '' },
         'release-message': { type: 'string', default: '' },
         'runtime-version': { type: 'string', default: '' },
         'ui-version-bump': { type: 'string', default: '' },
@@ -2867,6 +2892,20 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
     if (runtimeVersion && action !== 'ota') {
       fail('--runtime-version is supported only for --action ota.');
     }
+    const productionStoreSubmit = environment === 'production' && action === 'native_submit';
+    if (productionStoreSubmit && (uiVersionBump || uiVersion)) {
+      fail('Production native submission uses the UI version bound to --release-notes-json; prepare version changes before projecting release notes.');
+    }
+    const releaseNotesJson = String(values['release-notes-json'] ?? '').trim();
+    const storeSourceSha = String(values['source-sha'] ?? '').trim();
+    const storeReleaseId = String(values['release-id'] ?? '').trim();
+    const storeAppVersion = String(values['app-version'] ?? '').trim();
+    const storeBindingArgs = productionStoreSubmit ? [
+      '--release-notes-json', releaseNotesJson,
+      '--source-sha', storeSourceSha,
+      '--release-id', storeReleaseId,
+      '--app-version', storeAppVersion,
+    ] : [];
 
     const nativeBuildModeRaw = String(values['native-build-mode'] ?? '').trim().toLowerCase() || 'cloud';
     if (nativeBuildModeRaw !== 'cloud' && nativeBuildModeRaw !== 'local') {
@@ -2931,7 +2970,31 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
       console.log(`[pipeline] loaded secrets from Keychain service '${keychainService}'`);
     }
 
+    if (productionStoreSubmit) {
+      if (!releaseNotesJson) fail('--release-notes-json is required for production native submission.');
+      const checkedOutSourceSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim();
+      const checkedOutAppVersion = String(JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps/ui/package.json'), 'utf8')).version ?? '').trim();
+      if (storeSourceSha !== checkedOutSourceSha || storeAppVersion !== checkedOutAppVersion) {
+        fail('--source-sha and --app-version must match the exact native build checkout.');
+      }
+      for (const storePlatform of platform === 'all' ? ['android', 'ios'] : [platform]) {
+        readBoundStoreNotes({
+          bundlePath: path.resolve(repoRoot, releaseNotesJson), sourceSha: storeSourceSha,
+          releaseId: storeReleaseId, appVersion: storeAppVersion, platform: storePlatform,
+        });
+      }
+      if (platform === 'android' || platform === 'all') {
+        requireGooglePlayCredential(mergedEnv.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON);
+      }
+    }
+
       if (preflightOnly) {
+        if (productionStoreSubmit) {
+          console.log('[pipeline] ui-mobile release: production store notes and publishing prerequisites validated.');
+          return;
+        }
         const shouldHandleIos = platform === 'ios' || platform === 'all';
         if (!shouldHandleIos) {
           console.log('[pipeline] ui-mobile release: no iOS TestFlight configuration to validate.');
@@ -3074,7 +3137,7 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           });
         }
       } else {
-        const waitForCloudBuild = action !== 'native_submit';
+        const waitForCloudBuild = action !== 'native_submit' || (productionStoreSubmit && shouldHandleAndroid);
         runExpoNativeBuild({
           repoRoot,
           env: mergedEnv,
@@ -3224,9 +3287,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 '--path',
                 rel,
                 '--wait',
-                'false',
+                productionStoreSubmit && p === 'android' ? 'true' : 'false',
                 '--android-release-status',
                 androidReleaseStatus,
+                ...storeBindingArgs,
                 ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
                 ...(dryRun ? ['--dry-run'] : []),
               ],
@@ -3287,9 +3351,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
                 p,
                 ...(explicitId ? ['--id', explicitId] : []),
                 '--wait',
-                'false',
+                productionStoreSubmit && p === 'android' ? 'true' : 'false',
                 '--android-release-status',
                 androidReleaseStatus,
+                ...storeBindingArgs,
                 ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
                 ...(dryRun ? ['--dry-run'] : []),
               ],
@@ -3299,6 +3364,21 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
 
         const shouldHandleIos = platform === 'ios' || platform === 'all';
         if (shouldHandleIos) {
+          if (productionStoreSubmit) {
+            if (testflightDistributionMode === 'deferred') {
+              console.log('[pipeline] ui-mobile release: App Store publication deferred to the recovery workflow.');
+            } else if (dryRun || nativeBuildMode === 'local' || cloudBuildPresence.ios) {
+              runExpoStorePublish({
+                repoRoot, env: mergedEnv, dryRun,
+                args: [
+                  '--platform', 'ios', '--environment', 'production', '--profile', 'production',
+                  '--build-json', buildJsonForPlatform('ios'), ...storeBindingArgs,
+                  ...(easCliVersion ? ['--eas-cli-version', easCliVersion] : []),
+                  ...(dryRun ? ['--dry-run'] : []),
+                ],
+              });
+            }
+          }
           const testflightDistribution = resolveTestflightDistributionConfig({
             environment,
             env: mergedEnv,
