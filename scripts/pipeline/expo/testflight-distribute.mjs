@@ -54,7 +54,11 @@ async function resolveBuildForDistribution({ request, ascAppId, buildNumber, app
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (true) {
     const build = await resolveAscBuildIdentity({ request, ascAppId, buildNumber, appVersion });
-    const match = build ? { build, buildId: build.id, processingState: build.attributes?.processingState } : null;
+    const match = build ? {
+      build,
+      buildId: String(build.id ?? '').trim(),
+      processingState: String(build.attributes?.processingState ?? '').trim(),
+    } : null;
     if (match && (!waitProcessing || match.processingState === 'VALID')) {
       return match.build;
     }

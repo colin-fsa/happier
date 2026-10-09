@@ -18,13 +18,18 @@ export async function resolveAscBuildIdentity({ request, ascAppId, buildNumber, 
   const url = new URL(buildAscBuildsListUrl({ ascAppId }));
   if (platform) url.searchParams.set('filter[preReleaseVersion.platform]', platform);
   for await (const body of ascPages({ request, url: url.toString() })) {
-    const versions = new Map((body?.included ?? []).filter((row) => row.type === 'preReleaseVersions').map((row) => [row.id, row]));
-    for (const build of body?.data ?? []) {
-      const train = versions.get(build?.relationships?.preReleaseVersion?.data?.id)?.attributes;
-      if (build?.id && String(build?.attributes?.version ?? '') === buildNumber && (!appVersion || train?.version === appVersion) && (!platform || train?.platform === platform)) matches.push(build);
+    const versions = new Map((Array.isArray(body?.included) ? body.included : [])
+      .filter((row) => String(row?.type ?? '').trim() === 'preReleaseVersions' && String(row?.id ?? '').trim())
+      .map((row) => [String(row?.id ?? '').trim(), row]));
+    for (const build of Array.isArray(body?.data) ? body.data : []) {
+      const trainId = String(build?.relationships?.preReleaseVersion?.data?.id ?? '').trim();
+      const train = versions.get(trainId)?.attributes;
+      if (String(build?.id ?? '').trim() && String(build?.attributes?.version ?? '').trim() === buildNumber
+        && (!appVersion || String(train?.version ?? '').trim() === appVersion)
+        && (!platform || String(train?.platform ?? '').trim() === platform)) matches.push(build);
     }
   }
-  matches.sort((a, b) => Date.parse(b.attributes?.uploadedDate || '1970-01-01') - Date.parse(a.attributes?.uploadedDate || '1970-01-01'));
+  matches.sort((a, b) => Date.parse(String(b.attributes?.uploadedDate ?? '').trim() || '1970-01-01') - Date.parse(String(a.attributes?.uploadedDate ?? '').trim() || '1970-01-01'));
   return matches[0] ?? null;
 }
 export function createJwt({ issuerId, keyId, privateKeyPem }) {

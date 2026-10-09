@@ -33,6 +33,12 @@ test('production exact-build selection distinguishes iOS from another Apple plat
   assert.equal(result.id, 'ios');
 });
 
+test('shared build selection preserves existing TestFlight normalization of ASC resource identifiers and versions', async () => {
+  const build = { id: ' build ', attributes: { version: ' 42 ', uploadedDate: ' 2026-09-10T00:00:00Z ', processingState: ' VALID ' }, relationships: { preReleaseVersion: { data: { id: ' train ' } } } };
+  const result = await resolveAscBuildIdentity({ ascAppId: 'app', buildNumber: '42', appVersion: '1.2.3', request: async () => ({ data: [build], included: [{ type: ' preReleaseVersions ', id: ' train ', attributes: { version: ' 1.2.3 ' } }] }) });
+  assert.equal(result, build);
+});
+
 test('production EAS identity must bind an iOS artifact to the release source while preview retains its original identity contract', () => {
   const payload = { appVersion: '1.2.3', appBuildVersion: '42', platform: 'IOS', gitCommitHash: 'bound-source' };
   assert.deepEqual(readEasBuildIdentity(payload, { expectedSourceSha: 'bound-source' }), { buildNumber: '42', appVersion: '1.2.3' });
