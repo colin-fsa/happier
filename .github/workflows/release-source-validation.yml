@@ -192,6 +192,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     uses: ./.github/workflows/extended-db-tests.yml
     with:
       checkout_sha: ${{ needs.source_plan.outputs.source_sha }}
@@ -208,6 +209,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     uses: ./.github/workflows/tests.yml
     with:
       checkout_sha: ${{ needs.source_plan.outputs.source_sha }}

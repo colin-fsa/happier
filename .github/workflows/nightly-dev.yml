@@ -491,6 +491,7 @@ jobs:
     needs: [prepare_release_candidate, verify_source_ci]
     permissions:
       contents: write
+      actions: write
     uses: ./.github/workflows/publish-ui-mobile-dev.yml
     secrets: inherit
     with:
