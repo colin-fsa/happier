@@ -373,7 +373,8 @@ test('promote-ui native_submit uses the shared Expo submit script and reports pr
   assert.doesNotMatch(buildUiMobileLocal, /node scripts\/pipeline\/run\.mjs expo-submit/);
 
   const run = await loadFile('scripts/pipeline/run.mjs');
-  assert.match(run, /path\.join\(repoRoot,\s*'scripts',\s*'pipeline',\s*'expo',\s*'submit\.mjs'\)/);
+  assert.match(run, /fileURLToPath\(new URL\('\.\/expo\/submit\.mjs',\s*import\.meta\.url\)\)/,
+    'submission must use the trusted control script, not candidate-owned code');
 
   const script = await loadFile('scripts/pipeline/expo/submit.mjs');
   assert.match(script, /\['ios', 'android'\]/);
