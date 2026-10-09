@@ -190,6 +190,7 @@ function expandPromptText(contentText: string): readonly string[] {
 
 function readUserPromptTexts(message: RawJSONLines): readonly string[] {
   if (message.type !== 'user') return [];
+  if (readObject((message as Record<string, unknown>).origin)?.kind === 'peer') return [];
   if ((message as Record<string, unknown>).isMeta === true) return [];
   const content = message.message?.content;
   const textParts = readContentTextParts(content);

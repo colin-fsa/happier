@@ -18,6 +18,7 @@ import { normalizeClaudeToolUseNamesInSdkMessage } from './normalizeClaudeToolUs
 import { providers } from '@happier-dev/agents'
 import { buildClaudeSdkResultUsageTelemetry } from './sdkResultUsageTelemetry'
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers'
+import { formatClaudePeerMessageText, projectClaudePeerMessage } from '../attachments/claudePeerMessageProjection'
 
 /**
  * Context for converting SDK messages to log format
@@ -115,7 +116,7 @@ export class SDKToLogConverter {
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
         const rawType = (sdkMessage as any)?.type;
-        if (providers.claude.isClaudeInternalEventType(rawType)) {
+        if (providers.claude.isClaudeInternalEventType(rawType) && rawType !== 'attachment') {
             return null;
         }
 
@@ -144,6 +145,13 @@ export class SDKToLogConverter {
             timestamp
         }
 
+        const peerMessage = projectClaudePeerMessage({ ...sdkMessage, ...baseFields });
+        if (peerMessage) {
+            if (!isSidechain) this.lastMainUuid = uuid;
+            return peerMessage;
+        }
+        if (providers.claude.isClaudeInternalEventType(rawType)) return null;
+
         let logMessage: RawJSONLines | null = null
         let shouldUpdateLastMainUuid = true
 
@@ -151,10 +159,16 @@ export class SDKToLogConverter {
             case 'user': {
                 const userMsg = sdkMessage as SDKUserMessage
                 const toolUseResult = (sdkMessage as any)?.tool_use_result as unknown;
+                const peerOrigin = asRecord(userMsg.origin);
+                const peerName = typeof peerOrigin?.name === 'string' && peerOrigin.name.trim() ? peerOrigin.name.trim() : null;
+                const message = peerOrigin?.kind === 'peer' && typeof userMsg.message.content === 'string'
+                    ? { ...userMsg.message, content: formatClaudePeerMessageText(peerName, userMsg.message.content) }
+                    : userMsg.message;
                 logMessage = {
                     ...baseFields,
                     type: 'user',
-                    message: userMsg.message
+                    message,
+                    ...(userMsg.origin ? { origin: userMsg.origin } : {}),
                 }
 
                 if (toolUseResult !== undefined && Array.isArray(userMsg.message.content)) {

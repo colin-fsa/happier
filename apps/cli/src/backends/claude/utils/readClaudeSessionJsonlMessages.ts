@@ -51,11 +51,11 @@ export async function readClaudeSessionJsonlMessages(params: Readonly<{
         logger.debug(`[${params.logLabel}] Error observing raw message: ${observerError}`);
       }
 
-      if (providers.claude.isClaudeInternalEventType(raw?.type)) {
+      const parsed = parseRawJsonLinesObject(raw);
+      if (providers.claude.isClaudeInternalEventType(parsed?.type ?? raw?.type)) {
         continue;
       }
 
-      const parsed = parseRawJsonLinesObject(raw);
       if (!parsed) {
         continue;
       }

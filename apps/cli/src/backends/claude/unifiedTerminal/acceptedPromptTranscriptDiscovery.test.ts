@@ -6,6 +6,17 @@ import { createClaudeUnifiedInputArbiter } from './createClaudeUnifiedInputArbit
 import { createClaudeUnifiedAcceptedPromptTranscriptDiscovery } from './acceptedPromptTranscriptDiscovery';
 
 describe('createClaudeUnifiedAcceptedPromptTranscriptDiscovery', () => {
+  it('never treats native peer content as delivery of an accepted human prompt', () => {
+    const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({ acceptedPromptWindowMs: 5_000, nowMs: () => 2_000 });
+    discovery.recordAcceptedPrompt({ message: 'same visible text', acceptedAtMs: 1_000 });
+    const peer = { type: 'user', uuid: 'native-peer', sessionId: 'recipient', timestamp: new Date(1_100).toISOString(),
+      origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' },
+      message: { content: 'same visible text' } } satisfies RawJSONLines;
+    expect(discovery.findMatchingTranscript([peer])).toBeNull();
+    expect(discovery.consumeAcceptedPromptTranscriptEcho(peer)).toBe(false);
+    expect(discovery.findMatchingTranscript([{ ...peer, uuid: 'human-prompt', origin: { kind: 'human' } }])).not.toBeNull();
+  });
+
   it('retains one exact authenticated hook echo identity after the accepted batch correlation retires', () => {
     const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
       acceptedPromptWindowMs: 5_000,

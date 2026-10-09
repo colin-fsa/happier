@@ -91,6 +91,19 @@ describe('readClaudeSessionJsonlMessages', () => {
     ]);
   });
 
+  it('includes delivered native peer attachments while observing their original envelope', async () => {
+    tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-peer-'));
+    const sessionFilePath = join(tmpRoot, 'sess.jsonl');
+    const delivered = { type: 'attachment', uuid: 'file-peer', attachment: { type: 'queued_command',
+      prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>' } };
+    await writeFile(sessionFilePath, JSON.stringify(delivered) + '\n');
+    const observed: unknown[] = [];
+    const messages = await readClaudeSessionJsonlMessages({ sessionFilePath, logLabel: 'TEST', onJsonValue: value => observed.push(value) });
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ type: 'user', uuid: 'file-peer', origin: { kind: 'peer', name: 'Sender' } });
+    expect(observed).toEqual([delivered]);
+  });
+
   it('drops Claude-internal state records that are not conversation content', async () => {
     tmpRoot = await mkdtemp(join(tmpdir(), 'happier-claude-jsonl-'));
     const sessionFilePath = join(tmpRoot, 'sess.jsonl');

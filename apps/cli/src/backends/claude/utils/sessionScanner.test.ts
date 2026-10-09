@@ -994,6 +994,30 @@ describe('sessionScanner', () => {
     expect((sidechainMsg as any).sidechainId).toBe(sidechainId)
   })
 
+  it('publishes delivered native peer attachments from history and the live tail without queued prompts', async () => {
+    const sessionId = '58585858-5858-4585-8585-585858585858'
+    const delivered = createDeferred<void>()
+    const sessionFile = join(projectDir, `${sessionId}.jsonl`)
+    const peer = (uuid: string) => ({ type: 'attachment', uuid, sessionId, attachment: { type: 'queued_command',
+      prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>' } })
+    await writeFile(sessionFile, JSON.stringify(peer('historical-peer')) + '\n')
+    scanner = await createSessionScanner({ sessionId, replayInitialMessages: true, workingDirectory: testDir, onMessage: message => {
+      collectedMessages.push(message)
+      if (message.uuid === 'peer-sentinel') delivered.resolve()
+    } })
+    await appendFile(sessionFile, [
+      { type: 'queue-operation', operation: 'enqueue', content: peer('not-delivered').attachment.prompt },
+      { type: 'attachment', uuid: 'human-queued', attachment: { type: 'queued_command', prompt: 'ordinary queued prompt', origin: { kind: 'human' } } },
+      peer('live-peer'), { type: 'user', uuid: 'peer-sentinel', message: { content: 'sentinel' } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n')
+    await delivered.promise
+    expect(collectedMessages.map(message => message.uuid)).toEqual(['historical-peer', 'live-peer', 'peer-sentinel'])
+    for (const message of collectedMessages.slice(0, 2)) {
+      expect(message).toMatchObject({ type: 'user', origin: { kind: 'peer', name: 'Sender' },
+        message: { content: 'From Sender:\n\nDelivered' } })
+    }
+  })
+
   it('rewrites <task-notification> user text into a Task tool_result update (and does not emit the raw XML)', async () => {
     scanner = await createSessionScanner({
       sessionId: null,

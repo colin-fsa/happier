@@ -1205,6 +1205,7 @@ export async function claudeRemoteLauncher(
     ) => publisher?.dispose();
     let refreshInFlightSteerAvailability: (() => Promise<ClaudeInFlightSteerAvailabilitySnapshot>) | null = null;
     let applyActiveLaunchPermissionMetadata: ReturnType<typeof createClaudeUnifiedTerminalMetadataModeApplier> | null = null;
+    let applyAgentSdkPermissionMode: ((permissionMode: PermissionMode) => Promise<void>) | null = null;
     const inputConsumer = createClaudePendingAwareInputConsumer(session, {
         resolveActiveTurnSteerability: () => (
             inFlightSteerAvailabilitySnapshot.available ? 'steerable' : 'unsteerable'
@@ -1226,6 +1227,7 @@ export async function claudeRemoteLauncher(
             });
             if (!updated) return;
             logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
+            await applyAgentSdkPermissionMode?.(updated);
             await applyActiveLaunchPermissionMetadata?.(updated);
         },
     });
@@ -1593,6 +1595,14 @@ export async function claudeRemoteLauncher(
                     claudeSubscriptionAccessTokenRefreshSelection,
                     streamedTranscriptWriter,
                     setTurnInterrupt: unifiedBinding.sessionOptions.setTurnInterrupt,
+                    setPermissionModeApplier: async (apply: typeof applyAgentSdkPermissionMode) => {
+                        applyAgentSdkPermissionMode = apply;
+                        if (!apply) return;
+                        // Updates may arrive after the first prompt was dequeued but before
+                        // the SDK query registered its live controls. Re-read the same owner.
+                        const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
+                        if (updated) await apply(updated);
+                    },
                     canCallTool: permissionHandler.handleToolCall,
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
@@ -2240,6 +2250,7 @@ export async function claudeRemoteLauncher(
                 disposeAgentSdkInFlightSteerCapabilityPublisher(agentSdkInFlightSteerCapabilityPublisher);
                 agentSdkInFlightSteerCapabilityPublisher = null;
                 refreshInFlightSteerAvailability = null;
+                applyAgentSdkPermissionMode = null;
                 inFlightSteerAvailabilitySnapshot = { available: false, reason: 'unsafe_window' };
                 if (applyActiveLaunchPermissionMetadata === applyUnifiedTerminalPermissionMetadata) {
                     applyActiveLaunchPermissionMetadata = null;
