@@ -653,7 +653,6 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
   // Managed-server generation identity. The runtime uses this to detect mid-turn server replacement
   // (Lane E). It is tracked only in managed mode; explicit URL / override modes never emit changes.
   let managedServerIdentity: OpenCodeManagedServerIdentity | null = null;
-  let managedServerApiGeneration: 'auto' | 'v2' | null = null;
 
   const captureManagedServerIdentityFromState = (
     state: SharedManagedOpenCodeServerState | null,
@@ -664,7 +663,6 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
       return;
     }
     const nextIdentity = resolveOpenCodeManagedServerIdentity(state);
-    managedServerApiGeneration = nextIdentity.apiGeneration ?? null;
     if (isSameOpenCodeManagedServerGeneration(managedServerIdentity, nextIdentity)) {
       // Same process generation: refresh the normalized fields without surfacing a change.
       managedServerIdentity = nextIdentity;
@@ -807,10 +805,8 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
         return null;
       }
     };
-    if (managedServerApiGeneration === 'v2') {
-      return rememberDetectedGeneration({ kind: 'v2' });
-    }
-    const v2Health = await probe('/api/health');
+    // Persisted readiness hints may come from older clients that mistook stable
+    // /api/health for V2. Resolve routes from the authenticated server contract.
     const legacy = await probe('/global/health');
     const legacyRecord = legacy && typeof legacy === 'object' && !Array.isArray(legacy) ? legacy as Record<string, unknown> : null;
     if (legacyRecord?.healthy === true
@@ -818,6 +814,7 @@ export async function createOpenCodeServerRuntimeClient(params: Readonly<{
       && normalizeOpenCodeCliGeneration(env.HAPPIER_OPENCODE_CLI_GENERATION) !== 'v2') {
       return rememberDetectedGeneration({ kind: 'v1' });
     }
+    const v2Health = await probe('/api/health');
     const v2Info = isOpenCodeServerReadyResponse('/api/health', v2Health)
       ? null
       : await probe('/api/info');
