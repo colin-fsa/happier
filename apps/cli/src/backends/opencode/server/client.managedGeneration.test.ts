@@ -62,9 +62,10 @@ describe('createOpenCodeServerRuntimeClient managed generation authority', () =>
   });
 
   it.each([
-    ['auto', 'v1', '/api/health', '/session'],
-    ['auto', 'v2', '/api/health', '/api/session'],
+    ['auto', 'v1', '/global/health', '/session'],
+    ['auto', 'v2', '/global/health', '/api/session'],
     ['v2', 'v2', '/api/health', '/api/session'],
+    ['v2', 'v1', '/api/health', '/session'],
   ] as const)('uses the canonical health probe for managed %s identity backed by a %s server', async (
     apiGeneration,
     serverGeneration,
@@ -76,16 +77,19 @@ describe('createOpenCodeServerRuntimeClient managed generation authority', () =>
       const path = new URL(req.url ?? '/', 'http://localhost').pathname;
       paths.push(path);
       const body = path === '/global/health' && serverGeneration === 'v1'
-        ? { healthy: true, version: '1.18.25' }
-        : path === '/api/health' && serverGeneration === 'v2'
+        ? { healthy: true, version: '1.18.35' }
+        : path === '/api/health'
           ? { healthy: true }
           : path === '/api/session'
             ? { data: [] }
             : path === '/session'
               ? []
+              : path === '/mcp'
+                ? { happier: { status: 'connected' } }
               : { error: 'not found' };
       const available = (path === '/global/health' && serverGeneration === 'v1')
-        || (path === '/api/health' && serverGeneration === 'v2')
+        || path === '/api/health'
+        || path === '/mcp'
         || path === '/session'
         || path === '/api/session';
       res.writeHead(available ? 200 : 404, {
@@ -100,7 +104,7 @@ describe('createOpenCodeServerRuntimeClient managed generation authority', () =>
     const statePath = join(dir, 'managed-server.json');
     envScope.patch({
       HAPPIER_OPENCODE_SERVER_STATE_PATH: statePath,
-      HAPPIER_OPENCODE_CLI_GENERATION: apiGeneration === 'auto' ? 'stable' : 'v2',
+      HAPPIER_OPENCODE_CLI_GENERATION: serverGeneration === 'v1' ? 'stable' : apiGeneration,
       HAPPIER_OPENCODE_SERVER_URL: undefined,
     });
     writeFileSync(statePath, JSON.stringify({
@@ -121,6 +125,12 @@ describe('createOpenCodeServerRuntimeClient managed generation authority', () =>
       messageBuffer: new MessageBuffer(),
     });
     await expect(client.sessionList()).resolves.toEqual([]);
+    if (serverGeneration === 'v1') {
+      await expect(client.mcpAdd({ name: 'happier', config: { type: 'local', enabled: true } }))
+        .resolves.toEqual({ status: 'connected' });
+      expect(paths).toContain('/mcp');
+      expect(paths).not.toContain('/api/experimental/mcp/happier');
+    }
     await client.dispose();
 
     expect(paths[0]).toBe(firstHealthPath);
