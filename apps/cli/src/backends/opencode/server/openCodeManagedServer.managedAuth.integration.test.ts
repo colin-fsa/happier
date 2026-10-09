@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
+import { createOpenCodeServerRuntimeClient } from './client';
 import { startManagedOpenCodeServer } from './openCodeManagedServer';
 import { openCodePreflightSessionControlsProbeAdapter } from '../preflight/openCodePreflightSessionControlsProbeAdapter';
 import { resolveOpenCodeManagedServerStateCredential } from './openCodeManagedServerCredential';
@@ -64,6 +66,18 @@ const server = http.createServer((req, res) => {
     if (process.env.OPENCODE_TEST_READY_FILE) writeFileSync(process.env.OPENCODE_TEST_READY_FILE, 'ready');
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ healthy: true, version: '1.18.33' })); return;
   }
+  // OpenCode 1.18.35 answers both health routes, but its MCP API remains V1.
+  if (process.env.OPENCODE_TEST_LEGACY_API) {
+    const path = new URL(req.url, 'http://localhost').pathname;
+    if (path === '/api/health' || (path === '/mcp' && req.method === 'POST')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(path === '/api/health' ? { healthy: true } : { happier: { status: 'connected' } }));
+      return;
+    }
+    if (path === '/session/ses_fixture/prompt_async' && req.method === 'POST') {
+      res.writeHead(204); res.end(); return;
+    }
+  }
   if (req.url && req.url.startsWith('/api/info') && process.env.OPENCODE_TEST_LEGACY_API) { res.writeHead(404); res.end(); return; }
   if (req.url && req.url.startsWith('/api/info')) {
     if (process.env.OPENCODE_TEST_READY_FILE) writeFileSync(process.env.OPENCODE_TEST_READY_FILE, 'ready');
@@ -115,9 +129,11 @@ const envKeys = [
   'HAPPIER_OPENCODE_PATH',
   'HAPPIER_OPENCODE_CLI_GENERATION',
   'HAPPIER_OPENCODE_SERVER_STATE_PATH',
+  'HAPPIER_OPENCODE_SERVER_URL',
   'OPENCODE_PASSWORD',
   'OPENCODE_SERVER_PASSWORD',
   'OPENCODE_SERVER_USERNAME',
+  'OPENCODE_TEST_LEGACY_API',
 ] as const;
 
 const TEMP_DIRS = new Set<string>();
@@ -154,6 +170,38 @@ afterEach(() => {
 });
 
 describe('startManagedOpenCodeServer managed credential', () => {
+  it('keeps dual-health V1 prompts working across reuse of a stale persisted V2 hint', async () => {
+    const { root } = await prepareManagedServerEnv();
+    const statePath = join(root, 'managed-server.json');
+    envScope.patch({
+      HAPPIER_OPENCODE_SERVER_STATE_PATH: statePath,
+      HAPPIER_OPENCODE_SERVER_URL: undefined,
+      HAPPIER_OPENCODE_CLI_GENERATION: 'stable',
+      OPENCODE_TEST_LEGACY_API: '1',
+      OPENCODE_SERVER_PASSWORD: 'fixture-password',
+    });
+    try {
+      const first = await createOpenCodeServerRuntimeClient({ directory: root, messageBuffer: new MessageBuffer() });
+      await first.dispose();
+      const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+      expect(state.apiGeneration).toBe('auto');
+      await writeFile(statePath, JSON.stringify({ ...state, apiGeneration: 'v2' }));
+
+      const reused = await createOpenCodeServerRuntimeClient({ directory: root, messageBuffer: new MessageBuffer() });
+      try {
+        await expect(reused.mcpAdd({ name: 'happier', config: { type: 'local', enabled: true } }))
+          .resolves.toEqual({ status: 'connected' });
+        await expect(reused.sessionPromptAsync({ sessionId: 'ses_fixture', parts: [{ type: 'text', text: 'hello' }] }))
+          .resolves.toBeUndefined();
+        expect(JSON.parse(await readFile(statePath, 'utf8')).pid).toBe(state.pid);
+      } finally {
+        await reused.dispose();
+      }
+    } finally {
+      await stopSharedManagedOpenCodeServerFromEnvBestEffort();
+    }
+  }, 30_000);
+
   it('reports failure when the OS refuses to terminate its owned native server', async () => {
     const { root, logsDir } = await prepareManagedServerEnv();
     const pidPath = join(root, 'refused-termination-pid');

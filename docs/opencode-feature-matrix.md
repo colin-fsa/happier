@@ -2,6 +2,8 @@
 
 This document maps the current low-level OpenCode implementation across the CLI, daemon, UI, and test surfaces. It is intended as an implementation inventory for the future unified architecture, not as end-user documentation.
 
+In current development source, automatic server readiness and request dialect detection prefer authenticated V1 `/global/health` before the V2 surfaces. OpenCode 1.18.35 also answers `/api/health` with `{ healthy: true }`, so that marker alone cannot identify V2 when the V1 route exists. Preview V2 keeps its health-marker contract; released V2 keeps `/api/info`. Runtime clients re-detect the dialect instead of trusting a persisted V2 readiness hint from an older Happier client, while retaining the same live server and its credential. Explicit V2 executable selection remains authoritative. These corrections are not a claim about an already published Happier release.
+
 ## Status legend
 
 - `supported`: primary current path
