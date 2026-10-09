@@ -60,6 +60,22 @@ function makeJsonl(lines: unknown[]): string {
 }
 
 describe('ClaudeRemoteSubagentFileCollector', () => {
+  it('imports a delivered peer attachment into its owning Task sidechain instead of dropping it as a prompt root', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-peer-sidechain-'));
+    const file = join(dir, 'agent-recipient.jsonl');
+    await writeFile(file, makeJsonl([{ type: 'attachment', uuid: 'sidechain-peer', isSidechain: true, agentId: 'recipient',
+      attachment: { type: 'queued_command', prompt: '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>' } }]));
+    const imported: RawJSONLines[] = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({ emitImported: body => { imported.push(body); }, watchFile: () => () => {} });
+    try {
+      await collector.registerSidechainFile({ sidechainId: 'recipient-tool', agentId: 'recipient', filePath: file, source: 'task-tool' });
+      await collector.syncAll();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ type: 'user', isSidechain: true, sidechainId: 'recipient-tool',
+        origin: { kind: 'peer', name: 'Sender' }, message: { content: 'From Sender:\n\nDelivered' } });
+    } finally { collector.cleanup(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('imports agent-team subagent JSONL records as sidechains keyed by the Agent tool_use id', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happy-agent-team-sidechains-'));
     const agentId = 'Alpha@team-test';

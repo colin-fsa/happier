@@ -70,6 +70,7 @@ export function coerceToolResultText(content: unknown): string {
 
 export function isPromptRootUserMessage(record: RawJSONLines): boolean {
   if (record.type !== 'user') return false;
+  if (record.origin && typeof record.origin === 'object' && 'kind' in record.origin && record.origin.kind === 'peer') return false;
   if ((record as any).isSidechain !== true) return false;
   const msg = (record as any).message;
   if (!msg || typeof msg !== 'object') return false;

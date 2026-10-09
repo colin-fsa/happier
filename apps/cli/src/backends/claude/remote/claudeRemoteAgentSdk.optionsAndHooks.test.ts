@@ -10,6 +10,8 @@ import {
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
 import { makeMode } from './claudeRemoteAgentSdk.testkit';
+import type { EnhancedMode } from '../loop';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { resolveClaudeProjectId } from '../utils/path';
 
 const ORIGINAL_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
@@ -2181,6 +2183,60 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             if (originalSelection === undefined) delete process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY];
             else process.env[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY] = originalSelection;
         }
+    });
+
+    it('applies permission control while waiting for a prompt and unregisters it on teardown', async () => {
+        let finishQuery: () => void = () => {};
+        const queryFinished = new Promise<void>(resolve => { finishQuery = resolve; });
+        let releaseNextPrompt: () => void = () => {};
+        const nextPrompt = new Promise<null>(resolve => { releaseNextPrompt = () => resolve(null); });
+        type PermissionModeApplier = (permissionMode: EnhancedMode['permissionMode']) => Promise<void>;
+        let applyPermissionMode: PermissionModeApplier | null = null;
+        const getApplier = (): PermissionModeApplier | null => applyPermissionMode;
+        let finishFirstControl: () => void = () => {};
+        const firstControl = new Promise<void>(resolve => { finishFirstControl = resolve; });
+        const setPermissionMode = vi.fn(async () => {}).mockImplementationOnce(() => firstControl);
+        const createQuery: NonNullable<Parameters<typeof claudeRemoteAgentSdk>[0]['createQuery']> = () => ({
+            async *[Symbol.asyncIterator]() {
+                yield { type: 'result' };
+                await queryFinished;
+            },
+            close: finishQuery,
+            setPermissionMode,
+            setModel: async () => {}, setMaxThinkingTokens: async () => {},
+            supportedCommands: async () => [], supportedModels: async () => [],
+        } as unknown as Query); // Only the consumed external SDK query boundary is replaced.
+        let sentInitial = false;
+        const opts = {
+            sessionId: null, transcriptPath: null, path: '/tmp', claudeExecutablePath: '/tmp/claude',
+            canCallTool: async () => ({ behavior: 'allow' as const, updatedInput: {} }), isAborted: () => false,
+            nextMessage: async () => {
+                if (sentInitial) return nextPrompt;
+                sentInitial = true;
+                return { message: 'hello', mode: makeMode() };
+            },
+            onReady: () => {}, onSessionFound: () => {}, onMessage: () => {}, createQuery,
+            setPermissionModeApplier: (apply: typeof applyPermissionMode) => { applyPermissionMode = apply; },
+        };
+        const runner = claudeRemoteAgentSdk(opts);
+        try {
+            await vi.waitFor(() => expect(applyPermissionMode).toBeTypeOf('function'));
+            const apply = getApplier();
+            if (!apply) throw new Error('Expected registered permission mode control');
+            const bypass = apply('yolo');
+            const restore = apply('default');
+            await vi.waitFor(() => expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions'));
+            finishFirstControl();
+            await Promise.all([bypass, restore]);
+            expect(setPermissionMode).toHaveBeenCalledWith('bypassPermissions');
+            expect(setPermissionMode).toHaveBeenLastCalledWith('default');
+        } finally {
+            finishFirstControl();
+            releaseNextPrompt();
+            finishQuery();
+            await runner;
+        }
+        expect(applyPermissionMode).toBeNull();
     });
 
     it('applies live setModel, setPermissionMode, and setMaxThinkingTokens before the next queued message', async () => {
