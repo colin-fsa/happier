@@ -537,9 +537,9 @@ export async function createSessionScanner(opts: {
     }
 
     function parseClaudeJsonlValue(value: unknown): RawJSONLines | null {
-        const type = typeof (value as any)?.type === 'string' ? String((value as any).type) : '';
-        if (providers.claude.isClaudeInternalEventType(type)) return null;
         const parsed = parseRawJsonLinesObject(value);
+        const type = parsed?.type ?? (typeof (value as any)?.type === 'string' ? String((value as any).type) : '');
+        if (providers.claude.isClaudeInternalEventType(type)) return null;
         return parsed ? normalizeClaudeToolUseNamesInRawJsonLines(parsed) : null;
     }
 

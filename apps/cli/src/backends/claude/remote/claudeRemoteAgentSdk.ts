@@ -197,6 +197,8 @@ export async function claudeRemoteAgentSdk(opts: {
      * Used by the remote launcher to implement UI "Abort" without losing context.
      */
     setTurnInterrupt?: ((handler: (() => Promise<void>) | null) => void) | null;
+    /** Shares the launcher's canonical metadata updates with the current streaming query. */
+    setPermissionModeApplier?: ((apply: ((permissionMode: EnhancedMode['permissionMode']) => Promise<void>) | null) => void | Promise<void>) | null;
     onCheckpointCaptured?: (checkpointId: string) => void;
     onCapabilities?: (caps: { slashCommands?: string[]; slashCommandDetails?: Array<{ command: string; description?: string }>; models?: unknown[] }) => void;
     onWorkStateSnapshot?: (snapshot: SessionWorkStateV1) => void | Promise<void>;
@@ -530,21 +532,28 @@ export async function claudeRemoteAgentSdk(opts: {
 
     let lastAppliedRuntimeSettings: RuntimeSettingsSnapshot = resolveDesiredRuntimeSettingsSnapshot(mode);
 
-    const applyRuntimeSettingsUpdatesIfNeeded = async (next: RuntimeSettingsSnapshot): Promise<void> => {
-        if (next.permissionMode !== lastAppliedRuntimeSettings.permissionMode) {
-            await response?.setPermissionMode?.(next.permissionMode);
-            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, permissionMode: next.permissionMode };
-        }
+    let runtimeSettingsUpdate = Promise.resolve();
+    const applyRuntimeSettingsUpdatesIfNeeded = (next: RuntimeSettingsSnapshot): Promise<void> => {
+        const update = runtimeSettingsUpdate.then(async () => {
+            if (next.permissionMode !== lastAppliedRuntimeSettings.permissionMode) {
+                await response?.setPermissionMode?.(next.permissionMode);
+                lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, permissionMode: next.permissionMode };
+            }
 
-        if (next.model !== lastAppliedRuntimeSettings.model) {
-            await response?.setModel?.(next.model ?? undefined);
-            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, model: next.model };
-        }
+            if (next.model !== lastAppliedRuntimeSettings.model) {
+                await response?.setModel?.(next.model ?? undefined);
+                lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, model: next.model };
+            }
 
-        if (next.maxThinkingTokens !== lastAppliedRuntimeSettings.maxThinkingTokens && next.maxThinkingTokens !== undefined) {
-            await response?.setMaxThinkingTokens?.(next.maxThinkingTokens ?? null);
-            lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, maxThinkingTokens: next.maxThinkingTokens };
-        }
+            if (next.maxThinkingTokens !== lastAppliedRuntimeSettings.maxThinkingTokens && next.maxThinkingTokens !== undefined) {
+                await response?.setMaxThinkingTokens?.(next.maxThinkingTokens ?? null);
+                lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, maxThinkingTokens: next.maxThinkingTokens };
+            }
+        });
+        // A rejected control must not prevent the next metadata update or queued prompt
+        // from retrying. Each caller owns reporting its control failure.
+        runtimeSettingsUpdate = update.catch(() => {});
+        return update;
     };
 
     const canCallToolWithModeTransitions = async (
@@ -578,8 +587,9 @@ export async function claudeRemoteAgentSdk(opts: {
             })();
 
             try {
-                await response?.setPermissionMode?.(nextPermissionMode);
-                lastAppliedRuntimeSettings = { ...lastAppliedRuntimeSettings, permissionMode: nextPermissionMode };
+                await applyRuntimeSettingsUpdatesIfNeeded({
+                    ...resolveDesiredRuntimeSettingsSnapshot(mode), permissionMode: nextPermissionMode,
+                });
             } catch (error) {
                 logger.debug('[claudeRemoteAgentSdk] Failed to transition permission mode after ExitPlanMode (non-fatal)', error);
                 opts.onCompletionEvent?.('Failed to transition permission mode after exiting plan mode (non-fatal); continuing.');
@@ -976,6 +986,16 @@ export async function claudeRemoteAgentSdk(opts: {
 	        response = createQuery({
 	            prompt: messages,
 	            options: queryOptions,
+        });
+        await opts.setPermissionModeApplier?.(async (permissionMode) => {
+            if (abortSignal.aborted) return;
+            mode = { ...mode, permissionMode };
+            try {
+                await applyRuntimeSettingsUpdatesIfNeeded(resolveDesiredRuntimeSettingsSnapshot(mode));
+            } catch (error) {
+                logger.debug('[claudeRemoteAgentSdk] Failed to update runtime settings (non-fatal)', error);
+                opts.onCompletionEvent?.('Failed to update runtime settings (non-fatal); continuing.');
+            }
         });
         opts.onWorkflowActivityObserverReady?.();
         await opts.runtimeActivityAdapter?.activateObservation('claude-agent-sdk-provider-observer-installed');
@@ -2319,6 +2339,7 @@ export async function claudeRemoteAgentSdk(opts: {
         }
         throw e;
     } finally {
+        await opts.setPermissionModeApplier?.(null);
         opts.onInFlightSteerAvailabilityChange?.(false);
         opts.setUserMessageSender?.(null);
         opts.setTurnInterrupt?.(null);

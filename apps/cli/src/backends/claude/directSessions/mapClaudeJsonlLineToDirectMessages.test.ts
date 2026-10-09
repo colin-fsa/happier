@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { mapClaudeJsonlLineToDirectMessages } from './mapClaudeJsonlLineToDirectMessages';
 
 describe('mapClaudeJsonlLineToDirectMessages', () => {
+  it('includes delivered cross-session messages as peer output rather than human input', () => {
+    const [item] = mapClaudeJsonlLineToDirectMessages({ fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
+      lineValue: { type: 'attachment', uuid: 'direct-peer', attachment: { type: 'queued_command',
+        prompt: '<cross-session-message from="uds:/tmp/peer.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>' } } });
+    expect(item?.raw).toMatchObject({ role: 'agent', content: { type: 'output', data: { type: 'user',
+      origin: { kind: 'peer', name: 'Sender' }, message: { content: 'From Sender:\n\nDelivered' } } } });
+  });
+
   it.each([
     ['message-less assistant', { type: 'assistant', uuid: 'assistant-api-error', isApiErrorMessage: true }, 'event'],
     [

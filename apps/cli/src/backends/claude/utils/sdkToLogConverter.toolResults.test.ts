@@ -5,6 +5,25 @@ import { convertSDKToLog } from './sdkToLogConverter';
 import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testkit';
 
 describe('SDKToLogConverter tool result mode metadata', () => {
+  it.each(['Delivered', '<cross-session-message from="uds:/tmp/sender.sock" from-name="Sender" from-mode="prompting">Delivered</cross-session-message>'])('preserves native SDK peer origin and displays its sender for %s', content => {
+    const converter = createConverter();
+    const result = converter.convert({ type: 'user', uuid: 'sdk-peer', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' },
+      message: { role: 'user', content } });
+    expect(result?.origin).toEqual({ kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' });
+    if (!result || result.type !== 'user') throw new Error('Missing SDK peer output');
+    expect(result.message.content).toBe('From Sender:\n\nDelivered');
+  });
+
+  it('projects native SDK peer text blocks as visible user content', () => {
+    const result = createConverter().convert({ type: 'user', uuid: 'sdk-peer-blocks', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' },
+      message: { role: 'user', content: [{ type: 'text', text: 'Delivered' }] } });
+    expect(result).toMatchObject({ origin: { kind: 'peer', name: 'Sender' }, message: { content: 'From Sender:\n\nDelivered' } });
+    const toolContent = [{ type: 'tool_result', tool_use_id: 'peer-tool', content: 'Tool outcome' }];
+    const toolResult = createConverter().convert({ type: 'user', uuid: 'sdk-peer-tool', origin: { kind: 'peer', from: 'uds:/tmp/sender.sock', name: 'Sender' },
+      message: { role: 'user', content: toolContent } });
+    expect(toolResult).toMatchObject({ origin: { kind: 'peer' }, message: { content: toolContent } });
+  });
+
   type ClaudeResponseMap = Parameters<typeof createConverter>[0];
   type ClaudeResponseValue = ClaudeResponseMap extends Map<string, infer TValue> | undefined ? TValue : never;
   type ClaudePermissionMode = ClaudeResponseValue extends { mode?: infer TMode } ? TMode : never;

@@ -29,6 +29,21 @@ does not establish message acceptance or foreground activity. UI normalization a
 filters already-persisted internal records, while genuinely unknown output retains
 the unsupported-output diagnostic.
 
+In development source, native cross-session messages use the shared
+`attachments/claudePeerMessageProjection.ts` conversation projector. Delivered
+queued-command attachments become sender-labelled text with native peer provenance;
+ordinary queued commands and queue operations remain internal. The JSONL parser,
+scanner, direct-session reader and SDK converter consume that projection. Peer input
+cannot acknowledge a pending human prompt.
+
+The remote Agent SDK registers its live permission-mode control with the launcher's
+existing metadata consumer. Registration re-reads current permission intent, and
+metadata updates reach the streaming query while idle. Prompt-driven updates and
+ExitPlanMode use the same runtime-settings owner. Claude still owns inbound delivery
+policy: its [non-interactive messaging contract](https://code.claude.com/docs/en/cross-session-messaging#non-interactive-sessions)
+does not expose the terminal approval dialog in `-p` sessions. Happier does not
+override that policy or automatically accept held messages.
+
 ## Session lifecycle surfaces
 
 Development-source Unified Terminal delivery keeps observing canonical Pending
