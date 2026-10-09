@@ -44,6 +44,33 @@ test('cache-hit setup refreshes every declared workspace owner and the root', ()
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
+test('cache-hit setup refreshes a workspace dependency before its dependents', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ci02-postinstall-order-'));
+  const make = (dir, name, extra = {}) => {
+    mkdirSync(join(root, dir), { recursive: true });
+    writeFileSync(join(root, dir, 'package.json'), JSON.stringify({ name, scripts: { postinstall: 'node setup.cjs' }, ...extra }));
+  };
+  make('.', 'root', { workspaces: ['packages/*'] });
+  // `agents` sorts before `protocol` but builds against protocol's setup output.
+  make('packages/agents', 'agents', { dependencies: { protocol: '0.0.0' } });
+  make('packages/protocol', 'protocol');
+  writeFileSync(join(root, 'setup.cjs'), '');
+  writeFileSync(join(root, 'packages/protocol/setup.cjs'), "require('node:fs').writeFileSync('setup-complete', 'built');");
+  writeFileSync(join(root, 'packages/agents/setup.cjs'), "if (!require('node:fs').existsSync('../protocol/setup-complete')) process.exit(3); require('node:fs').writeFileSync('setup-complete', 'built');");
+  const yarn = join(root, 'yarn.cjs');
+  writeFileSync(yarn, `
+    const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
+    const args = process.argv.slice(2); let cwd = process.cwd();
+    if (args[0] === 'workspace') cwd = path.join(cwd, 'packages', args[1]);
+    process.exit(cp.spawnSync(process.execPath, ['setup.cjs'], { cwd, stdio: 'inherit' }).status ?? 1);
+  `);
+  try {
+    const result = spawnSync(process.execPath, [command.pathname], { cwd: root, env: { ...process.env, npm_execpath: yarn }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(existsSync(join(root, 'packages/agents/setup-complete')), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test('ignore-scripts cache verification does not execute workspace code', () => {
   const f = fixture();
   try {
