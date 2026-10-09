@@ -72,14 +72,15 @@ test('desktop finalized recovery restores digest-bound assets without entering s
   const uploaded = reused.steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'));
   assert.equal(uploaded.with.name, jobs.finalize.steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@')).with.name);
   assert.ok(jobs.prepare_assets.needs.includes('reuse_finalized'));
-  const admitsPrepare = (finalizeNeeded, finalizeResult, reuseNeeded, reuseResult) => Function('needs', 'cancelled',
+  const admitsPrepare = (finalizeNeeded, finalizeResult, reuseNeeded, reuseResult, preparationOnly = false) => Function('needs', 'cancelled', 'inputs',
     `return ${jobs.prepare_assets.if.slice(3, -2)}`)({
       resolve_source: { result: 'success', outputs: { finalize_needed: finalizeNeeded, reuse_needed: reuseNeeded } },
       finalize: { result: finalizeResult }, reuse_finalized: { result: reuseResult },
-    }, () => false);
+    }, () => false, { preparation_only: preparationOnly });
   assert.equal(admitsPrepare('true', 'success', 'false', 'skipped'), true);
   assert.equal(admitsPrepare('false', 'skipped', 'true', 'success'), true);
   assert.equal(admitsPrepare('true', 'success', 'true', 'success'), true);
+  assert.equal(admitsPrepare('true', 'success', 'false', 'skipped', true), false);
   for (const failed of ['failure', 'cancelled', 'skipped']) {
     assert.equal(admitsPrepare('true', failed, 'true', 'success'), false);
     assert.equal(admitsPrepare('true', 'success', 'true', failed), false);

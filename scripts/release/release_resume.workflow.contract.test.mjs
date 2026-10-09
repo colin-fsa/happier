@@ -192,6 +192,8 @@ test('full release resume binds the prior run to the same operation and authoriz
   assert.equal(statusProjection.env.CLI_RESUME_VERIFIED, '${{ needs.verify_resume_candidates.outputs.cli_verified }}');
   assert.equal(statusProjection.env.IMMUTABLE_VERIFICATION_RESULT, '${{ needs.verify_release_candidates.result }}');
   assert.match(String(parsed.jobs.plan.outputs.publish_docker_needed), /needs\.resolve_resume\.outputs\.docker_requested == 'true'/);
+  assert.match(String(parsed.jobs.plan.outputs.publish_docker_relay_needed), /docker_requested == 'true' && needs\.resolve_resume\.outputs\.server_requested == 'true'/);
+  assert.match(String(parsed.jobs.plan.outputs.publish_docker_dev_box_needed), /docker_requested == 'true' && needs\.resolve_resume\.outputs\.cli_requested == 'true'/);
   assert.match(String(parsed.jobs.publish_docker.if), /needs\.plan\.outputs\.publish_docker_needed == 'true'/);
   assert.match(String(parsed.jobs.publish_docker.if), /needs\.resolve_resume\.outputs\.docker_complete != 'true'/);
   assert.match(String(parsed.jobs.publish_docker.with.build_relay), /needs\.plan\.outputs\.publish_docker_relay_needed == 'true'/);

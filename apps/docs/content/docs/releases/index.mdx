@@ -33,6 +33,14 @@ first. `preview` is the release-candidate branch that preview builds come from.
 source range *before* promotion, so `main` is a destination rather than a place
 work starts.
 
+The release-control follow-up supports deliberately scoped bug-fix releases.
+A UI web/compatible OTA fix can leave CLI, server, desktop and store versions
+unchanged; CLI-only and server-only releases likewise retain excluded products.
+Shared dependencies and compatibility changes can require a wider scope. OTA
+updates apply only to matching installed runtimes: native dependency or
+configuration changes still require a new native app. These workflow changes
+must be integrated before the narrower publication behavior is available.
+
 <Callout type="info">
   If you are on `stable` and hit something that looks like a known bug, it is
   worth checking whether it is already fixed on `dev`. The gap between the two

@@ -53,6 +53,16 @@ on:
         type: string
   workflow_call:
     inputs:
+      preparation_only:
+        description: "Build unsigned same-run candidates without finalizing or publishing"
+        required: false
+        default: false
+        type: boolean
+      use_prepared:
+        description: "Consume unsigned candidates already prepared in this workflow run"
+        required: false
+        default: false
+        type: boolean
       environment:
         required: true
         type: string
@@ -219,6 +229,8 @@ jobs:
         id: resolve
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
+          PREPARATION_ONLY: ${{ inputs.preparation_only }}
+          USE_PREPARED: ${{ inputs.use_prepared }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RETRY_VERSION: ${{ inputs.retry_version }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
@@ -228,6 +240,12 @@ jobs:
           RELEASE_NOTES_ID: ${{ inputs.release_notes_id }}
         run: |
           set -euo pipefail
+          if [ "${PREPARATION_ONLY:-false}" = true ] || [ "${USE_PREPARED:-false}" = true ]; then
+            if [[ ! "$SOURCE_REF" =~ ^[a-f0-9]{40}$ ]] || [ -n "${RETRY_VERSION:-}" ] || { [ "${PREPARATION_ONLY:-false}" = true ] && [ "${USE_PREPARED:-false}" = true ]; }; then
+              echo "Same-run desktop preparation requires an exact SHA and one phase without retry_version." >&2
+              exit 1
+            fi
+          fi
           source_sha="$(git rev-parse HEAD)"
           if [[ ! "${source_sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Unable to resolve a canonical source SHA from ref '${SOURCE_REF}'" >&2
@@ -339,7 +357,7 @@ jobs:
 
   build:
     name: Build desktop candidate (${{ matrix.platform_key }})
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.build_needed == 'true' }}
+    if: ${{ !cancelled() && !inputs.use_prepared && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.build_needed == 'true' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     needs: [resolve_source]
@@ -501,7 +519,7 @@ jobs:
 
   finalize:
     name: Finalize desktop artifacts (${{ matrix.platform_key }})
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.finalize_needed == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.finalize_needed == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 240
     needs: [resolve_source, build]
@@ -776,7 +794,7 @@ jobs:
 
   reuse_finalized:
     name: Restore finalized desktop artifacts (${{ matrix.platform_key }})
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.reuse_needed == 'true' }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.reuse_needed == 'true' }}
     needs: [resolve_source]
     runs-on: ubuntu-latest
     # Reuse the desktop artifact-consumer budget; download retries alone can exceed 30 minutes.
@@ -826,7 +844,7 @@ jobs:
 
   prepare_assets:
     name: Prepare latest.json + publish assets
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [resolve_source, finalize, reuse_finalized]
@@ -900,7 +918,7 @@ jobs:
     # publish. The release-validation registry decides whether it applies (a production desktop)
     # and which CLI it installs (the candidate, else the published channel CLI); otherwise it
     # reports the skip reason and succeeds without running.
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
     needs: [resolve_source, finalize, reuse_finalized]
     # Linux desktop bundles ship for x86_64 only; hosted ubuntu runners are x86_64 with Docker.
     runs-on: ubuntu-latest
@@ -997,7 +1015,7 @@ jobs:
           if-no-files-found: ignore
 
   publish_preview:
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && inputs.publish_release == true && inputs.environment == 'preview' }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && inputs.publish_release == true && inputs.environment == 'preview' }}
     needs: [prepare_assets, resolve_source]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
@@ -1015,7 +1033,7 @@ jobs:
       clobber: true
 
   publish_dev:
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && inputs.publish_release == true && inputs.environment == 'dev' }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && inputs.publish_release == true && inputs.environment == 'dev' }}
     needs: [prepare_assets, resolve_source]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
@@ -1033,7 +1051,7 @@ jobs:
       clobber: true
 
   publish_stable_release:
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && needs.desktop_setup.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && needs.resolve_source.outputs.retry_version == '' }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && needs.prepare_assets.result == 'success' && needs.desktop_setup.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && needs.resolve_source.outputs.retry_version == '' }}
     needs: [prepare_assets, resolve_source, desktop_setup]
     uses: ./.github/workflows/publish-ui-release.yml
     secrets: inherit
@@ -1056,7 +1074,7 @@ jobs:
   # publication; those bytes were gated when publish_stable_release first published them.
   promote_stable_feed:
     name: Promote immutable desktop release to stable feed
-    if: ${{ !cancelled() && needs.resolve_source.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.resolve_source.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
     needs: [resolve_source, publish_stable_release]
     runs-on: ubuntu-latest
     timeout-minutes: 45

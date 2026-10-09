@@ -1,6 +1,9 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import {
   extractFirstScannedSshKnownHostLine,
+  buildRemoteBootstrapCommand,
+  isRemoteBootstrapUnauthenticatedCliResult,
+  normalizeRemoteBootstrapCliJsonResult,
   resolveSshKnownHostTrust,
   RemoteBootstrapMachineParams,
   RemoteHostTrustResolution,
@@ -10,17 +13,11 @@ import {
 import { runLocalHappierJsonCommand } from './happierCli.js';
 import { scopeProcessEnvToTargetRelay } from './localDaemonCli.js';
 import { buildSshCommand, redactSshText } from '../ssh/index.js';
-import { extractSshHost, normalizeBootstrapChannel, parseFirstJsonObject, resolveDefaultKnownHostsPath, runCommandCapture } from './taskRuntime.js';
+import { extractSshHost, normalizeBootstrapChannel, parseFirstJsonObject, resolveDefaultKnownHostsPath, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
 import { installOrUpdateRelayRuntimeDefault } from './relayRuntimeTasks.js';
-import { installRemoteFirstPartyComponent, resolveRemoteInstalledFirstPartyBinaryPath } from './remoteFirstPartyPayloadInstaller.js';
+import { installRemoteFirstPartyComponent } from './remoteFirstPartyPayloadInstaller.js';
 
 type SshConnectionConfig = SystemTaskSshConnectionConfig;
-
-function shellQuote(value: string): string {
-  const raw = String(value ?? '');
-  if (!raw) return "''";
-  return `'${raw.replaceAll("'", `'\"'\"'`)}'`;
-}
 
 function normalizeKnownHostsText(text: string): string {
   const normalized = String(text ?? '').trim();
@@ -168,35 +165,7 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     auth: params.auth.mode === 'keyFile' ? 'keyfile' : 'agent',
     ...(params.auth.mode === 'keyFile' ? { identityFile: params.auth.privateKeyPath } : {}),
   };
-  const happier = resolveRemoteInstalledFirstPartyBinaryPath({
-    componentId: 'happier-cli',
-    channel: params.parsed.channel,
-  });
-  const relayArgs = [
-    `--server-url=${params.parsed.relay.relayUrl}`,
-    `--webapp-url=${params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl}`,
-    ...(params.parsed.relay.publicRelayUrl ? [`--public-server-url=${params.parsed.relay.publicRelayUrl}`] : []),
-  ];
-  const daemonEnv = [
-    `HAPPIER_DAEMON_SERVICE_SERVER_URL=${shellQuote(params.parsed.relay.relayUrl)}`,
-    `HAPPIER_DAEMON_SERVICE_WEBAPP_URL=${shellQuote(params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl)}`,
-    ...(params.parsed.relay.publicRelayUrl ? [`HAPPIER_DAEMON_SERVICE_PUBLIC_SERVER_URL=${shellQuote(params.parsed.relay.publicRelayUrl)}`] : []),
-  ].join(' ');
-
-  let command = '';
-  if (params.label === 'auth.status') {
-    command = `${happier} auth status --json`;
-  } else if (params.label === 'server.configure') {
-    command = `${happier} server set ${relayArgs.map(shellQuote).join(' ')} --json`;
-  } else if (params.label === 'auth.request') {
-    command = `${happier} auth request --json --persist ${relayArgs.map(shellQuote).join(' ')}`;
-  } else if (params.label === 'auth.wait') {
-    command = `${happier} auth wait --public-key ${shellQuote(String(params.data?.publicKey ?? ''))} --json --persist ${relayArgs.map(shellQuote).join(' ')}`;
-  } else if (params.label === 'daemon.service.install') {
-    command = `${daemonEnv} ${happier} daemon service install --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
-  } else if (params.label === 'daemon.service.start') {
-    command = `${daemonEnv} ${happier} daemon service start --mode=${params.parsed.serviceMode === 'none' ? 'user' : params.parsed.serviceMode ?? 'user'} --json`;
-  } else if (params.label === 'relay.runtime.install') {
+  if (params.label === 'relay.runtime.install') {
     const installed = await installOrUpdateRelayRuntimeDefault({
       target: {
         kind: 'ssh',
@@ -218,52 +187,39 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     };
   }
 
-  const result = await runRemoteJson(ssh, command, params.knownHostsMode) as null | Readonly<{
-    ok?: boolean;
-    data?: Record<string, unknown>;
-  }>;
-  if (params.label === 'auth.status') {
-    if (result?.ok === false) {
-      return {
-        ok: true,
-        data: { authenticated: false },
-      };
-    }
-    if (result?.data && typeof result.data === 'object') {
-      return {
-        ok: true,
-        data: result.data,
-      };
-    }
-  }
-
-  if (result?.data && typeof result.data === 'object') {
-    return {
-      ok: result.ok !== false,
-      data: result.data,
-    };
-  }
-
-  return {
-    ok: result?.ok !== false,
-    data: (result ?? {}) as Record<string, unknown>,
-  };
+  const command = buildRemoteBootstrapCommand({
+    label: params.label,
+    channel: params.parsed.channel,
+    serverUrl: params.parsed.relay.relayUrl,
+    webappUrl: params.parsed.relay.webappUrl ?? params.parsed.relay.relayUrl,
+    publicServerUrl: params.parsed.relay.publicRelayUrl,
+    daemonServiceMode: params.parsed.serviceMode,
+    data: params.data,
+  });
+  const authStatus = params.label === 'auth.status';
+  const result = await runRemoteJson(ssh, command, params.knownHostsMode, authStatus);
+  return normalizeRemoteBootstrapCliJsonResult(result, authStatus);
 }
 
 async function runRemoteJson(
   ssh: SshConnectionConfig,
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
+  authStatus: boolean,
 ): Promise<unknown> {
   const result = await runRemoteText(ssh, remoteCommand, knownHostsMode);
-  return parseFirstJsonObject(result.stdout);
+  const parsed = parseFirstJsonObject(result.stdout);
+  if (result.signal || (result.status !== 0 && !(authStatus && isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status)))) {
+    throw new Error(redactSshText(result.stderr || `SSH command failed for ${ssh.target}.`));
+  }
+  return parsed;
 }
 
 async function runRemoteText(
   ssh: SshConnectionConfig,
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
-): Promise<Readonly<{ status: number; stdout: string; stderr: string }>> {
+): Promise<CommandExecutionResult> {
   const invocation = buildSshCommand({
     target: ssh.target,
     port: ssh.port,
@@ -280,8 +236,5 @@ async function runRemoteText(
     command: invocation.command,
     args: invocation.args,
   });
-  if (result.status !== 0) {
-    throw new Error(redactSshText(result.stderr || result.stdout || `SSH command failed for ${ssh.target}.`));
-  }
   return result;
 }

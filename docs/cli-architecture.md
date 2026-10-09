@@ -149,6 +149,13 @@ sequenceDiagram
 same dependency defaults, exposed interactively for streamed prompts and through the registry for
 callers that supply prompt resolutions up front. No other kind appears in both.
 
+In current development source, CLI and desktop SSH bootstrap share the command builder and
+JSON-result normalization in `packages/cli-common/src/systemTasks`. Only `auth.status` may
+admit exit 1 with a version-1 `auth_status` envelope whose error is `not_authenticated`;
+that result continues through server selection and pairing. Transport failures, malformed
+auth envelopes, and other auth errors fail closed. Released daemon/service commands may
+still return raw JSON objects rather than CLI envelopes.
+
 Registry handlers can emit live callback progress through their execution context while awaiting
 work; these callbacks use the same event validation, redaction, task identity, and timestamps as
 yielded events. In current development source, desktop status inspection and explicit setup share

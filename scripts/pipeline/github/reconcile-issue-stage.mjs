@@ -74,13 +74,14 @@ async function requestJson({ fetchImpl, url, token, method = 'GET', body }) {
   return { value: await response.json(), response };
 }
 
-async function listPaginated({ fetchImpl, initialUrl, token }) {
+async function listPaginated({ fetchImpl, initialUrl, token, collectionKey }) {
   const values = [];
   let url = initialUrl;
   while (url) {
     const { value, response } = await requestJson({ fetchImpl, url, token });
-    if (!Array.isArray(value)) throw new Error(`GitHub API returned a non-array collection for ${url}.`);
-    values.push(...value);
+    const collection = collectionKey ? value?.[collectionKey] : value;
+    if (!Array.isArray(collection)) throw new Error(`GitHub API returned a non-array collection for ${url}.`);
+    values.push(...collection);
     url = nextLink(response);
   }
   return values;
@@ -92,9 +93,15 @@ export async function snapshotOpenIssueNumbers({
   token,
   fetchImpl = fetch,
   apiBaseUrl = DEFAULT_API_BASE_URL,
+  baseSha = '',
+  candidateSha = '',
 }) {
   assertRepository(repository);
   assertStage(fromStage);
+  const hasRange = Boolean(baseSha || candidateSha);
+  if (hasRange && (!/^[a-f0-9]{40}$/.test(baseSha) || !/^[a-f0-9]{40}$/.test(candidateSha))) {
+    throw new Error('Candidate issue range requires both base and candidate full commit SHAs.');
+  }
   const query = new URLSearchParams({
     state: 'open',
     labels: fromStage,
@@ -105,9 +112,29 @@ export async function snapshotOpenIssueNumbers({
     initialUrl: `${apiBaseUrl}/repos/${repository}/issues?${query}`,
     token,
   });
-  return values
+  const issueNumbers = values
     .filter((issue) => issue && typeof issue.number === 'number' && !issue.pull_request)
     .map((issue) => issue.number);
+  // Current-dev nightlies retain their whole-queue contract. Normal releases
+  // bind both endpoints before promotion so later corrections stay queued.
+  if (!hasRange || issueNumbers.length === 0) return issueNumbers;
+  const commits = await listPaginated({
+    fetchImpl,
+    initialUrl: `${apiBaseUrl}/repos/${repository}/compare/${baseSha}...${candidateSha}?per_page=100`,
+    token,
+    collectionKey: 'commits',
+  });
+  const referenced = new Set();
+  for (const commit of commits) {
+    if (typeof commit?.commit?.message !== 'string') throw new Error('Candidate range returned a commit without its message.');
+    for (const line of commit.commit.message.split(/\r?\n/)) {
+      if (!/^\s*(?:refs?|fix(?:es|ed)?|clos(?:e[sd]?)|resolv(?:e[sd]?))\b:?\s+/i.test(line)) continue;
+      for (const match of line.matchAll(/(?:(?:https:\/\/github\.com\/)?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\/issues\/|#)|#)([1-9][0-9]*)/g)) {
+        if (!match[1] || match[1].toLowerCase() === repository.toLowerCase()) referenced.add(Number(match[2]));
+      }
+    }
+  }
+  return issueNumbers.filter((number) => referenced.has(number));
 }
 
 async function assertRepositoryLabelsExist({ repository, stages, token, fetchImpl, apiBaseUrl }) {
@@ -212,6 +239,8 @@ async function main() {
       'to-stage': { type: 'string' },
       'issues-json': { type: 'string', default: '[]' },
       'github-output': { type: 'string', default: '' },
+      'base-sha': { type: 'string', default: '' },
+      'candidate-sha': { type: 'string', default: '' },
     },
   });
   const operation = positionals[0];
@@ -220,7 +249,11 @@ async function main() {
   const token = String(process.env.GITHUB_TOKEN ?? '').trim();
 
   if (operation === 'snapshot') {
-    const issues = await snapshotOpenIssueNumbers({ repository, fromStage, token });
+    const issues = await snapshotOpenIssueNumbers({
+      repository, fromStage, token,
+      baseSha: String(values['base-sha'] ?? '').trim(),
+      candidateSha: String(values['candidate-sha'] ?? '').trim(),
+    });
     const issuesJson = JSON.stringify(issues);
     await writeGithubOutput(String(values['github-output'] ?? '').trim(), {
       issues_json: issuesJson,

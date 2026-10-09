@@ -47,28 +47,46 @@ test('trusted release source resolver rejects malformed, missing, and branch/tag
   await assert.rejects(resolveAuthorizedReleaseSource({ repoRoot: work, remoteUrl: remote, sourceRef: 'preview' }), /ambiguous/i);
 });
 
-test('trusted release source resolver independently verifies a caller-authorized SHA against the source ref', async () => {
+test('trusted release source resolver keeps a reachable authorized candidate when its source branch advances', async () => {
   const { work, remote, sha } = await fixture();
   assert.equal((await resolveAuthorizedReleaseSource({
     repoRoot: work,
     remoteUrl: remote,
     sourceRef: 'preview',
     authorizedSha: sha,
+    allowSourceAncestor: true,
   })).sha, sha);
   execFileSync('sh', ['-c', 'printf moved >> payload && git add payload && git commit -m moved'], { cwd: work, stdio: 'ignore' });
   git(work, ['push', 'origin', 'HEAD:refs/heads/preview']);
-  await assert.rejects(resolveAuthorizedReleaseSource({
+  assert.equal((await resolveAuthorizedReleaseSource({
     repoRoot: work,
     remoteUrl: remote,
     sourceRef: 'preview',
     authorizedSha: sha,
-  }), /did not match/i);
+    allowSourceAncestor: true,
+  })).sha, sha);
   await assert.rejects(resolveAuthorizedReleaseSource({
     repoRoot: work,
     remoteUrl: remote,
     sourceRef: 'preview',
     authorizedSha: 'b'.repeat(40),
   }), /authorized.*not found|did not match/i);
+});
+
+test('authorized branch candidates require remote ancestry, including from a shallow control checkout', async () => {
+  const { root, work, remote, sha } = await fixture();
+  git(work, ['commit', '--allow-empty', '-m', 'later merge']);
+  const tip = git(work, ['rev-parse', 'HEAD']);
+  git(work, ['push', 'origin', 'HEAD:refs/heads/preview']);
+  const shallow = join(root, 'shallow');
+  git(root, ['clone', '--depth=1', '--branch=preview', `file://${remote}`, shallow]);
+  assert.equal((await resolveAuthorizedReleaseSource({ repoRoot: shallow, remoteUrl: remote, sourceRef: 'refs/heads/preview', authorizedSha: sha, allowSourceAncestor: true })).sha, sha);
+  const unrelated = execFileSync('git', ['commit-tree', 'HEAD^{tree}', '-m', 'unrelated'], { cwd: work, encoding: 'utf8' }).trim();
+  git(work, ['push', 'origin', `${unrelated}:refs/heads/other`]);
+  await assert.rejects(resolveAuthorizedReleaseSource({ repoRoot: work, remoteUrl: remote, sourceRef: 'preview', authorizedSha: unrelated, allowSourceAncestor: true }), /not.*ancestor|not.*reachable/i);
+  await assert.rejects(resolveAuthorizedReleaseSource({ repoRoot: work, remoteUrl: remote, sourceRef: 'preview', authorizedSha: sha }), /did not match/i);
+  await assert.rejects(resolveAuthorizedReleaseSource({ repoRoot: work, remoteUrl: remote, sourceRef: 'v-test', authorizedSha: tip, allowSourceAncestor: true }), /did not match/i);
+  await assert.rejects(resolveAuthorizedReleaseSource({ repoRoot: work, remoteUrl: remote, sourceRef: sha, authorizedSha: tip, allowSourceAncestor: true }), /did not match/i);
 });
 
 test('same-version recovery keeps the immutable tag SHA after the channel branch advances', async () => {

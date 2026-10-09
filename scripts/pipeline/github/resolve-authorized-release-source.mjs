@@ -25,7 +25,7 @@ function lsRemote(cwd, remoteUrl, ref) {
 /**
  * Resolve an operator-supplied branch, tag, or exact SHA against remote state without executing source bytes.
  * Unqualified branch/tag names that exist in both namespaces fail closed.
- * @param {{ repoRoot: string; remoteUrl: string; sourceRef: string; authorizedSha?: string }} params
+ * @param {{ repoRoot: string; remoteUrl: string; sourceRef: string; authorizedSha?: string; allowSourceAncestor?: boolean }} params
  */
 export async function resolveAuthorizedReleaseSource(params) {
   const repoRoot = resolve(params.repoRoot);
@@ -39,7 +39,8 @@ export async function resolveAuthorizedReleaseSource(params) {
   if (FULL_SHA.test(sourceRef) || authorizedSha) {
     const exactSha = authorizedSha || sourceRef;
     try {
-      git(repoRoot, ['fetch', '--no-tags', '--depth=1', remoteUrl, exactSha]);
+      // Equality-only publishing/recovery callers retain their shallow fetch.
+      git(repoRoot, ['fetch', '--no-tags', ...(params.allowSourceAncestor === true ? [] : ['--depth=1']), remoteUrl, exactSha]);
     } catch {
       throw new Error(`Exact authorized release source SHA was not found in the target repository: ${exactSha}`);
     }
@@ -47,7 +48,17 @@ export async function resolveAuthorizedReleaseSource(params) {
     if (fetched !== exactSha) throw new Error('Fetched release source SHA did not match the authorized input');
     if (authorizedSha && sourceRef && sourceRef !== authorizedSha) {
       const resolvedRef = await resolveAuthorizedReleaseSource({ repoRoot, remoteUrl, sourceRef });
-      if (resolvedRef.sha !== authorizedSha) {
+      if (resolvedRef.kind === 'branch' && params.allowSourceAncestor === true) {
+        // Fetch the observed tip's history, not the moving branch name. Workflow
+        // control checkouts are shallow; ancestry needs the complete graph.
+        const shallow = git(repoRoot, ['rev-parse', '--is-shallow-repository']) === 'true';
+        git(repoRoot, ['fetch', '--no-tags', ...(shallow ? ['--unshallow'] : []), remoteUrl, resolvedRef.sha]);
+        try {
+          git(repoRoot, ['merge-base', '--is-ancestor', authorizedSha, resolvedRef.sha]);
+        } catch {
+          throw new Error(`Caller-authorized SHA is not an ancestor of the source branch: ${sourceRef}`);
+        }
+      } else if (resolvedRef.sha !== authorizedSha) {
         throw new Error(`Source ref did not match caller-authorized SHA: ${sourceRef}`);
       }
     }
@@ -80,6 +91,7 @@ async function main() {
       remote: { type: 'string', default: 'origin' },
       'github-output': { type: 'string' },
       'authorized-sha': { type: 'string', default: '' },
+      'allow-source-ancestor': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
@@ -88,6 +100,7 @@ async function main() {
     remoteUrl: String(values.remote ?? 'origin'),
     sourceRef: String(values['source-ref'] ?? ''),
     authorizedSha: String(values['authorized-sha'] ?? ''),
+    allowSourceAncestor: values['allow-source-ancestor'] === true,
   });
   const githubOutput = String(values['github-output'] ?? '').trim();
   if (githubOutput) {

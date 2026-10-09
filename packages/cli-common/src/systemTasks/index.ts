@@ -20,3 +20,5 @@ export {
   type InteractiveSystemTaskPromptRequest,
 } from './interactiveTaskKinds.js';
 export * from './kinds/index.js';
+export { isRemoteBootstrapUnauthenticatedCliResult, normalizeRemoteBootstrapCliJsonResult } from './remoteBootstrapCliJsonResult.js';
+export { buildRemoteBootstrapCommand, type RemoteBootstrapCommandLabel } from './remoteBootstrapCommandBuilder.js';

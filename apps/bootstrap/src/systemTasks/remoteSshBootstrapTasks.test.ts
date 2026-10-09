@@ -16,7 +16,7 @@ const SCANNED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBB
 const DIFFERENT_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 function createFakeSsh(scenario: Readonly<{
-    outputs?: readonly Readonly<{ status?: number; stdout?: string; stderr?: string }>[];
+    outputs?: readonly Readonly<{ status?: number; signal?: NodeJS.Signals; stdout?: string; stderr?: string }>[];
 }>): Readonly<{
     binDir: string;
     cleanup: () => void;
@@ -56,6 +56,7 @@ writeFileSync(statePath, JSON.stringify(state), 'utf8');
 
 if (next.stdout) process.stdout.write(String(next.stdout));
 if (next.stderr) process.stderr.write(String(next.stderr));
+if (next.signal) process.kill(process.pid, next.signal);
 process.exit(Number(next.status ?? 0));
 `,
         'utf8',
@@ -338,33 +339,94 @@ describe('runRemoteBootstrapCommandDefault', () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 {
-                    status: 0,
-                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
-                },
-                {
-                    status: 0,
-                    stdout: '\n',
-                },
-                {
-                    status: 0,
-                    stdout: `${JSON.stringify({ ok: true, data: { authenticated: false } })}\n`,
+                    status: 1,
+                    stdout: `${JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } })}\n`,
                 },
             ],
         });
 
         try {
             await withPatchedPath(fakeSsh.binDir, async () => {
-                await runRemoteBootstrapCommandDefault({
+                await expect(runRemoteBootstrapCommandDefault({
                     label: 'auth.status',
                     parsed: createParsedRemoteBootstrapParams('preview'),
                     auth: { mode: 'agent' },
                     knownHostsMode: 'system',
-                });
+                })).resolves.toEqual({ ok: true, data: { authenticated: false } });
             });
 
             const remoteCommand = fakeSsh.readInvocations().at(-1)?.at(-1) ?? '';
             expect(remoteCommand).toContain('$HOME/.happier/cli-preview/current/happier auth status --json');
             expect(remoteCommand).not.toContain('$HOME/.happier/bin/happier');
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it.each([
+        { status: 255, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } }) },
+        { signal: 'SIGTERM' as const, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } }) },
+        { status: 0, stdout: '' },
+        { status: 0, stdout: 'not-json' },
+        { status: 0, stdout: '{}' },
+        { status: 0, stdout: JSON.stringify({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } }) },
+        { status: 0, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_request', error: { code: 'not_authenticated' } }) },
+        { status: 1, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_unavailable' } }) },
+        { status: 2, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } }) },
+        { status: 0, stdout: JSON.stringify({ v: 1, ok: true, kind: 'auth_status', data: {} }) },
+    ])('rejects unusable auth status without treating it as signed out: %j', async (output) => {
+        const fakeSsh = createFakeSsh({ outputs: [output] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await expect(runRemoteBootstrapCommandDefault({
+                    label: 'auth.status', parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' }, knownHostsMode: 'system',
+                })).rejects.toThrow();
+            });
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('preserves other auth errors as failures, not pairing requests', async () => {
+        const envelope = { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_unavailable' } };
+        const fakeSsh = createFakeSsh({ outputs: [{ status: 0, stdout: JSON.stringify(envelope) }] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await expect(runRemoteBootstrapCommandDefault({
+                    label: 'auth.status', parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' }, knownHostsMode: 'system',
+                })).resolves.toEqual({ ok: false, data: envelope });
+            });
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('does not accept the auth-status exit exception for server configuration', async () => {
+        const fakeSsh = createFakeSsh({ outputs: [{ status: 1, stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } }) }] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await expect(runRemoteBootstrapCommandDefault({
+                    label: 'server.configure', parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' }, knownHostsMode: 'system',
+                })).rejects.toThrow();
+            });
+        } finally {
+            fakeSsh.cleanup();
+        }
+    });
+
+    it('retains the released raw daemon-service JSON contract', async () => {
+        const snapshot = { installed: true, running: true };
+        const fakeSsh = createFakeSsh({ outputs: [{ status: 0, stdout: JSON.stringify(snapshot) }] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                await expect(runRemoteBootstrapCommandDefault({
+                    label: 'daemon.service.install', parsed: createParsedRemoteBootstrapParams(),
+                    auth: { mode: 'agent' }, knownHostsMode: 'system',
+                })).resolves.toEqual({ ok: true, data: snapshot });
+            });
         } finally {
             fakeSsh.cleanup();
         }

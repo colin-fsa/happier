@@ -141,6 +141,59 @@ range and completes the semantic compatibility review while inspecting that
 same diff for notes and version recommendations. After commit/push, only an
 unexpected runtime-reachable delta invalidates the affected analysis.
 
+Materialize the approved notes and versions for the selected products once on
+that source, commit them, and require completed CI for the resulting exact SHA.
+Prepare the pinned operation from that final SHA; another dev merge does not
+require another editorial or version pass. Version files, manifests, lockfiles,
+native configuration and generated runtime inputs still receive full source CI.
+
+The release-control speed follow-up adds a narrow exception in the existing
+`tests.yml` CI planner: a push changing only `apps/ui/CHANGELOG.md` can select
+note projection checks instead of runtime suites. It proves that the previous
+push SHA is an ancestor with successful canonical full-source CI, downloads and
+validates that run's lane summary, and validates the final commit's canonical
+note projections plus the projection contract suite. The new completed run and
+summary identify the final child SHA; a parent run ID is never accepted as child
+evidence. Missing, expired or insufficient baseline evidence selects full source
+CI with an explicit diagnostic. An earlier notes-only run is not a full-source
+baseline, so repeated editorial pushes can fall back to full CI. This follow-up
+must be integrated before relying on the shortcut; it changes no waiver policy.
+
+### Targeted bug-fix releases (release-control follow-up)
+
+Choose scope deliberately from `release-analyze` over the actual range, including
+its shared-package and packaged dependency impacts. Use the existing
+`deploy_targets` input to bound both deployment and artifact publication. The
+follow-up removes independent change-flag fanout that previously built excluded
+products; `force_deploy` remains limited to selected products. Resume preserves
+the saved scope and candidate identities. This is an explicit selection, not an
+automatic folder-only scope inference.
+
+| Fix scope | Existing release inputs | Retained work |
+| --- | --- | --- |
+| UI web and compatible OTA | `deploy_targets=ui`, `ui_expo_action=ota`, `ui_desktop_mode=none` | UI web and matching-runtime OTA; excluded CLI/server, desktop and stores keep their versions/assets |
+| CLI | `deploy_targets=cli` | CLI npm, signed platform binaries and selected dev-box image; excluded UI/server/stack stay unchanged |
+| Server | `deploy_targets=server` (add `server_runner` when publishing the runner package) | Selected server runtime/deployment and relay image; runner npm only when selected |
+
+Materialize only selected component versions, preserving publication's existing
+version checks. Include every affected product required by a shared dependency
+or compatibility change. Native dependencies/configuration/runtime-version
+changes need new native binaries; OTA cannot repair those changes or reach an
+incompatible installed runtime. An all-product release remains all-product.
+
+### Early preparation (release-control follow-up)
+
+Exact-source credential-free OTA exports and unsigned Tauri desktop builds can
+start once their source/product admission is satisfied, alongside unrelated
+software builds. The existing workflows expose preparation and consumption
+phases and reuse their existing named artifacts within the same workflow run.
+Consumers validate source, environment and version metadata before using those
+bytes. Signing/notarization, updater signatures, checksums and publication retain
+their existing admission and verification boundaries. Credential-bearing native
+iOS/Android build/submission jobs remain behind those boundaries. This is a
+preparation scheduling change, not a measured release-time guarantee, and is
+available only after the follow-up workflow controls are integrated.
+
 `node scripts/pipeline/run.mjs release --release-profile integrated` is the
 normal preview path; preview and dev default to `integrated`, while production
 defaults to `stable`. `stable` remains a normal dispatch only after its
@@ -149,6 +202,33 @@ normal dispatcher.
 
 The profile contract describes self-hosted independent upgrade evidence; it
 does not require a fleet wait, global cutover, or synchronized deployment.
+
+### Preparing a pinned candidate (release-control follow-up)
+
+The follow-up conductor implementation accepts
+`hmaint release prepare --source-sha <full-40-character-sha>` alongside the
+existing prepare options. Omitting it selects the current source-branch tip.
+The selected commit must exist in the target repository and be reachable from
+the source branch. Later merges do not replace the saved candidate: revalidation,
+exact-SHA CI evidence (or the existing explicit waiver), promotion and resume
+continue using that SHA. Including newer work requires a new prepare operation.
+This source selection is separate from workflow-control authorization.
+
+Promotion fast-forwards the target branch to the candidate itself. A target
+already ahead of, or divergent from, that candidate still fails the existing
+fast-forward guard. Synchronizing a published candidate back into development
+is different: it preserves newer dev commits when dev already contains the
+candidate, but still rejects divergent history. Only this synchronization caller
+opts in; preview/main destinations remain exact. Post-promotion candidate
+binding and immutable publication keep their exact-equality checks.
+
+Normal release issue snapshots intersect the open stage queue with correction
+references in the exact pre-promotion target-base-to-candidate range. Use a
+`Refs`, `Fixes`, `Closes` or `Resolves` line naming the issue in correction
+commits; missing references remain queued for later reconciliation. The combined
+release uses the main-to-candidate range once for both channels. This follow-up
+must be integrated into the target workflow controls and the private conductor
+before pinned new releases are available.
 
 ### Preview release (dev → preview)
 
@@ -383,14 +463,117 @@ Remove the adapter and its callers once the pinned CLI includes
 [the upstream captured-command stdin fix](https://github.com/tauri-apps/tauri/pull/15991),
 then verify a real layered-icon bundle with a fresh macOS build worker.
 
+### Production mobile store publication (development follow-up)
+
+This follow-up is source-level release automation, not evidence that an existing
+App Store or Google Play version is public. Use these controls only after the
+store-publication changes are integrated into the trusted workflow checkout.
+Production native publication uses the existing mobile release workflow and
+approved source; preview/dev distribution keeps its existing TestFlight and
+Android internal-track behavior.
+
+Store copy comes from the canonical v2 release-note projection of
+`apps/ui/CHANGELOG.md`. Publication requires `appStore.whatsNew` for iOS (at most
+4,000 characters) and `playStore.whatsNew` for Android (at most 500 characters).
+The bundle must match the release id, exact source SHA, and UI marketing version
+of the submitted binary. Missing copy or a mismatched binding fails publication;
+recovery cannot substitute notes from the moving control checkout.
+
+On iOS, EAS submission uploads the binary to App Store Connect; it does not
+submit the production version for App Review. The follow-up resolves the exact
+processed build, creates or reuses its App Store version, applies the approved
+What’s New text, and submits App Review with `AFTER_APPROVAL` and no phased
+release. Existing TestFlight groups and Beta App Review are separate optional
+distribution steps; no TestFlight group is required for production publication.
+[Expo's submission guide](https://docs.expo.dev/submit/ios/) distinguishes the
+upload from App Review, and [Apple's release options](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/select-an-app-store-version-release-option)
+describe automatic publication after approval.
+
+On Android, the submit owner validates the Play API credential and the bound
+notes before EAS upload. EAS stages the exact AAB as a production-track draft;
+the Play Publisher owner then commits its approved localized notes and
+`status=completed` together, without a staged `userFraction`. Other releases and
+localizations are preserved. Google defines the full-rollout policy in the
+[tracks API](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks).
+An accepted edit still reports public availability as unverified: Google review
+and [managed publishing](https://support.google.com/googleplay/android-developer/answer/9859654?hl=en)
+can delay availability. Inspect Play Console before claiming that users can
+install that version.
+
+#### One-time maintainer setup
+
+1. Add `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` to the repository's `release-shared`
+   GitHub environment. Its value is the complete service-account JSON key for
+   the existing EAS Android submit account; reuse that account rather than
+   creating a second publisher identity. A Firebase `google-services.json` is
+   client configuration and cannot authenticate the Play Publisher API.
+2. Enable the Google Play Android Developer API in that account's Google Cloud
+   project. Follow [Google's API setup](https://developers.google.com/android-publisher/getting_started).
+3. In Play Console → Users and permissions, grant the service account access to
+   the production Happier app with **View app information (read-only)** and
+   **Release to production, exclude devices, and use Play App Signing**. Existing
+   grants may already suffice; check them against [Google's permission definitions](https://support.google.com/googleplay/android-developer/answer/9844686?hl=en).
+4. Check managed publishing in Play Console's Publishing overview. For
+   automatic go-live after approval, turn managed publishing off; when it is
+   enabled, a maintainer must publish the approved changes there.
+5. Reuse the existing App Store Connect issuer/key configuration and
+   `APPLE_API_PRIVATE_KEY`. Confirm that key can edit the production version and
+   submit App Review, and complete the app's required metadata and agreements in
+   App Store Connect. This follow-up introduces no new Apple secret.
+
+Do not put credential values in logs, release notes, or support reports. A
+missing Play secret fails with `missing_play_credential` and a nonzero exit
+before binary submission; it does not silently leave a successful production
+release at draft. A failed publication after upload is recovered separately
+from binary submission.
+
+#### Retry publication of an uploaded binary
+
+Use `build-ui-mobile-local.yml` with `action=retry_store_publication`,
+`environment=production`, and `platform=ios` or `android`. Set `source_ref` to the
+binary's exact 40-character source SHA and `release_notes_id` to its approved
+release id. Set the matching production profile (`profile=auto` selects it).
+
+For iOS, pass `retry_testflight_eas_build_id` for the exact EAS build, or pass
+both `retry_testflight_build_number` and `retry_testflight_app_version` for a
+local IPA. An EAS submission id is not an EAS build id. For Android, pass
+`retry_store_version_code` and `retry_testflight_app_version` for the exact
+uploaded AAB. The workflow reads the canonical notes from the candidate source
+and calls `scripts/pipeline/expo/store-publish.mjs`; it performs no native build
+or binary resubmission.
+
+Keep `retry_android_store_submit` for its existing purpose: resubmitting a
+retained AAB when the binary upload itself needs recovery. Once the exact
+binary is uploaded, use `retry_store_publication` for notes, review, or rollout
+recovery. Do not use native rebuilds or binary resubmission to repair a
+publication-only failure.
+
+The retry writes `store-publication-status.json` and adds the observation to the
+workflow summary. iOS reports `uploaded`, `processing`, `waiting_for_review`,
+`in_review`, `pending_release`, `published`, `rejected`, or `action_required`,
+together with the observed App Store state and exact build/version identities
+when available. `waiting_for_review` proves review submission, not public
+availability; `published` means App Store Connect reports the version ready for
+sale/distribution. Processing waits reuse
+`APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS` (default 3,600 seconds).
+An unprocessed build when the wait ends, rejection, or required intervention
+fails the retry so it can be recovered visibly.
+
+Android reports `publication_submitted` or `publication_already_submitted` with
+`releaseStatus=completed` and `publicAvailability=unverified`. A successful
+workflow badge or reconciliation dispatch alone never proves public store
+availability.
+
 ### Best-effort TestFlight distribution
 
 The native iOS build/submission and App Store processing/group attachment are
 separate phases. After the signed build is submitted, the mobile workflow writes
-its exact EAS build id or local IPA build identity and dispatches the existing
-`retry_testflight_distribution` recovery action from the current trusted control
-checkout. Release promotion therefore does not hold a runner or the whole release
-open while Apple processes a build.
+its exact EAS build id or local IPA build identity and dispatches reconciliation
+from the current trusted control checkout. Preview/dev use
+`retry_testflight_distribution`; the production follow-up uses
+`retry_store_publication` with the approved release-note identity, even when no
+external TestFlight groups are configured. Release promotion therefore does not
+hold a runner or the whole release open while Apple processes a build.
 
 The reconciliation run validates the source ref, environment, profile, app id,
 and build identity before querying App Store Connect. A skipped fingerprint build

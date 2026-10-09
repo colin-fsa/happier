@@ -92,17 +92,18 @@ test('build-tauri gates the production desktop publish on desktop-setup against 
   assert.match(job.if, /!cancelled\(\)/);
   assert.ok(job.if.includes("needs.resolve_source.result == 'success'"));
   assert.ok(job.if.includes("needs.finalize.result == 'success'"), 'it consumes the finalized (signed) Linux bundle');
-  const admitsSetup = (finalizeNeeded, reuseNeeded, finalizeResult, reuseResult) => {
+  const admitsSetup = (finalizeNeeded, reuseNeeded, finalizeResult, reuseResult, preparationOnly = false) => {
     const expression = job.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
-    return Function('needs', 'cancelled', `return Boolean(${expression});`)({
+    return Function('needs', 'cancelled', 'inputs', `return Boolean(${expression});`)({
       resolve_source: { result: 'success', outputs: { finalize_needed: finalizeNeeded, reuse_needed: reuseNeeded } },
       finalize: { result: finalizeResult },
       reuse_finalized: { result: reuseResult },
-    }, () => false);
+    }, () => false, { preparation_only: preparationOnly });
   };
   assert.equal(admitsSetup('true', 'false', 'success', 'skipped'), true, 'new signed artifacts need no restore job');
   assert.equal(admitsSetup('false', 'true', 'skipped', 'success'), true, 'a fully restored signed candidate still runs the setup gate');
   assert.equal(admitsSetup('true', 'true', 'success', 'success'), true, 'mixed candidates require both artifact producers');
+  assert.equal(admitsSetup('true', 'false', 'success', 'skipped', true), false, 'preparation does not run the final setup gate');
   for (const [finalizeNeeded, reuseNeeded, finalizeResult, reuseResult] of [
     ['true', 'false', 'failure', 'skipped'],
     ['false', 'true', 'skipped', 'failure'],

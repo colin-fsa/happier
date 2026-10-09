@@ -6,6 +6,8 @@ import {
   createRemoteSshBootstrapMachineTaskKind,
   extractFirstScannedSshKnownHostLine,
   installRemoteFirstPartyComponent,
+  isRemoteBootstrapUnauthenticatedCliResult,
+  normalizeRemoteBootstrapCliJsonResult,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
   resolveSshKnownHostTrust,
@@ -208,6 +210,9 @@ function runSshCommandResult(params: Readonly<{
   if (result.error) {
     throw result.error;
   }
+  if (result.status === null || result.signal) {
+    throw new Error('SSH command did not exit normally');
+  }
   return {
     status: result.status ?? 1,
     stdout: String(result.stdout ?? ''),
@@ -221,16 +226,16 @@ function runSshJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   remoteCommand: readonly string[];
+  authStatus?: boolean;
 }>): T {
+  const result = runSshCommandResult(params);
   const parsed = parseJsonLinesBestEffort<T>(
-    runSshCommand({
-      ssh: params.ssh,
-      auth: params.auth,
-      knownHostsPath: params.knownHostsPath,
-      knownHostsMode: params.knownHostsMode,
-      remoteCommand: params.remoteCommand,
-    }),
+    result.stdout,
   );
+  if (result.status !== 0 && !(params.authStatus && isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status))) {
+    const stderr = result.stderr.trim();
+    throw new Error(stderr ? `SSH command failed: ${stderr}` : 'SSH command failed');
+  }
   if (!parsed) {
     throw new Error('Remote command did not return valid JSON');
   }
@@ -243,6 +248,7 @@ function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   shellCommand: string;
+  authStatus?: boolean;
 }>): T {
   return runSshJson<T>({
     ssh: params.ssh,
@@ -250,6 +256,7 @@ function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
     knownHostsPath: params.knownHostsPath,
     knownHostsMode: params.knownHostsMode,
     remoteCommand: ['bash', '-lc', safeBashSingleQuote(params.shellCommand)],
+    authStatus: params.authStatus,
   });
 }
 
@@ -603,6 +610,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         auth: auth as SshAuth,
         knownHostsPath,
         knownHostsMode,
+        authStatus: label === 'auth.status',
         shellCommand: buildRemoteBootstrapCommand({
           label,
           channel: parsed.channel,
@@ -615,30 +623,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
             : undefined,
         }),
       });
-      if (label === 'auth.status') {
-        if (result.ok === false) {
-          return {
-            ok: true,
-            data: { authenticated: false },
-          };
-        }
-        if (typeof result.data === 'object' && result.data != null) {
-          return {
-            ok: true,
-            data: result.data as JsonRecord,
-          };
-        }
-      }
-      if (typeof result.data === 'object' && result.data != null) {
-        return {
-          ok: result.ok !== false,
-          data: result.data as JsonRecord,
-        };
-      }
-      return {
-        ok: result.ok !== false,
-        data: result,
-      };
+      return normalizeRemoteBootstrapCliJsonResult(result, label === 'auth.status');
     },
   });
 

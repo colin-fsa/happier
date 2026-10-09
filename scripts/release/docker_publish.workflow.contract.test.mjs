@@ -88,13 +88,9 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   const releaseWorkflow = YAML.parse(release);
   assert.match(release, /publish_docker:/);
   assert.match(release, /publish_cli_binaries:/);
-  assert.match(
-    release,
-    /publish_server_runtime_needed:\s*\$\{\{[^\n]*inputs\.force_deploy == true[^\n]*steps\.bump_plan\.outputs\.publish_server == 'true'[^\n]*steps\.plan\.outputs\.changed_ui == 'true'[^\n]*steps\.plan\.outputs\.changed_server == 'true'[^\n]*steps\.plan\.outputs\.changed_shared == 'true'[^\n]*\}\}[\s\S]*?publish_server_runtime:[\s\S]*?needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/,
-    'server runtime artifacts should publish when server code or its embedded UI changes',
-  );
-  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /inputs\.deploy_targets/);
-  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.plan\.outputs\.changed_ui == 'true'/);
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_server_runtime_needed, /steps\.bump_plan\.outputs\.publish_server_runtime == 'true'/);
+  assert.match(releaseWorkflow.jobs.publish_server_runtime.if, /needs\.plan\.outputs\.publish_server_runtime_needed == 'true'/);
+  assert.match(releaseWorkflow.jobs.plan.outputs.publish_ui_web_needed, /steps\.bump_plan\.outputs\.publish_ui_web == 'true'/);
   assert.match(releaseWorkflow.jobs.publish_ui_web.if, /needs\.plan\.outputs\.publish_ui_web_needed == 'true'/);
   assert.match(release, /uses:\s+\.\/\.github\/workflows\/publish-docker\.yml/);
   assert.deepEqual(releaseWorkflow.jobs.publish_docker.needs, ['resolve_resume', 'plan', 'promote_preview', 'promote_main', 'prepare_release_candidate', 'verify_release_candidates', 'publish_cli_binaries', 'publish_server_runtime']);

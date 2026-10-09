@@ -477,11 +477,13 @@ test('candidate code is isolated from Tauri and Apple private signing authority'
   assert.equal(build.strategy.matrix, '${{ fromJSON(needs.resolve_source.outputs.build_matrix) }}');
   assert.equal(finalize.strategy.matrix, '${{ fromJSON(needs.resolve_source.outputs.finalize_matrix) }}');
   // These job conditions use the shared JavaScript/Actions boolean-expression subset.
-  const admits = (job, needs, cancelled = false) => Function('needs', 'cancelled', `return ${job.if.slice(3, -2)}`)(needs, () => cancelled);
+  const admits = (job, needs, cancelled = false, inputs = { preparation_only: false, use_prepared: false }) => Function('needs', 'cancelled', 'inputs', `return ${job.if.slice(3, -2)}`)(needs, () => cancelled, inputs);
   for (const [buildNeeded, buildResult] of [['true', 'success'], ['false', 'skipped']]) {
     const needs = { resolve_source: { result: 'success', outputs: { build_needed: buildNeeded, finalize_needed: 'true', retry_version: '' } }, build: { result: buildResult } };
     assert.equal(admits(build, needs), buildNeeded === 'true');
     assert.equal(admits(finalize, needs), true, 'all reused unsigned candidates still require finalization');
+    assert.equal(admits(finalize, needs, false, { preparation_only: true }), false, 'preparation must not sign');
+    assert.equal(admits(build, needs, false, { use_prepared: true }), false, 'admitted same-run preparation must not compile twice');
     assert.equal(admits(finalize, { ...needs, resolve_source: { result: 'success', outputs: { finalize_needed: 'false', retry_version: '' } } }), false,
       'already-finalized candidates must never enter signing again');
     assert.equal(admits(finalize, needs, true), false);

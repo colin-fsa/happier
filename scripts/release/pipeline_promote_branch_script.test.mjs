@@ -76,7 +76,7 @@ function writeGhStub(binDir) {
       '  if (endpoint.includes("/git/ref/heads/dev")) { process.stdout.write(`${nextSourceSha()}\\n`); process.exit(0); }',
       '  if (endpoint.includes("/git/ref/heads/main")) { process.stdout.write(`${process.env.GH_STUB_TARGET_SHA ?? "TARGET_SHA"}\\n`); process.exit(0); }',
       '  if (endpoint.includes("/compare/")) {',
-      '    process.stdout.write(JSON.stringify({ status: "ahead", ahead_by: 1, behind_by: 0, files: [] }));',
+      '    process.stdout.write(JSON.stringify({ status: process.env.GH_STUB_COMPARE_STATUS ?? "ahead", ahead_by: 1, behind_by: 0, files: [] }));',
       '    process.exit(0);',
       '  }',
       '  process.stdout.write("");',
@@ -87,6 +87,7 @@ function writeGhStub(binDir) {
       '  const outcome = process.env.GH_STUB_PATCH_OUTCOME ?? "require_typed_force";',
       '  if (outcome === "forbidden") write403("Forbidden");',
       '  if (outcome === "not_found") write404("Not Found");',
+      '  if (outcome === "success") process.exit(0);',
       '  if (!hasTypedForceTrue()) write422("Update is not a fast forward");',
       '  process.exit(0);',
       '}',
@@ -103,7 +104,28 @@ function writeGhStub(binDir) {
   return ghPath;
 }
 
-function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE_SHA], targetSha = 'TARGET_SHA' }) {
+// Git and GitHub are system boundaries. The source resolver itself stays real.
+function writeGitStub(binDir) {
+  writeExecutable(path.join(binDir, 'git'), [
+    '#!/usr/bin/env node',
+    "import fs from 'node:fs';",
+    'const args = process.argv.slice(2);',
+    'const candidate = process.env.GH_STUB_AUTHORIZED_SHA;',
+    'if (args[0] === "fetch") process.exit(0);',
+    'if (args[0] === "rev-parse") { process.stdout.write(args[1] === "FETCH_HEAD" ? candidate : "false"); process.exit(0); }',
+    'if (args[0] === "ls-remote") {',
+    '  const state = process.env.GH_STUB_SOURCE_SHA_STATE;',
+    '  const count = Number(fs.readFileSync(state, "utf8"));',
+    '  const sequence = process.env.GH_STUB_SOURCE_SHA_SEQUENCE.split(",");',
+    '  fs.writeFileSync(state, String(count + 1));',
+    '  process.stdout.write(`${sequence[Math.min(count, sequence.length - 1)]}\\t${args[2]}`); process.exit(0);',
+    '}',
+    'if (args[0] === "merge-base") process.exit(process.env.GH_STUB_SOURCE_REACHABLE === "false" ? 1 : 0);',
+    'process.stderr.write(`Unexpected git arguments: ${args}`); process.exit(1);',
+  ].join('\n'));
+}
+
+function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE_SHA], targetSha = 'TARGET_SHA', sourceReachable = true, mode = 'reset', compareStatus = 'ahead', preserveTargetDescendant = false }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-promote-branch-script-'));
   const binDir = path.join(dir, 'bin');
   fs.mkdirSync(binDir, { recursive: true });
@@ -113,6 +135,7 @@ function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE
   fs.writeFileSync(logPath, '', 'utf8');
   fs.writeFileSync(sourceShaStatePath, '0', 'utf8');
   writeGhStub(binDir);
+  writeGitStub(binDir);
 
   const env = {
     ...process.env,
@@ -124,6 +147,9 @@ function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE
     GH_STUB_SOURCE_SHA_SEQUENCE: sourceShaSequence.join(','),
     GH_STUB_SOURCE_SHA_STATE: sourceShaStatePath,
     GH_STUB_TARGET_SHA: targetSha,
+    GH_STUB_AUTHORIZED_SHA: AUTHORIZED_SOURCE_SHA,
+    GH_STUB_SOURCE_REACHABLE: String(sourceReachable),
+    GH_STUB_COMPARE_STATUS: compareStatus,
   };
 
   const res = spawnSync(
@@ -137,11 +163,12 @@ function runPromoteBranch({ patchOutcome, sourceShaSequence = [AUTHORIZED_SOURCE
       '--target',
       'main',
       '--mode',
-      'reset',
+      mode,
       '--allow-reset',
       'true',
       '--confirm',
-      'reset main from dev',
+      mode === 'reset' ? 'reset main from dev' : 'promote main from dev',
+      ...(preserveTargetDescendant ? ['--preserve-target-descendant'] : []),
     ],
     { cwd: repoRoot, env, encoding: 'utf8' },
   );
@@ -184,24 +211,38 @@ test('promote-branch does not mask PATCH failures by attempting create', () => {
   assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'expected no POST fallback create call');
 });
 
-test('promote-branch refuses a source branch that advanced after authorization before mutating the target', () => {
+test('promote-branch fast-forwards to the pinned candidate when the source branch advances', () => {
   const { res, calls } = runPromoteBranch({
     sourceShaSequence: [AUTHORIZED_SOURCE_SHA, ADVANCED_SOURCE_SHA],
+    patchOutcome: 'success',
+    mode: 'fast_forward',
   });
 
-  assert.notEqual(res.status, 0, 'expected the source drift fence to fail');
-  assert.match(res.stderr, /Source branch changed after authorization/);
-  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('PATCH')), 'must not PATCH after source drift');
-  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'must not create a ref after source drift');
+  assert.equal(res.status, 0, res.stderr);
+  const update = calls.find((c) => c.includes('-X') && c.includes('PATCH'));
+  assert.ok(update.includes(`sha=${AUTHORIZED_SOURCE_SHA}`));
+  assert.ok(update.includes('force=false'));
+  assert.ok(!update.includes(`sha=${ADVANCED_SOURCE_SHA}`));
 });
 
-test('promote-branch revalidates the source before creating a missing target ref', () => {
+test('promote-branch refuses a candidate no longer reachable from its source branch', () => {
   const { res, calls } = runPromoteBranch({
-    patchOutcome: 'not_found',
-    sourceShaSequence: [AUTHORIZED_SOURCE_SHA, AUTHORIZED_SOURCE_SHA, ADVANCED_SOURCE_SHA],
+    sourceShaSequence: [ADVANCED_SOURCE_SHA],
+    sourceReachable: false,
   });
 
-  assert.notEqual(res.status, 0, 'expected the source drift fence to fail');
-  assert.match(res.stderr, /Source branch changed after authorization/);
-  assert.ok(!calls.some((c) => c.includes('-X') && c.includes('POST')), 'must not create a ref after source drift');
+  assert.notEqual(res.status, 0);
+  assert.match(res.stderr, /not an ancestor/);
+  assert.ok(!calls.some((c) => c.includes('-X')), 'must not mutate an unreachable candidate');
+});
+
+test('development synchronization preserves newer target commits only when explicitly requested', () => {
+  const args = { mode: 'fast_forward', targetSha: ADVANCED_SOURCE_SHA, compareStatus: 'behind' };
+  const exact = runPromoteBranch(args);
+  assert.notEqual(exact.res.status, 0, 'release destination must not silently keep a different SHA');
+  const sync = runPromoteBranch({ ...args, preserveTargetDescendant: true });
+  assert.equal(sync.res.status, 0, sync.res.stderr);
+  assert.ok(!sync.calls.some((call) => call.includes('-X')), 'newer target history must remain untouched');
+  const divergent = runPromoteBranch({ ...args, compareStatus: 'diverged', preserveTargetDescendant: true });
+  assert.notEqual(divergent.res.status, 0, 'synchronization must still reject divergence');
 });

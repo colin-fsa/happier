@@ -15,6 +15,7 @@ import type { EnhancedMode } from './loop';
 import { claudeRemoteLauncher } from './claudeRemoteLauncher';
 import { hashClaudeEnhancedModeForQueue } from './remote/modeHash';
 import { Session } from './session';
+import type { Query } from '@anthropic-ai/claude-agent-sdk';
 
 const mockQuery = vi.hoisted(() => vi.fn());
 const mockClaudeRemote = vi.hoisted(() => vi.fn());
@@ -57,6 +58,7 @@ vi.mock('./utils/resolveClaudeCliPath', () => ({
 }));
 
 const actualClaudeRemote = await vi.importActual<typeof import('./claudeRemote')>('./claudeRemote');
+const actualClaudeRemoteAgentSdk = await vi.importActual<typeof import('./remote/claudeRemoteAgentSdk')>('./remote/claudeRemoteAgentSdk');
 
 type RpcHandler = (params?: unknown) => unknown | Promise<unknown>;
 
@@ -179,6 +181,73 @@ describe.sequential('claudeRemoteLauncher legacy Runtime Activity subscriber', (
     mockClaudeRemoteAgentSdk.mockReset();
     mockRunClaudeUnifiedTerminalSession.mockReset();
     process.env.HAPPIER_CLAUDE_REMOTE_INTERRUPT_THEN_TEARDOWN_GRACE_MS = '0';
+  });
+
+  it('applies SDK permission metadata during startup and while idle without another prompt', async () => {
+    const { session, switchHandlerReady } = createHarness();
+    const transcriptDir = await mkdtemp(join(tmpdir(), 'claude-live-permission-mode-'));
+    session.transcriptPath = join(transcriptDir, 'claude-current.jsonl');
+    await writeFile(session.transcriptPath, '{"type":"summary"}\n');
+    session.client.updateMetadata(metadata => ({ ...metadata, flavor: 'claude', claudeSessionId: 'claude-current' }));
+    Object.assign(session.client, {
+      getStoredContentEncryptionContext: () => ({ mode: 'plain' }),
+      upsertSessionSystemRecord: async () => {},
+    });
+    let metadataWake = createDeferred<boolean>();
+    Object.assign(session.client, {
+      waitForMetadataUpdate: (signal?: AbortSignal) => {
+        const pending = metadataWake;
+        if (signal?.aborted) return Promise.resolve(false);
+        signal?.addEventListener('abort', () => pending.resolve(false), { once: true });
+        return pending.promise;
+      },
+    });
+    const updatePermission = (permissionMode: 'yolo' | 'default', permissionModeUpdatedAt: number) => {
+      session.client.updateMetadata(current => ({ ...current, permissionMode, permissionModeUpdatedAt }));
+      const pending = metadataWake;
+      metadataWake = createDeferred<boolean>();
+      pending.resolve(true);
+    };
+    const finishQuery = createDeferred<void>();
+    let queryIdle = false;
+    const appliedModes: string[] = [];
+    const createQuery: NonNullable<Parameters<typeof actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk>[0]['createQuery']> = () => {
+      // Query creation and its controls are the external SDK boundary. The real launcher,
+      // metadata consumer, mode arbitration and SDK runtime remain under test.
+      updatePermission('yolo', Date.now() + 1);
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'result' };
+          queryIdle = true;
+          await finishQuery.promise;
+        },
+        close: () => finishQuery.resolve(undefined),
+        setPermissionMode: async (permissionMode: string) => { appliedModes.push(permissionMode); },
+        setModel: async () => {}, setMaxThinkingTokens: async () => {},
+        supportedCommands: async () => [], supportedModels: async () => [],
+      } as unknown as Query;
+    };
+    mockClaudeRemoteAgentSdk.mockImplementation((opts: Parameters<typeof actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk>[0]) => (
+      actualClaudeRemoteAgentSdk.claudeRemoteAgentSdk({ ...opts, claudeExecutablePath: '/tmp/claude', createQuery })
+    ));
+    session.queue.push('hello', { permissionMode: 'default', claudeRemoteAgentSdkEnabled: true, claudeUnifiedTerminalEnabled: false },
+      { userMessageLocalId: 'live-permission-mode' });
+    const launcher = claudeRemoteLauncher(session);
+    const switchHandler = await switchHandlerReady;
+    try {
+      await vi.waitFor(() => expect(queryIdle).toBe(true));
+      await vi.waitFor(() => expect(appliedModes).toEqual(['bypassPermissions']));
+      updatePermission('default', Date.now() + 2);
+      await vi.waitFor(() => expect(appliedModes).toEqual(['bypassPermissions', 'default']));
+      expect(session.queue.size()).toBe(0);
+      expect(mockClaudeRemoteAgentSdk).toHaveBeenCalledTimes(1);
+    } finally {
+      finishQuery.resolve(undefined);
+      await Promise.all([Promise.resolve(switchHandler({ to: 'local' })), session.cleanup(), launcher]);
+      await rm(transcriptDir, { recursive: true, force: true });
+    }
+    updatePermission('yolo', Date.now() + 3);
+    expect(appliedModes).toEqual(['bypassPermissions', 'default']);
   });
 
   it.each(['claude-current', null])('keeps daemon registration under the Happier identity (provider ID: %s)', async (providerSessionId) => {

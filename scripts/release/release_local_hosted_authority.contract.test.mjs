@@ -27,6 +27,8 @@ echo "git $*" >> ${JSON.stringify(log)}
 if [ "$1" = "diff" ] && [ "$2" = "--cached" ]; then exit 0; fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then printf 'dev\\n'; exit 0; fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "FETCH_HEAD" ]; then printf '${AUTHORIZED_DEV_SHA}\\n'; exit 0; fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--is-shallow-repository" ]; then printf 'false\\n'; exit 0; fi
+if [ "$1" = "merge-base" ] && [ "$2" = "--is-ancestor" ]; then exit 0; fi
 if [ "$1" = "fetch" ]; then exit 0; fi
 if [ "$1" = "ls-remote" ] && [ "$3" = "refs/heads/dev" ]; then printf '${AUTHORIZED_DEV_SHA}\\trefs/heads/dev\\n'; exit 0; fi
 if [ "$1" = "ls-remote" ] && [ "$3" = "refs/tags/dev^{}" ]; then exit 0; fi
@@ -173,6 +175,8 @@ echo "git $*" >> ${JSON.stringify(log)}
 if [ "$1" = "diff" ] && [ "$2" = "--cached" ]; then exit 1; fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ]; then printf 'dev\\n'; exit 0; fi
 if [ "$1" = "rev-parse" ] && [ "$2" = "FETCH_HEAD" ]; then printf '${AUTHORIZED_DEV_SHA}\\n'; exit 0; fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--is-shallow-repository" ]; then printf 'false\\n'; exit 0; fi
+if [ "$1" = "merge-base" ] && [ "$2" = "--is-ancestor" ]; then exit 0; fi
 if [ "$1" = "fetch" ]; then exit 0; fi
 if [ "$1" = "ls-remote" ] && [ "$3" = "refs/heads/dev" ]; then printf '${AUTHORIZED_DEV_SHA}\\trefs/heads/dev\\n'; exit 0; fi
 echo "unexpected git call: $*" >&2

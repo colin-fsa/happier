@@ -42,6 +42,11 @@ on:
         type: string
   workflow_call:
     inputs:
+      preserve_target_descendant:
+        description: "Synchronization only — retain newer target commits when the candidate is already included"
+        required: false
+        default: false
+        type: boolean
       source:
         description: "Source branch to copy FROM"
         required: true
@@ -250,6 +255,7 @@ jobs:
 
       - name: Promote branch (pipeline)
         env:
+          INPUT_PRESERVE_TARGET_DESCENDANT: ${{ inputs.preserve_target_descendant == true }}
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           INPUT_SOURCE: ${{ inputs.source }}
@@ -267,6 +273,9 @@ jobs:
           fi
           if [ "$INPUT_DRY_RUN" = "true" ]; then
             set -- "$@" --dry-run
+          fi
+          if [ "$INPUT_PRESERVE_TARGET_DESCENDANT" = "true" ]; then
+            set -- "$@" --preserve-target-descendant
           fi
           node scripts/pipeline/run.mjs promote-branch \
             --source "$INPUT_SOURCE" \

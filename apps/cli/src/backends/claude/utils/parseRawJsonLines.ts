@@ -1,6 +1,9 @@
 import { RawJSONLinesSchema, type RawJSONLines } from '../types';
+import { projectClaudePeerMessage } from '../attachments/claudePeerMessageProjection';
 
 export function parseRawJsonLinesObject(value: unknown): RawJSONLines | null {
+  const peerMessage = projectClaudePeerMessage(value);
+  if (peerMessage) return peerMessage;
   const parsed = RawJSONLinesSchema.safeParse(value);
   if (!parsed.success) return null;
   return parsed.data;
@@ -17,4 +20,3 @@ export function parseRawJsonLinesLine(line: string): RawJSONLines | null {
   }
   return parseRawJsonLinesObject(obj);
 }
-

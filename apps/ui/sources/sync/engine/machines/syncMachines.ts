@@ -466,45 +466,44 @@ export async function fetchAndApplyMachines(params: {
             };
         }
 
-        try {
-            const metadata = machine.metadata
-                ? await machineEncryption.decryptMetadata(machine.metadataVersion, machine.metadata)
-                : null;
-            const daemonState = machine.daemonState
-                ? await machineEncryption.decryptDaemonState(machine.daemonStateVersion || 0, machine.daemonState)
-                : null;
-
-            return {
-                id: machine.id,
-                seq: machine.seq,
-                createdAt: machine.createdAt,
-                updatedAt: machine.updatedAt,
-                active: machine.active,
-                activeAt: machine.activeAt,
-                revokedAt: machine.revokedAt ?? null,
-                ...readReplacementFieldsFromMachineRow(machine),
-                metadata,
-                metadataVersion: machine.metadataVersion,
-                daemonState,
-                daemonStateVersion: machine.daemonStateVersion || 0,
-            };
-        } catch (error) {
-            console.error(`Failed to decrypt machine ${machine.id}:`, error);
-            return {
-                id: machine.id,
-                seq: machine.seq,
-                createdAt: machine.createdAt,
-                updatedAt: machine.updatedAt,
-                active: machine.active,
-                activeAt: machine.activeAt,
-                revokedAt: machine.revokedAt ?? null,
-                ...readReplacementFieldsFromMachineRow(machine),
-                metadata: null,
-                metadataVersion: machine.metadataVersion,
-                daemonState: null,
-                daemonStateVersion: 0,
-            };
+        // Machine metadata (including the user-visible name) and daemon state are
+        // separate encrypted fields. A daemon-state decrypt failure must not discard
+        // metadata that was already successfully decrypted.
+        let metadata: Machine['metadata'] = null;
+        if (machine.metadata) {
+            try {
+                metadata = await machineEncryption.decryptMetadata(machine.metadataVersion, machine.metadata);
+            } catch (error) {
+                console.error(`Failed to decrypt machine metadata for ${machine.id}:`, error);
+            }
         }
+
+        let daemonState: Machine['daemonState'] = null;
+        let daemonStateVersion = machine.daemonStateVersion || 0;
+        if (machine.daemonState) {
+            try {
+                daemonState = await machineEncryption.decryptDaemonState(daemonStateVersion, machine.daemonState);
+            } catch (error) {
+                console.error(`Failed to decrypt machine daemonState for ${machine.id}:`, error);
+                // Allow a later socket update to retry a state that could not be decrypted.
+                daemonStateVersion = 0;
+            }
+        }
+
+        return {
+            id: machine.id,
+            seq: machine.seq,
+            createdAt: machine.createdAt,
+            updatedAt: machine.updatedAt,
+            active: machine.active,
+            activeAt: machine.activeAt,
+            revokedAt: machine.revokedAt ?? null,
+            ...readReplacementFieldsFromMachineRow(machine),
+            metadata,
+            metadataVersion: machine.metadataVersion,
+            daemonState,
+            daemonStateVersion,
+        };
     };
 
     if (shouldApplyMachineDisplays) {

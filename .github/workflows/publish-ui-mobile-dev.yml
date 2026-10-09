@@ -38,6 +38,16 @@ on:
         type: string
   workflow_call:
     inputs:
+      preparation_only:
+        description: "Prepare same-run OTA artifacts without native build or publication"
+        required: false
+        default: false
+        type: boolean
+      use_prepared:
+        description: "Consume OTA bytes already prepared for this exact SHA in this run"
+        required: false
+        default: false
+        type: boolean
       source_ref:
         required: false
         default: dev
@@ -118,11 +128,24 @@ jobs:
           team_slug: release-admins
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+      - name: Validate same-run OTA preparation input
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          PREPARATION_ONLY: ${{ inputs.preparation_only }}
+          USE_PREPARED: ${{ inputs.use_prepared }}
+        run: |
+          set -euo pipefail
+          if [ "$PREPARATION_ONLY" = true ] || [ "$USE_PREPARED" = true ]; then
+            if [[ ! "$SOURCE_REF" =~ ^[a-f0-9]{40}$ ]] || { [ "$PREPARATION_ONLY" = true ] && [ "$USE_PREPARED" = true ]; }; then
+              echo "Same-run OTA preparation requires an exact SHA and one phase." >&2
+              exit 1
+            fi
+          fi
 
   prepare_ota:
     name: Prepare exact dev OTA bytes without credentials
     needs: [release_actor_guard]
-    if: inputs.publish_ota
+    if: ${{ inputs.publish_ota && !inputs.use_prepared }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -190,7 +213,7 @@ jobs:
   publish_ota:
     name: Publish prepared dev OTA bytes from trusted control
     needs: [release_actor_guard, prepare_ota]
-    if: inputs.publish_ota
+    if: ${{ !cancelled() && !inputs.preparation_only && inputs.publish_ota && needs.release_actor_guard.result == 'success' && (needs.prepare_ota.result == 'success' || (inputs.use_prepared && needs.prepare_ota.result == 'skipped')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: release-shared
@@ -224,13 +247,13 @@ jobs:
       - name: Download exact prepared OTA bytes
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: ui-mobile-dev-ota-${{ needs.prepare_ota.outputs.source_sha }}
+          name: ui-mobile-dev-ota-${{ inputs.use_prepared && inputs.source_ref || needs.prepare_ota.outputs.source_sha }}
           path: ${{ runner.temp }}/prepared-ota
       - name: Publish Android OTA from validated bytes
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           RELEASE_MESSAGE: ${{ inputs.release_message }}
-          SOURCE_SHA: ${{ needs.prepare_ota.outputs.source_sha }}
+          SOURCE_SHA: ${{ inputs.use_prepared && inputs.source_ref || needs.prepare_ota.outputs.source_sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/expo/ota-update.mjs \
@@ -241,7 +264,7 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           RELEASE_MESSAGE: ${{ inputs.release_message }}
-          SOURCE_SHA: ${{ needs.prepare_ota.outputs.source_sha }}
+          SOURCE_SHA: ${{ inputs.use_prepared && inputs.source_ref || needs.prepare_ota.outputs.source_sha }}
         run: |
           set -euo pipefail
           node scripts/pipeline/expo/ota-update.mjs \
@@ -250,6 +273,7 @@ jobs:
             --message "$RELEASE_MESSAGE" --eas-cli-version "$EAS_CLI_VERSION"
 
   publish:
+    if: ${{ !inputs.preparation_only }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     timeout-minutes: 180

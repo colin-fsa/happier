@@ -4,6 +4,7 @@ import { runCommandCapture as runProcessCommandCapture } from '@happier-dev/cli-
 
 export interface CommandExecutionResult {
   status: number;
+  signal?: NodeJS.Signals;
   stdout: string;
   stderr: string;
 }
@@ -41,7 +42,7 @@ export function normalizeBootstrapChannel(raw: unknown): Readonly<{
 
 /**
  * Bootstrap's contract over the process owner's `runCommandCapture`: resolves
- * `{ status, stdout, stderr }` (a signal-terminated child reports status 1),
+ * `{ status, stdout, stderr }` (a signal-terminated child reports status 1 plus its signal),
  * rejects with `CommandTimeoutError` after `timeoutMs` (default 60 s, zero delegates the deadline), and rejects
  * with the spawn error when the command cannot start.
  */
@@ -69,6 +70,7 @@ export async function runCommandCapture(params: Readonly<{
   if (result.kind === 'spawn-failed') throw result.error;
   return {
     status: typeof result.status === 'number' ? result.status : 1,
+    ...(result.signal ? { signal: result.signal } : {}),
     stdout: result.stdout,
     stderr: result.stderr,
   };

@@ -74,7 +74,7 @@ test('ordinary pull requests admit only exact GitHub merge refs through the cano
   });
   assert.equal(admitted.status, 0, admitted.stderr);
   assert.deepEqual(tests.permissions, { contents: 'read' });
-  assert.deepEqual(tests.jobs.ci_plan.permissions, { contents: 'read', 'pull-requests': 'read' });
+  assert.deepEqual(tests.jobs.ci_plan.permissions, { contents: 'read', actions: 'read', 'pull-requests': 'read' });
 
   for (const rejected of [
     { eventName: 'workflow_dispatch', eventRef: mergeRef, runnerPool: 'github', workflowRef: mergeWorkflowRef },

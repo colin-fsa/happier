@@ -84,12 +84,14 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
     return typeof tag === 'string' ? tag : null;
   })();
 
-  // Drop noisy internal/non-transcript events before schema validation so we don't surface them as opaque schema mismatches.
-  if (rawType && rawType !== 'user' && rawType !== 'assistant') {
+  const parsed = parseRawJsonLinesObject(rawObject);
+  // Native peer attachments become conversation rows at the shared parser owner. Other
+  // internal events still never surface as opaque schema mismatches.
+  const conversationType = parsed?.type ?? rawType;
+  if (conversationType && conversationType !== 'user' && conversationType !== 'assistant') {
     return [];
   }
 
-  const parsed = parseRawJsonLinesObject(rawObject);
   if (!parsed) {
     return [
       {
@@ -127,6 +129,7 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
 
   if (
     normalized.type === 'user' &&
+    !(normalized.origin && typeof normalized.origin === 'object' && 'kind' in normalized.origin && normalized.origin.kind === 'peer') &&
     typeof (normalized as any).message?.content === 'string' &&
     (normalized as any).isSidechain !== true &&
     (normalized as any).isMeta !== true
