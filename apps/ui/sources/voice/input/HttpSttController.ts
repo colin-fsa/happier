@@ -48,7 +48,7 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
 	        baseUrl: sttBaseUrl,
 	        apiKey: sttApiKey,
 	        model: sttModel,
-	        file: { kind: 'web', blob, name: fileName.replace(/\.m4a$/i, '.webm') },
+	        file: { kind: 'web', blob, name: resolveWebRecordingFileName(blob) },
 	      });
 	    }
     return buildOpenAiTranscriptionRequest({
@@ -75,4 +75,15 @@ function guessMimeType(uri: string): string {
   if (lower.endsWith('.wav')) return 'audio/wav';
   if (lower.endsWith('.mp3')) return 'audio/mpeg';
   return 'audio/mp4';
+}
+
+
+function resolveWebRecordingFileName(blob: Blob): string {
+  const mimeType = blob.type.toLowerCase();
+  if (mimeType.includes('webm')) return 'recording.webm';
+  if (mimeType.includes('wav')) return 'recording.wav';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'recording.mp3';
+  if (mimeType.includes('ogg')) return 'recording.ogg';
+  if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'recording.m4a';
+  return 'recording.webm';
 }
