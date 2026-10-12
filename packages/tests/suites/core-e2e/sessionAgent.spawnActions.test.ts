@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
+  RPC_METHODS,
   accountSettingsParse,
   buildAcpConfigOptionOverridesV1,
   type AccountSettings,
@@ -16,16 +17,23 @@ import { repoRootDir } from '../../src/testkit/paths';
 import type { Metadata } from '../../../../apps/cli/src/api/types';
 
 const {
+  callExactMachineRpc,
   fetchSessionById,
   resolveDaemonSpawnSessionByNonce,
   spawnDaemonSession,
   updateSessionMetadataWithRetry,
 } = vi.hoisted(() => ({
+  callExactMachineRpc: vi.fn(),
   fetchSessionById: vi.fn(),
   resolveDaemonSpawnSessionByNonce: vi.fn(),
   spawnDaemonSession: vi.fn(),
   updateSessionMetadataWithRetry: vi.fn(),
 }));
+
+vi.mock('../../../../apps/cli/src/session/transport/rpc/machineRpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../apps/cli/src/session/transport/rpc/machineRpc')>();
+  return { ...actual, callExactMachineRpc };
+});
 
 vi.mock('../../../../apps/cli/src/daemon/controlClient', () => ({
   resolveDaemonSpawnSessionByNonce,
@@ -120,7 +128,7 @@ async function createSessionAgentMcpScenario(params?: Readonly<{
     machineId: 'machine-local',
     flavor: 'claude',
   }));
-  spawnDaemonSession.mockResolvedValue({ success: true, sessionId: childSessionId });
+  callExactMachineRpc.mockResolvedValue({ success: true, sessionId: childSessionId });
   resolveDaemonSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
   updateSessionMetadataWithRetry.mockResolvedValue({ ok: true });
 
@@ -177,6 +185,7 @@ async function createSessionAgentMcpScenario(params?: Readonly<{
 
 describe('core e2e: session-agent spawn actions', () => {
   beforeEach(() => {
+    callExactMachineRpc.mockReset();
     fetchSessionById.mockReset();
     resolveDaemonSpawnSessionByNonce.mockReset();
     spawnDaemonSession.mockReset();
@@ -247,22 +256,27 @@ describe('core e2e: session-agent spawn actions', () => {
         created: true,
         sessionId: scenario.childSessionId,
       }));
-      expect(spawnDaemonSession).toHaveBeenLastCalledWith(expect.objectContaining({
-        directory: scenario.workspaceDir,
+      expect(callExactMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({
+        credentials: createCredentials(),
         machineId: 'machine-local',
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        permissionMode: 'safe-yolo',
-        permissionModeUpdatedAt: 1700000000001,
-        modelId: 'claude-opus-parent',
-        sessionConfigOptionOverrides: inheritedConfig,
-        profileId: 'parent-profile',
-        connectedServices,
-        connectedServicesUpdatedAt: 1700000000003,
-        mcpSelection,
-        pendingFirstInput: {
-          text: 'Use inherited parent context.',
-          localId: expect.stringMatching(/^spawn-first:/),
-        },
+        method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+        request: expect.objectContaining({
+          directory: scenario.workspaceDir,
+          machineId: 'machine-local',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          permissionMode: 'safe-yolo',
+          permissionModeUpdatedAt: 1700000000001,
+          modelId: 'claude-opus-parent',
+          sessionConfigOptionOverrides: inheritedConfig,
+          profileId: 'parent-profile',
+          connectedServices,
+          connectedServicesUpdatedAt: 1700000000003,
+          mcpSelection,
+          pendingFirstInput: {
+            text: 'Use inherited parent context.',
+            localId: expect.stringMatching(/^spawn-first:/),
+          },
+        }),
       }));
 
       const richConfig = buildAcpConfigOptionOverridesV1({
@@ -293,21 +307,26 @@ describe('core e2e: session-agent spawn actions', () => {
         type: 'success',
         sessionId: scenario.childSessionId,
       }));
-      expect(spawnDaemonSession).toHaveBeenLastCalledWith(expect.objectContaining({
-        directory: scenario.workspaceDir,
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-        permissionMode: 'read-only',
-        modelId: 'claude-opus-4-8',
-        sessionConfigOptionOverrides: richConfig,
-        connectedServices,
-        mcpSelection,
-        pendingFirstInput: {
-          text: 'Use explicit rich options.',
-          localId: expect.stringMatching(/^spawn-first:/),
-        },
+      expect(callExactMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({
+        credentials: createCredentials(),
+        machineId: 'machine-local',
+        method: RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+        request: expect.objectContaining({
+          directory: scenario.workspaceDir,
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          permissionMode: 'read-only',
+          modelId: 'claude-opus-4-8',
+          sessionConfigOptionOverrides: richConfig,
+          connectedServices,
+          mcpSelection,
+          pendingFirstInput: {
+            text: 'Use explicit rich options.',
+            localId: expect.stringMatching(/^spawn-first:/),
+          },
+        }),
       }));
 
-      const spawnCallsBeforeEscalation = spawnDaemonSession.mock.calls.length;
+      const spawnCallsBeforeEscalation = callExactMachineRpc.mock.calls.length;
       const escalationPayload = parseMcpJsonText(await scenario.client.callTool({
         name: 'action_execute',
         arguments: {
@@ -328,7 +347,8 @@ describe('core e2e: session-agent spawn actions', () => {
           callerOrdinal: 2,
         }),
       }));
-      expect(spawnDaemonSession).toHaveBeenCalledTimes(spawnCallsBeforeEscalation);
+      expect(callExactMachineRpc).toHaveBeenCalledTimes(spawnCallsBeforeEscalation);
+      expect(spawnDaemonSession).not.toHaveBeenCalled();
     } finally {
       await scenario.close();
     }

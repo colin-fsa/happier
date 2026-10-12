@@ -333,6 +333,12 @@ describe('core e2e: connected-service auth group CAS', () => {
     expect(readString(daemonBGroup, 'activeProfileId')).toBe('standby');
     expect(readNumber(daemonBGroup, 'generation')).toBe(2);
 
+    const committedState = daemonBGroup.state;
+    expect(committedState).toEqual({
+      lastSwitchReason: 'manual',
+      lastSwitchAt: expect.any(Number),
+    });
+
     const staleRuntimeState = await patchRuntimeState({
       baseUrl: server.baseUrl,
       token: auth.token,
@@ -353,7 +359,7 @@ describe('core e2e: connected-service auth group CAS', () => {
     });
     expect(readString(afterStaleRuntimeState, 'activeProfileId')).toBe('standby');
     expect(readNumber(afterStaleRuntimeState, 'generation')).toBe(2);
-    expect(afterStaleRuntimeState.state).toEqual({});
+    expect(afterStaleRuntimeState.state).toEqual(committedState);
   });
 
   it('publishes committed active-profile truth to both UI and daemon account projections', async () => {
