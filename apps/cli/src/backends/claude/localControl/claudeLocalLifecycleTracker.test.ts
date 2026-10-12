@@ -64,15 +64,11 @@ describe('createClaudeLocalLifecycleTracker', () => {
     expect(handle.markUnknown).not.toHaveBeenCalled();
 
     tracker.observeLiveProviderActivityRow({
-      type: 'queue-operation',
-      operation: 'enqueue',
-      sessionId: 'provider-session',
-      content: [
-        '<task-notification>',
-        '<task-id>agent_target</task-id>',
-        '<status>completed</status>',
-        '</task-notification>',
-      ].join(''),
+      type: 'system',
+      subtype: 'task_notification',
+      session_id: 'provider-session',
+      task_id: 'agent_target',
+      status: 'completed',
     } as unknown as RawJSONLines, 'provider-session');
     await vi.waitFor(() => expect(reports).toHaveLength(2));
     expect(reports.at(-1)).toEqual({ state: 'idle', activeCount: 0 });

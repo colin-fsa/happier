@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
+import { configuration } from '@/configuration';
 import {
   ReviewStartInputSchema,
   SessionUsageLimitRecoveryOperationResultV1Schema,
@@ -8,7 +9,7 @@ import {
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const mocks = vi.hoisted(() => ({
-  axiosGet: vi.fn(async (): Promise<unknown> => ({ status: 200, data: { id: 'acct_1', connectedServicesV2: [] } })),
+  axiosGet: vi.fn(async (_url?: unknown): Promise<unknown> => ({ status: 200, data: { id: 'acct_1', connectedServicesV2: [] } })),
   bootstrapAccountSettingsContext: vi.fn(async (): Promise<unknown> => ({ settings: {}, settingsVersion: 1, loadedAtMs: 1 })),
   callSessionRpc: vi.fn(async () => ({ ok: true })),
   callMachineRpc: vi.fn(async (_params: unknown): Promise<unknown> => ({ type: 'success', sessionId: 'sess_1' })),
@@ -301,7 +302,13 @@ describe('createCliActionDeps session controls', () => {
     expect(JSON.stringify(configOptions)).not.toMatch(/token|secret|password/i);
   });
 
-  it('lists spawn target paths, machines, and servers from canonical session and daemon owners', async () => {
+  it('lists paths from sessions, machines from the current account, and servers from saved daemons', async () => {
+    mocks.axiosGet.mockImplementation(async (url) => ({
+      status: 200,
+      data: typeof url === 'string' && url.endsWith('/v1/machines')
+        ? [{ id: 'machine-account', active: true }]
+        : { id: 'acct_1', connectedServicesV2: [] },
+    }));
     mocks.listSessions.mockResolvedValueOnce({
       sessions: [
         { id: 'sess-a', path: '/repo/a', host: 'host-a', activeAt: 30 },
@@ -384,11 +391,11 @@ describe('createCliActionDeps session controls', () => {
     ]);
     expect(machines.items).toEqual([
       {
-        value: 'machine-cloud',
-        label: 'machine-cloud',
-        machineId: 'machine-cloud',
-        serverId: 'cloud',
-        serverName: 'Cloud',
+        value: 'machine-account',
+        label: 'machine-account',
+        machineId: 'machine-account',
+        serverId: configuration.activeServerId,
+        serverName: configuration.serverUrl,
         authenticated: true,
         machineRegistered: true,
         daemonRunning: true,
