@@ -9,7 +9,8 @@ const { spawnMock } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
 }));
 
-vi.mock('child_process', () => ({
+vi.mock('child_process', async (importOriginal) => ({
+    ...await importOriginal<typeof import('child_process')>(),
     spawn: spawnMock,
 }));
 
