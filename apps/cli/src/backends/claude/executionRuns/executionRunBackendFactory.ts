@@ -5,6 +5,7 @@ import { configuration } from '@/configuration';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveClaudeCodeXdgIsolation } from '@/backends/claude/utils/resolveClaudeCodeXdgIsolation';
+import { resolveClaudeSessionEnvOverlay } from '../spawn/resolveClaudeSessionEnvOverlay';
 
 export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => {
   return new ClaudeSdkAgentBackend({
@@ -12,7 +13,10 @@ export const executionRunBackendFactory: ExecutionRunBackendFactory = (opts) => 
     modelId: opts.modelId ?? 'default',
     permissionHandler: opts.permissionHandler,
     settingsPath: opts.isolation?.settingsPath,
-    env: opts.isolation?.env,
+    env: {
+      ...opts.isolation?.env,
+      ...resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: opts.accountSettings?.claudeCodeIncludeInNativeHistory === true }),
+    },
   });
 };
 

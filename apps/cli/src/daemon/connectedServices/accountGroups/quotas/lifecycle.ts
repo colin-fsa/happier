@@ -152,6 +152,8 @@ export function evaluateConnectedServiceAuthGroupQuotaLifecycle(input: Readonly<
   if (policy.strategy === 'manual') return noEdge({ status: 'unblocked' });
 
   const selection = selectConnectedServiceAuthGroupCandidate({
+    lastSwitchReason: input.group.state.lastSwitchReason,
+    lastSwitchAt: input.group.state.lastSwitchAt,
     nowMs: input.nowMs,
     quotaFreshnessMs: input.quotaFreshnessMs,
     activeProfileId: input.group.activeProfileId,

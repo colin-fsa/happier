@@ -15,7 +15,7 @@ import { resolvePermissionIntentFromMetadataSnapshot, resolveSessionModeOverride
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 import { configuration } from '@/configuration';
 import { resolveClaudeConfigDirOverride } from './utils/resolveClaudeConfigDirOverride';
-import { resolveClaudeCodeExperimentalEnvOverlay } from './spawn/resolveClaudeCodeExperimentalEnvOverlay';
+import { resolveClaudeSessionEnvOverlay } from './spawn/resolveClaudeSessionEnvOverlay';
 import {
     createDeferredRemoteSwitchController,
     createLocalTurnLifecycleController,
@@ -467,8 +467,9 @@ export async function claudeLocalLauncher(
                         happierSessionId: session.client.sessionId,
                         systemPromptText: session.defaultSystemPromptText,
                         envOverlay: {
-                            ...resolveClaudeCodeExperimentalEnvOverlay({
+                            ...resolveClaudeSessionEnvOverlay({
                                 claudeCodeExperimentalAgentTeamsEnabled: session.claudeCodeExperimentalAgentTeamsEnabled,
+                                claudeCodeIncludeInNativeHistory: session.claudeCodeIncludeInNativeHistory,
                             }),
                         },
                         happierMcpConfigJson: baseMcpConfigJson,

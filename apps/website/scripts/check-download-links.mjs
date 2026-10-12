@@ -27,6 +27,7 @@ const desktopAssets = downloads.desktopPlatforms.map(
 const TARGETS = [
     ...desktopAssets,
     downloads.desktopReleasesPage,
+    downloads.linuxAppimageRequirementsUrl,
 
     // Mobile. The Play listing is also the target of the /playstore short link
     // (public/_redirects, printed as a QR code on marketing assets), and the

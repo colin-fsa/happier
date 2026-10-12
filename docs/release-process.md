@@ -223,10 +223,13 @@ opts in; preview/main destinations remain exact. Post-promotion candidate
 binding and immutable publication keep their exact-equality checks.
 
 Normal release issue snapshots intersect the open stage queue with correction
-references in the exact pre-promotion target-base-to-candidate range. Use a
+references in the exact candidate's cumulative commit ancestry. Use a
 `Refs`, `Fixes`, `Closes` or `Resolves` line naming the issue in correction
-commits; missing references remain queued for later reconciliation. The combined
-release uses the main-to-candidate range once for both channels. This follow-up
+commits identifying the complete correction; older references remain eligible
+after branch promotion. Missing references and issues with newer reference-bearing
+work on canonical dev stay queued with an explicit provenance diagnostic.
+Candidates outside canonical dev ancestry fail closed. The combined
+release snapshots source/dev/preview eligibility once for both channels. This follow-up
 must be integrated into the target workflow controls and the private conductor
 before pinned new releases are available.
 
@@ -260,7 +263,7 @@ Notes:
 When the same approved source must ship to preview and production without a
 second operator cycle, use the private conductor target
 `preview-and-production`. The target dispatches
-`release-preview-and-production.yml`, which snapshots source/dev issue
+`release-preview-and-production.yml`, which snapshots source/dev/preview issue
 eligibility once and invokes the canonical `release.yml` for both channels in
 parallel.
 
@@ -281,13 +284,22 @@ the producer's artifact ID. Android store retry downloads historical collided
 AAB/APK artifacts separately and admits exactly one AAB with its adjacent
 candidate identity. OTA and release-note artifacts also include the environment.
 Same-channel releases still serialize, while the two channel calls use separate
-non-cancelling concurrency groups. Issues advance directly
-to `stage:stable` only after both channel workflows succeed.
+non-cancelling concurrency groups. Issue stages follow the highest channel with
+successful post-promotion verification and canonical terminal completion:
+production completion advances eligible issues to `stage:stable`, while preview
+completion alone advances source/dev issues to `stage:preview`. A failed sibling
+channel does not block verified availability in the completed channel.
 
 Use GitHub's failed-job rerun when workflow control is unchanged. If control
 changes, resume the combined operation from its prior run; each channel reads
 its own terminal status artifact and reuses only the verified work for that
 channel.
+
+Successful native flows remain reusable when the candidate source differs from
+the origin run's workflow-control SHA. Candidate-bound status must match the
+authorized source and operation, and the exact origin run's channel-specific
+native jobs and required build steps must have succeeded. A control correction
+alone does not invalidate that evidence or require rebuilding and resubmitting.
 
 Desktop recovery prefers that channel's unexpired finalized updater artifacts,
 bound to the exact origin run and SHA-256 archive digest. Restoring them does not
@@ -298,6 +310,18 @@ updater signatures, and runs the applicable desktop-setup gate before production
 publication. Full release callers forward the canonical resolver's admitted
 artifact maps and original run number; standalone nightly recovery retains its
 legacy single-channel artifact admission.
+
+When only desktop publication remains, an authorized maintainer can dispatch
+`build-tauri.yml` from corrected `dev` control with `source_ref` set to the exact
+approved candidate, `resume_run_id` set to its terminal original run, and
+`release_notes_id` set to the approved notes. For a release origin, also set
+`resume_workflow=release.yml` or `release-preview-and-production.yml` and
+`resume_operation_id` to the exact conductor operation. `environment` selects
+the channel's status and artifacts; the canonical resolver still verifies the
+operation, source, run, and archive digests. `candidate_cli_version` can pin the
+immutable CLI used by the production setup gate. All available finalized
+platforms skip builds, signing, and notarization. This desktop-only recovery
+does not run mobile flows or change the failed parent operation's status.
 
 For the same-source origin, the canonical resume resolver can also retain accepted
 OTA, native iOS/Android, and APK flows from exact channel-scoped successful jobs
@@ -333,7 +357,7 @@ immutable candidate bytes are unchanged. A candidate-reachable change requires
 a new prepared release. Never dispatch the privileged release workflow
 directly as a substitute for the conductor.
 
-Issue availability is tracked by the mutually exclusive `stage:source`, `stage:dev`, `stage:preview`, and `stage:stable` labels documented in `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`; preview, production, and combined releases perform the transitions above. Failed and dry-run releases move nothing. The reconciler re-reads each snapshotted issue, preserves unrelated labels, and skips closed or manually restaged issues. It never comments on or closes an issue.
+Issue availability is tracked by the mutually exclusive `stage:source`, `stage:dev`, `stage:preview`, and `stage:stable` labels documented in `docs/issue-triage.md`. Ordinary current-`dev` nightlies perform `source → dev`; preview, production, and combined releases perform the transitions above. Failed channels and dry-run releases move nothing. Standalone surface retries do not establish channel completion; use the canonical release resume to verify the complete channel before stage advancement. The reconciler re-reads each snapshotted issue, preserves unrelated labels, and skips closed or manually restaged issues. It never comments on or closes an issue.
 
 Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `deploy/<env>/website`, and `deploy/<env>/docs` (depending on what changed and which options you select).
 
@@ -482,18 +506,33 @@ recovery cannot substitute notes from the moving control checkout.
 On iOS, EAS submission uploads the binary to App Store Connect; it does not
 submit the production version for App Review. The follow-up resolves the exact
 processed build, creates or reuses its App Store version, applies the approved
-What’s New text, and submits App Review with `AFTER_APPROVAL` and no phased
+What’s New text on every existing version localization, and submits App Review with `AFTER_APPROVAL` and no phased
 release. Existing TestFlight groups and Beta App Review are separate optional
 distribution steps; no TestFlight group is required for production publication.
 [Expo's submission guide](https://docs.expo.dev/submit/ios/) distinguishes the
 upload from App Review, and [Apple's release options](https://developer.apple.com/help/app-store-connect/manage-your-apps-availability/select-an-app-store-version-release-option)
 describe automatic publication after approval.
 
+Android local AAB builds and every Android store submission use
+`scripts/pipeline/expo/verify-android-page-size.mjs` before artifact publication
+or upload. It checks every arm64-v8a and x86_64 ELF LOAD segment in all bundle
+modules and the APK alignment requested by `BundleConfig.pb`. Uncompressed
+libraries require `PAGE_ALIGNMENT_16K` or higher; AAB ZIP offsets themselves are
+not APK offsets. A failure lists the offending libraries and requires a native
+rebuild, not a store-only retry. See [Android's page-size guidance](https://developer.android.com/guide/practices/page-sizes).
+Nonproduction cloud submissions resolve latest to an immutable store-build ID;
+a pending build must finish before verification and submission can proceed.
+Prerelease Android verification failures return failure without suppressing a
+requested iOS submission; the Android upload is skipped.
+The Sherpa JNI CMake owner passes both max-page-size and common-page-size 16384
+to the linker; changing the NDK alone does not repair already built libraries.
+
 On Android, the submit owner validates the Play API credential and the bound
 notes before EAS upload. EAS stages the exact AAB as a production-track draft;
 the Play Publisher owner then commits its approved localized notes and
-`status=completed` together, without a staged `userFraction`. Other releases and
-localizations are preserved. Google defines the full-rollout policy in the
+`status=completed` together, without a staged `userFraction` or country targeting.
+The track update contains only the new release, superseding the previous completed
+release; existing localized notes on the target release are preserved. Google defines the full-rollout policy in the
 [tracks API](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks).
 An accepted edit still reports public availability as unverified: Google review
 and [managed publishing](https://support.google.com/googleplay/android-developer/answer/9859654?hl=en)
@@ -558,6 +597,11 @@ sale/distribution. Processing waits reuse
 `APP_STORE_CONNECT_PRODUCTION_PROCESSING_TIMEOUT_SECONDS` (default 3,600 seconds).
 An unprocessed build when the wait ends, rejection, or required intervention
 fails the retry so it can be recovered visibly.
+
+Apple review-readiness failures report `status=failed`, `code=asc_review_not_ready`,
+the HTTP status, and associated validation errors with resource ids, error codes,
+and attribute pointers. Correct the named metadata and retry publication; partial
+localization updates are reused without rebuilding or uploading the binary.
 
 Android reports `publication_submitted` or `publication_already_submitted` with
 `releaseStatus=completed` and `publicAvailability=unverified`. A successful

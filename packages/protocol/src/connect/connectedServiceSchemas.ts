@@ -503,6 +503,8 @@ export type SealedConnectedServiceQuotaSnapshotV1 = z.infer<typeof SealedConnect
 
 // Explicit reader negotiation: older strict V1 readers cannot accept the opt-in field.
 export const CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER = 'accept';
+// CLI-only optional switch provenance; older strict active-profile bodies remain unchanged.
+export const CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER = 'x-happier-connected-service-switch-reason';
 export const CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE = 'application/json; happier-connected-service-auto-quota-reset=1';
 export const CONNECTED_SERVICE_AUTO_DISABLE_PLAN_INVALID_QUERY_KEY = 'happierAutoDisablePlanInvalidAccounts';
 export const CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY = 'happierPoolQuotaLimitSelection';

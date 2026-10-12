@@ -75,6 +75,10 @@ const INELIGIBLE_STATUSES = new Set<RestartSessionRunnerStatusV1>([
 // composer restart-banner entry point, not only the stale-version presentation.
 const UI_COMPOSER_RESTART_BANNER_WIRE_REASON = 'ui_stale_runner_banner' as const;
 
+/**
+ * Maps a daemon restart result onto the UI restart states, failing closed on malformed payloads. A missing
+ * runner keeps `error: 'not_found'` so a replay that arrives after a landed restart can be observed.
+ */
 export function normalizeRestartSessionRunnerResult(
     value: unknown,
     fallbackSessionId: string,
@@ -113,6 +117,9 @@ export function normalizeRestartSessionRunnerResult(
         ) {
             return { ok: false, status: 'refresh_unsupported', sessionId: result.sessionId };
         }
+        if (result.status === 'not_found') {
+            return { ok: false, status: 'ineligible', sessionId: result.sessionId, error: 'not_found' };
+        }
         if (INELIGIBLE_STATUSES.has(result.status)) {
             return { ok: false, status: 'ineligible', sessionId: result.sessionId };
         }
@@ -133,6 +140,13 @@ export function normalizeRestartSessionRunnerResult(
     };
 }
 
+// The daemon answers a restart only after the old runner exits and its replacement spawns, bounded by its
+// restart completion window (HAPPIER_DAEMON_SESSION_RUNNER_RESTART_COMPLETION_TIMEOUT_MS, default 60s).
+// Outlasting that window keeps a slow but successful restart from surfacing as a transport timeout; a replay
+// while the restart is still in flight joins it, and a replay after it landed is resolved by observing status.
+const SESSION_RUNNER_RESTART_RPC_TIMEOUT_MS = 90_000;
+
+/** Sends the daemon-owned runner restart RPC and normalizes its outcome; transport errors become `failure`. */
 async function requestSessionRunnerRestart(
     request: Readonly<{ sessionId: string; machineId: string; serverId?: string | null }>,
     restart: Omit<RestartSessionRunnerRequestV1, 'sessionId' | 'reason'>,
@@ -152,6 +166,7 @@ async function requestSessionRunnerRestart(
                 kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE,
                 sessionId: request.sessionId,
             },
+            timeoutMs: SESSION_RUNNER_RESTART_RPC_TIMEOUT_MS,
         });
         return normalizeRestartSessionRunnerResult(result, request.sessionId);
     } catch (error) {
@@ -240,6 +255,18 @@ export type RestartStaleSessionRunnerWithObserveDeps = Readonly<{
 const DEFAULT_RESTART_OBSERVE_ATTEMPTS = 8;
 const DEFAULT_RESTART_OBSERVE_INTERVAL_MS = 1_500;
 
+/**
+ * Outcomes that do not prove the restart failed: a lost ack (`failure`), or a replayed request that reached
+ * the daemon after the original restart already replaced the runner (`runner_identity_changed`, or no tracked
+ * runner while the replacement is still spawning).
+ */
+function isAmbiguousRestartOutcome(result: RestartStaleSessionRunnerResult): boolean {
+    if (result.ok) return false;
+    if (result.status === 'failure' || result.status === 'runner_identity_changed') return true;
+    return result.status === 'ineligible' && result.error === 'not_found';
+}
+
+/** Runs a restart and, for ambiguous outcomes, polls runtime status until the replacement runner is seen. */
 async function restartSessionRunnerWithObserve<Request extends Readonly<{
     sessionId: string;
     machineId: string;
@@ -257,7 +284,7 @@ async function restartSessionRunnerWithObserve<Request extends Readonly<{
     const attempts = Math.max(1, Math.trunc(input.observeAttempts ?? DEFAULT_RESTART_OBSERVE_ATTEMPTS));
     const intervalMs = Math.max(0, Math.trunc(input.observeIntervalMs ?? DEFAULT_RESTART_OBSERVE_INTERVAL_MS));
     const result = await input.restart(input.request);
-    if (result.ok || result.status !== 'failure') return result;
+    if (result.ok || !isAmbiguousRestartOutcome(result)) return result;
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         const state = await input.getStatus({
@@ -274,10 +301,10 @@ async function restartSessionRunnerWithObserve<Request extends Readonly<{
 }
 
 /**
- * Restart the stale runner, then — only when the ack came back as an ambiguous `failure`
- * (transport timeout / severed ack channel / spawn ambiguity) — observe the daemon-owned runtime
- * status to see whether the restart actually landed. Definitive negatives (busy, ineligible,
- * runner_identity_changed, version_unknown, unsupported_daemon) mean the runner was NOT restarted and
+ * Restart the stale runner, then — only when the outcome is ambiguous (see `isAmbiguousRestartOutcome`:
+ * a lost ack, or a replay that arrived after the original restart replaced the runner) — observe the
+ * daemon-owned runtime status to see whether the restart actually landed. Definitive negatives (busy,
+ * other ineligible reasons, version_unknown, unsupported_daemon) mean the runner was NOT restarted and
  * are surfaced unchanged, so their dedicated UX is preserved. This prevents the false-negative where a
  * succeeding restart tears down its own ack channel and the caller reports failure on a working op.
  */

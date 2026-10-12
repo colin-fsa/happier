@@ -3,6 +3,10 @@ export type TerminalAuthRequestPolicy = Readonly<{
     claimRetryWindowMs: number;
 }>;
 
+export function terminalAuthRequestExpiresAt(createdAt: Date, policy: TerminalAuthRequestPolicy): number {
+    return createdAt.getTime() + policy.ttlMs;
+}
+
 function clampNumber(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
 }

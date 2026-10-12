@@ -12,6 +12,19 @@ import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
 import { isolateClaudeRuntimeAuthEnv } from './isolateClaudeRuntimeAuthEnv';
 import { resolveClaudeExternalSandboxEnv } from './resolveClaudeExternalSandboxEnv';
+import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv';
+
+export function prepareClaudeSubprocessEnv(params: Readonly<{
+  baseEnv: NodeJS.ProcessEnv;
+  envOverlay?: Readonly<NodeJS.ProcessEnv>;
+}>): NodeJS.ProcessEnv {
+  const env = stripNestedSessionDetectionEnv({ ...params.baseEnv, ...params.envOverlay });
+  if (typeof params.envOverlay?.CLAUDE_CODE_ENTRYPOINT === 'string') {
+    env.CLAUDE_CODE_ENTRYPOINT = params.envOverlay.CLAUDE_CODE_ENTRYPOINT;
+  }
+  delete env[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
+  return isolateClaudeRuntimeAuthEnv(env);
+}
 
 export function buildClaudeSubprocessEnv(params?: Readonly<{
   baseEnv?: NodeJS.ProcessEnv;
@@ -81,10 +94,13 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
   }
 
   delete out[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
-  return isolateClaudeRuntimeAuthEnv({
-    ...out,
-    ...resolveClaudeExternalSandboxEnv(baseEnv),
-    ...resolveClaudeConfigDirEnvOverlay(baseEnv),
-    ...(params?.envOverlay ?? {}),
+  const env = prepareClaudeSubprocessEnv({
+    baseEnv: out,
+    envOverlay: {
+      ...resolveClaudeExternalSandboxEnv(baseEnv),
+      ...resolveClaudeConfigDirEnvOverlay(baseEnv),
+      ...(params?.envOverlay ?? {}),
+    },
   });
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
 }

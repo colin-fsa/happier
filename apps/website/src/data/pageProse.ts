@@ -114,11 +114,12 @@ export const PAGE_PROSE = {
         p9: "Show desktop download options",
         p10: "Show Android download options",
         p11: "Get it on",
+        p12: "Linux AppImage requirements",
     },
     downloadPage: {
         p0: "Download Happier",
         p1: "One page for every install. When your platform gives itself away, the right download starts on its own; when it does not, nothing moves without you. Every build is listed below either way.",
-        p2: "The desktop app is the full Happier client for macOS, Windows and Linux: your sessions on every machine, the permission inbox, and the agents themselves. macOS ships as a DMG for Apple Silicon and Intel, Windows as an .exe installer, Linux as an AppImage — all from rolling stable releases, so these links never go stale on an old version.",
+        p2: "The desktop app is the full Happier client for macOS, Windows and Linux: your sessions on every machine, the permission inbox, and the agents themselves. macOS ships as a DMG for Apple Silicon and Intel, Windows as an .exe installer, Linux as an AppImage or .deb/.rpm package — all from rolling stable releases, so these links never go stale on an old version.",
         p3: "The apps are half of it. The CLI is the other half.",
         p4: "Everything above is a window onto the same thing: coding agents running under the Happier CLI on a computer you own. Install it on the machine that holds your code, and the phone, browser and desktop apps all drive the same sessions — start a run at your desk, approve a permission from the sofa, read the diff on the train.",
         p5: "The command adapts to where you are reading this: a PowerShell one-liner on Windows, curl-to-bash everywhere else. Neither needs root, and both verify what they fetch before running any of it — the details are one click away below, including the minisign key the installer trusts and where to compare it.",
@@ -133,7 +134,7 @@ export const PAGE_PROSE = {
         p14: "Every build, with checksums and minisign signatures, is on the <1>releases page</1>.",
         p15: "Choose the path, then verify it",
         p16: "On a phone or tablet, the store listing is the normal installation path: App Store on iPhone and iPad, Google Play on Android. The direct Android APK stays available for devices without Play or for people who intentionally manage installation themselves; it is an alternative, not the default button.",
-        p17: "Automatic desktop downloads are deliberately conservative. Windows and Linux have one installer format each, so those can begin as soon as the browser identifies the platform. A Mac download starts only when the browser also reports Apple Silicon or Intel; otherwise the page waits and lets you choose. Mobile browsers never receive a desktop file automatically.",
+        p17: "Automatic desktop downloads are deliberately conservative. Windows begins with its .exe installer and Linux with the AppImage when the browser identifies the platform. A Mac download starts only when the browser also reports Apple Silicon or Intel; otherwise the page waits and lets you choose. Mobile browsers never receive a desktop file automatically.",
         p18: "The desktop links track the current stable release rather than embedding a version in this page. If you want to inspect a file before installing it, open the releases page for the matching checksum and minisign signature. The CLI installer performs those checks itself and stops before writing anything when either verification fails.",
     },
     downloadStats: {

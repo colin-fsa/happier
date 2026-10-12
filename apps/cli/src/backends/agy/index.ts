@@ -6,7 +6,12 @@ import { createCatalogDefinedAcpBackend } from '@/agent/acp/catalog/createCatalo
 import type { AccountSettings } from '@happier-dev/protocol';
 import { agyDaemonSpawnHooks } from './daemon/spawnHooks';
 
-const genericEntry = createCatalogDefinedAcpEntry('agy');
+const genericEntry = createCatalogDefinedAcpEntry('agy', {
+  resolveAcpProbeLaunch: async () => {
+    const { ensureAgyAcpServerForLaunch } = await import('./acp/ensureAgyAcpServerForLaunch');
+    return ensureAgyAcpServerForLaunch({ readinessOnly: true });
+  },
+});
 
 export const agent = {
   ...genericEntry,

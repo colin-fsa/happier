@@ -11,6 +11,32 @@ function jsonlLine(value: unknown): string {
 }
 
 describe('readClaudeSessionTitle', () => {
+  it('prefers the latest custom title over newer AI snapshots across tail pages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-precedence-'));
+    const filePath = join(root, 'session-one.jsonl');
+    await writeFile(filePath, [
+      jsonlLine({ type: 'custom-title', customTitle: 'Old rename' }),
+      jsonlLine({ type: 'custom-title', customTitle: 'Manual title' }),
+      ...Array.from({ length: 520 }, () => jsonlLine({ type: 'progress', data: 'x'.repeat(4_096) })),
+      jsonlLine({ type: 'ai-title', aiTitle: 'Older AI title' }),
+      jsonlLine({ type: 'ai-title', aiTitle: 'Newest AI title' }),
+    ].join(''), 'utf8');
+
+    await expect(readClaudeSessionTitle(filePath)).resolves.toBe('Manual title');
+  });
+
+  it('uses the latest AI title after a custom title is cleared', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-claude-title-cleared-'));
+    const filePath = join(root, 'session-one.jsonl');
+    await writeFile(filePath, [
+      jsonlLine({ type: 'custom-title', customTitle: 'Old rename' }),
+      jsonlLine({ type: 'ai-title', aiTitle: 'Latest AI title' }),
+      jsonlLine({ type: 'custom-title', customTitle: '   ' }),
+    ].join(''), 'utf8');
+
+    await expect(readClaudeSessionTitle(filePath)).resolves.toBe('Latest AI title');
+  });
+
   it.each([
     ['ai-title', 'aiTitle', 'AI-generated Claude title'],
     ['custom-title', 'customTitle', 'Renamed Claude session'],

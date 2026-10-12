@@ -1,9 +1,12 @@
 import { RawJSONLinesSchema, type RawJSONLines } from '../types';
 import { projectClaudePeerMessage } from '../attachments/claudePeerMessageProjection';
+import { projectClaudeTaskNotificationToolResult } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 
 export function parseRawJsonLinesObject(value: unknown): RawJSONLines | null {
   const peerMessage = projectClaudePeerMessage(value);
   if (peerMessage) return peerMessage;
+  const taskResult = projectClaudeTaskNotificationToolResult(value);
+  if (taskResult) return taskResult;
   const parsed = RawJSONLinesSchema.safeParse(value);
   if (!parsed.success) return null;
   return parsed.data;

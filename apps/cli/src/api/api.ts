@@ -51,6 +51,7 @@ import {
   projectSessionMetadataForWire,
   buildProviderAccountUsageRecordId,
   CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER,
+  CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER,
   CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
   appendConnectedServiceAuthGroupReaderCapabilities,
   ConnectedServiceAuthGroupErrorResponseV1Schema,
@@ -1001,6 +1002,7 @@ export class ApiClient {
     activeProfileId: string;
     expectedGeneration: number;
     overrideRuntimeCooldown?: boolean;
+    switchReason?: string;
   }): Promise<ConnectedServiceAuthGroupV1> {
     const expectedGeneration = assertConnectedServiceExpectedGeneration(
       params.expectedGeneration,
@@ -1023,6 +1025,7 @@ export class ApiClient {
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json',
             [CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER]: CONNECTED_SERVICE_AUTO_QUOTA_RESET_HEADER_VALUE,
+            ...(params.switchReason ? { [CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER]: params.switchReason } : {}),
           },
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
         },

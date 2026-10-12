@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
@@ -33,7 +33,16 @@ export function commandExistsInPath(params: Readonly<{
 
   for (const dir of pathDirs) {
     const full = join(dir, cmd);
-    if (existsSync(full)) return true;
+    try {
+      statSync(full);
+      return true;
+    } catch (error) {
+      if (error && typeof error === 'object' && 'code' in error
+        && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) {
+        continue;
+      }
+      throw error;
+    }
   }
 
   return false;

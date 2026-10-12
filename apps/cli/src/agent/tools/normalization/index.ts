@@ -29,8 +29,16 @@ import {
     extractCanonicalInputFromHappierToolsShellBridge,
     resolveCanonicalToolNameFromHappierToolsShellBridge,
 } from './happierToolsShellBridgeCanonicalization';
+import { extractDeferredToolExecutionCall } from './deferredToolExecutionCanonicalization';
 
 type UnknownRecord = Record<string, unknown>;
+
+function isShellToolNameAlias(name: string): boolean {
+    const lower = name.toLowerCase();
+    return lower === 'execute_command' || lower === 'exec_command'
+        || lower === 'execute' || lower === 'bash' || lower === 'shell'
+        || name === 'GeminiBash' || name === 'CodexBash';
+}
 
 function asRecord(value: unknown): UnknownRecord | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -88,8 +96,13 @@ export function canonicalizeToolNameV2(opts: {
 }): string {
     const name = opts.toolName;
     const lower = name.toLowerCase();
-    const shellBridgeCanonical = resolveCanonicalToolNameFromHappierToolsShellBridge(opts.toolInput);
+    const shellBridgeCanonical = isShellToolNameAlias(name)
+        ? resolveCanonicalToolNameFromHappierToolsShellBridge(opts.toolInput) : null;
     if (shellBridgeCanonical) return shellBridgeCanonical;
+    const deferredCall = extractDeferredToolExecutionCall({ ...opts, rawInput: opts.toolInput });
+    if (deferredCall) {
+        return canonicalizeToolNameV2({ ...opts, toolName: deferredCall.toolName, toolInput: deferredCall.params });
+    }
     const record = asRecord(opts.toolInput) ?? {};
     const titleCandidate =
         typeof (record as any).title === 'string'
@@ -150,7 +163,6 @@ export function canonicalizeToolNameV2(opts: {
 
     // Common provider variants (underscore-based).
     // Keep this list provider-agnostic: normalize obvious synonyms to our canonical tool families.
-    if (lower === 'execute_command' || lower === 'exec_command') return 'Bash';
     if (lower === 'read_file') return 'Read';
     if (lower === 'write_file' || lower === 'write_to_file') return 'Write';
     if (lower === 'apply_diff' || lower === 'apply_patch') return 'Patch';
@@ -158,7 +170,7 @@ export function canonicalizeToolNameV2(opts: {
     if (lower === 'search_code' || lower === 'code_search') return 'CodeSearch';
 
     // Shell / terminal.
-    if (lower === 'execute' || lower === 'bash' || lower === 'shell' || name === 'GeminiBash' || name === 'CodexBash') return 'Bash';
+    if (isShellToolNameAlias(name)) return 'Bash';
 
     // Files.
     if (lower === 'read' && inferredFromTitle && inferredFromTitle !== 'Read') return inferredFromTitle;
@@ -307,7 +319,11 @@ export function normalizeToolCallInputV2(opts: {
     canonicalToolName: string;
     rawInput: unknown;
 }): unknown {
-    const effectiveRawInput = extractCanonicalInputFromHappierToolsShellBridge(opts.rawInput) ?? opts.rawInput;
+    const deferredCall = extractDeferredToolExecutionCall(opts);
+    const effectiveToolName = deferredCall?.toolName ?? opts.toolName;
+    const unwrappedInput = deferredCall?.params ?? opts.rawInput;
+    const effectiveRawInput = (isShellToolNameAlias(effectiveToolName)
+        ? extractCanonicalInputFromHappierToolsShellBridge(unwrappedInput) : null) ?? unwrappedInput;
 
     if (opts.canonicalToolName.startsWith('mcp__')) {
         const normalized = normalizeMcpInput(opts.canonicalToolName, effectiveRawInput);
@@ -323,7 +339,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Bash') {
-        const normalized = normalizeBashInput(opts.rawInput);
+        const normalized = normalizeBashInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -336,7 +352,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Read') {
-        const normalized = normalizeReadInput(opts.rawInput);
+        const normalized = normalizeReadInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -349,7 +365,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'Delete') {
-        const normalized = normalizeDeleteInput(opts.rawInput);
+        const normalized = normalizeDeleteInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -362,7 +378,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'TodoWrite') {
-        const normalized = normalizeTodoWriteInput(opts.rawInput);
+        const normalized = normalizeTodoWriteInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -375,7 +391,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'TodoRead') {
-        const normalized = normalizeTodoReadInput(opts.rawInput);
+        const normalized = normalizeTodoReadInput(effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -388,7 +404,7 @@ export function normalizeToolCallInputV2(opts: {
     }
 
     if (opts.canonicalToolName === 'SubAgent' || opts.canonicalToolName === 'Task') {
-        const normalized = normalizeTaskInput(opts.toolName, effectiveRawInput);
+        const normalized = normalizeTaskInput(effectiveToolName, effectiveRawInput);
         const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,

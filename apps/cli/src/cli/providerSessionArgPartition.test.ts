@@ -1,12 +1,43 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { partitionProviderSessionArgs } from './providerSessionArgPartition';
+import { resolveOpenCodeFamilyPermissionConfig } from '@/backends/openCodeFamily/permission/openCodeFamilyPermissionPolicy';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe('partitionProviderSessionArgs', () => {
+  it('consumes --auto as the canonical automatic-edit permission intent', () => {
+    const result = partitionProviderSessionArgs({
+      args: ['opencode', '--auto', '--native-option'],
+      providerSubcommand: 'opencode',
+    });
+
+    expect(result.permissionMode).toBe('safe-yolo');
+    expect(resolveOpenCodeFamilyPermissionConfig(result.permissionMode)).toMatchObject({
+      '*': 'ask', read: 'allow', edit: 'allow', write: 'allow', bash: 'ask',
+    });
+    expect(result.providerArgs).toEqual(['--native-option']);
+    expect(result.permissionMode).toBe(partitionProviderSessionArgs({
+      args: ['opencode', '--permission-mode', 'auto'],
+      providerSubcommand: 'opencode',
+    }).permissionMode);
+  });
+
+  it.each([
+    { flags: ['--auto', '--permission-mode', 'read_only'], expected: 'read-only' },
+    { flags: ['--permission-mode', 'read_only', '--auto'], expected: 'safe-yolo' },
+  ])('keeps permission flag ordering for $flags', ({ flags, expected }) => {
+    const result = partitionProviderSessionArgs({
+      args: ['opencode', ...flags],
+      providerSubcommand: 'opencode',
+    });
+
+    expect(result.permissionMode).toBe(expected);
+    expect(result.providerArgs).toEqual([]);
+  });
+
   it('consumes common Happier session flags and preserves provider args', () => {
     const result = partitionProviderSessionArgs({
       args: [

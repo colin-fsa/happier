@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { mapClaudeJsonlLineToDirectMessages } from './mapClaudeJsonlLineToDirectMessages';
 
 describe('mapClaudeJsonlLineToDirectMessages', () => {
+  it('projects native queued task completion through the same parser as synced history', () => {
+    const [item] = mapClaudeJsonlLineToDirectMessages({ fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
+      lineValue: { type: 'attachment', uuid: 'direct-task', attachment: { type: 'queued_command', commandMode: 'task-notification',
+        prompt: '<task-notification><task-id>task</task-id><tool-use-id>tool</tool-use-id><status>completed</status><result>findings</result></task-notification>' } } });
+    expect(item?.raw).toMatchObject({ role: 'agent', content: { type: 'output', data: { type: 'user',
+      origin: { kind: 'task-notification', toolUseId: 'tool' }, message: { content: [{ type: 'tool_result', tool_use_id: 'tool' }] } } } });
+  });
+
   it('includes delivered cross-session messages as peer output rather than human input', () => {
     const [item] = mapClaudeJsonlLineToDirectMessages({ fileRelPath: 'project/session.jsonl', lineStartOffsetBytes: 10,
       lineValue: { type: 'attachment', uuid: 'direct-peer', attachment: { type: 'queued_command',

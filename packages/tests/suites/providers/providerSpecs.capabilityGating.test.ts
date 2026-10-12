@@ -1,8 +1,24 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_IDS, hasBuiltInAcpConfig } from '@happier-dev/agents';
 
 import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
+import { resolveScenarioById } from '../../src/testkit/providers/harness/scenarioSelection';
 
 describe('providers: scenario capability gating', () => {
+  it('keeps catalog-defined ordinary resumes separate from explicit history import', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    for (const agentId of AGENT_IDS.filter(hasBuiltInAcpConfig)) {
+      const provider = providers.find((entry) => entry.id === agentId);
+      if (!provider || provider.protocol !== 'acp') continue;
+      const scenarios = [...provider.scenarioRegistry.tiers.smoke, ...provider.scenarioRegistry.tiers.extended];
+      expect(scenarios, agentId).not.toContain('acp_resume_fresh_session_imports_history');
+      expect(() => resolveScenarioById({ provider, id: 'acp_resume_fresh_session_imports_history' }), agentId)
+        .toThrow(/ordinary resume/);
+    }
+    expect(providers.find((entry) => entry.id === 'codebuddy')?.scenarioRegistry.tiers.extended)
+      .toContain('acp_resume_load_session');
+  });
+
   it('does not require ACP model probe for kilo', async () => {
     const providers = await loadProvidersFromCliSpecs();
     const kilo = providers.find((provider) => provider.id === 'kilo');

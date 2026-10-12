@@ -678,6 +678,32 @@ describe('useSessionInlineDrag (onLongPressActivated)', () => {
         }
     });
 
+    it.each([
+        ['android', undefined],
+        ['ios', 0],
+    ] as const)('configures long-press pan activation distance for %s', async (platformOS, expectedMinDistance) => {
+        const { Platform } = await import('react-native');
+        const originalPlatform = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: platformOS });
+        try {
+            const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+
+            const hook = await renderHook(() => useSessionInlineDrag(dragParams({
+                activateAfterLongPressMs: 350,
+            })));
+
+            const gesture = hook.getCurrent().gesture as unknown as MockGesture;
+            const pan = gesture.gestures?.find((candidate) => candidate.kind === 'pan');
+            // Android RNGH pan activates on any move when minDistance is 0, cancelling
+            // child Pressables before the long-press delay; it must keep the touch-slop default.
+            expect(pan?.config.minDistance).toBe(expectedMinDistance);
+            expect(pan?.config.activateAfterLongPress).toBe(350);
+            await hook.unmount();
+        } finally {
+            Object.defineProperty(Platform, 'OS', { configurable: true, value: originalPlatform });
+        }
+    });
+
     it('returns no drag gesture when disabled', async () => {
         const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
 

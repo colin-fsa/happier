@@ -62,6 +62,55 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     await removeTempDir(localHomeDir);
   });
 
+  it.each([240_000, 7_200_000, null])('reports the server deadline %s capped by crypto validity and binds links and saved state to it', async (remainingMs) => {
+    const serverExpiresAt = remainingMs === null ? null : Date.now() + remainingMs;
+    const app = fastify({ logger: false });
+    // The absent field is the released server response, before #403.
+    app.post('/v1/auth/request', async () => ({ state: 'requested', ...(serverExpiresAt === null ? {} : { expiresAt: serverExpiresAt }) }));
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({ app, origin: 'http://happier-auth.test' });
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: remoteHomeDir,
+        HAPPIER_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://happier-auth.test',
+        HAPPIER_WEBAPP_URL: 'http://webapp.test',
+      });
+      vi.resetModules();
+      const { handleAuthRequest } = await import('./auth/request');
+      const output = captureConsoleLogAndMuteStdout();
+      try {
+        await handleAuthRequest(['--json']);
+        const request = JSON.parse(output.logs[0] ?? '') as {
+          expiresAtMs: number | null;
+          expiryNotice: string;
+          pairing: { createdAtMs: number; expiresAtMs: number };
+          links: { webUrl: string; mobileUrl: string };
+          stateFile: string;
+        };
+        const cryptoExpiresAt = request.pairing.createdAtMs + 3_600_000;
+        const expectedDeadline = serverExpiresAt === null ? null : Math.min(serverExpiresAt, cryptoExpiresAt);
+        expect(request.expiresAtMs).toBe(expectedDeadline);
+        if (expectedDeadline === null) {
+          expect(request.expiryNotice).toMatch(/expires soon/i);
+          expect(request.expiryNotice).not.toMatch(/hour|minute|\d/);
+        } else {
+          expect(request.expiryNotice).toContain(new Date(expectedDeadline).toISOString());
+        }
+        const pairingDeadline = expectedDeadline ?? cryptoExpiresAt;
+        expect(request.pairing.expiresAtMs).toBe(pairingDeadline);
+        for (const link of [request.links.webUrl, request.links.mobileUrl]) expect(link).toContain(`expiresAt=${pairingDeadline}`);
+        const state = JSON.parse(await readFile(request.stateFile, 'utf8')) as { pairingExpiresAtMs: number };
+        expect(state.pairingExpiresAtMs).toBe(pairingDeadline);
+      } finally {
+        output.restore();
+      }
+    } finally {
+      restoreAxios();
+      await app.close();
+    }
+  });
+
   it('persists an opt-in v3 requirement with split request/wait state', async () => {
     const app = fastify({ logger: false });
     app.post('/v1/auth/request', async (_req, reply) => reply.send({ state: 'requested' }));

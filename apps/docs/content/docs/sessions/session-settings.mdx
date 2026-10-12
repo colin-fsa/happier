@@ -126,7 +126,7 @@ The root Session screen also contains the defaults that control how app-started 
 
 ### Terminal host for new sessions
 
-Choose whether supported app-started sessions use no terminal host, `tmux`, zellij, or Herdr. A per-machine override can replace the account default. Herdr and automatic presentation of supported server-backed sessions are currently development-build features.
+Choose whether supported app-started sessions use no terminal host, `tmux`, zellij, or Herdr. A per-machine override can replace the account default. Herdr and automatic presentation of supported server-backed sessions are available in Happier CLI 0.2.16 and later, including stable releases. Herdr selection requires an updated app as well as the CLI on the target machine.
 
 In development builds, machine details shows **Override account default**. With it off,
 new sessions inherit the account choice; the effective host remains visible. Turning it
@@ -141,7 +141,7 @@ Resuming an inactive session from the app or taking over an external session use
 
 Use a terminal host when you want sessions to appear in that host immediately and remain locally attachable. Select **None** when you want supported sessions to stay in their normal background/server-backed presentation until you attach. Herdr requires a supported local Herdr installation and is unavailable as an attach host on native Windows.
 
-In development builds, a missing supported Herdr/Zellij installation or an older running
+A missing supported Herdr/Zellij installation or an older running
 Herdr server produces a terminal-host setup message rather than an agent error. Install
 or update the host and restart its server on the selected machine, or choose another
 terminal host. Your session draft is kept while you correct the setup.

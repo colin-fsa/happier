@@ -4,7 +4,7 @@
  */
 
 import { logger } from '@/ui/logger';
-import { readDaemonState } from '@/persistence';
+import { readDaemonState, reclaimDeadDaemonPublication } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { projectPath } from '@/projectPath';
 import { existsSync, readFileSync, statSync } from 'fs';
@@ -51,8 +51,6 @@ import {
   RestartSessionRunnerResultV1Schema,
   SessionRunnerRuntimeStateV1Schema,
   SessionRunnerStatusGetRequestV1Schema,
-  SPAWN_SESSION_ERROR_CODES,
-  isSpawnSessionErrorDetail,
   type ConnectedServiceBindingsV1,
   type ConnectedServiceId,
   type RestartAllSessionRunnersRequestV1,
@@ -70,6 +68,7 @@ import {
 } from './sessions/stopSessionContract';
 import { isPidAliveBySignal, readProcessRunState } from './processRunState';
 import { classifyDaemonLifecycleProcessByPid } from './doctor';
+import { readSpawnSessionNonceResolution } from '@/session/services/awaitSpawnedSessionId';
 
 export type DaemonControlRequestOptions = {
   /** `null` leaves a local control request owned by caller/daemon lifecycle. */
@@ -828,6 +827,9 @@ export async function queryDaemonOpenCodeBrokerLoadHandshake(
 
 export async function listDaemonSessions(): Promise<any[]> {
   const result = await daemonPost('/list');
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
   return result.children || [];
 }
 
@@ -863,34 +865,14 @@ export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Prom
   const result = await daemonPost('/spawn-session/resolve', { spawnNonce: normalizedSpawnNonce });
   if (result && typeof result === 'object' && typeof (result as { status?: unknown }).status === 'string') {
     const status = (result as { status: string }).status;
-    if (status === 'pending') return { status: 'pending' };
-    if (status === 'not_found') return { status: 'not_found' };
-    if (status === 'error') {
-      const errorCode = typeof (result as { errorCode?: unknown }).errorCode === 'string'
-        ? (result as { errorCode: string }).errorCode
-        : '';
-      const errorMessage = typeof (result as { errorMessage?: unknown }).errorMessage === 'string'
-        ? (result as { errorMessage: string }).errorMessage.trim()
-        : '';
-      if ((Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode) && errorMessage) {
-        const errorDetailRaw = (result as { errorDetail?: unknown }).errorDetail;
-        return {
-          status: 'error',
-          errorCode: errorCode as (typeof SPAWN_SESSION_ERROR_CODES)[keyof typeof SPAWN_SESSION_ERROR_CODES],
-          errorMessage,
-          ...(isSpawnSessionErrorDetail(errorDetailRaw) ? { errorDetail: errorDetailRaw } : {}),
-        };
+    if (status === 'pending' || status === 'not_found' || status === 'error' || status === 'success') {
+      const resolution = readSpawnSessionNonceResolution(result);
+      // The released local-control adapter treats malformed replies as absent,
+      // unlike machine RPC, where missing capability remains distinguishable.
+      if (resolution.status === 'unsupported' || (status === 'success' && resolution.status === 'pending')) {
+        return { status: 'not_found' };
       }
-      return { status: 'not_found' };
-    }
-    if (status === 'success') {
-      const sessionId = typeof (result as { sessionId?: unknown }).sessionId === 'string'
-        ? (result as { sessionId: string }).sessionId.trim()
-        : '';
-      if (sessionId) {
-        return { status: 'success', sessionId };
-      }
-      return { status: 'not_found' };
+      return resolution;
     }
   }
 
@@ -1119,6 +1101,11 @@ async function forceKillKnownDaemonPid(pid: number, observation?: PublishedDaemo
     if (observation && await observation.isPresent()) {
       throw new DaemonStopIncompleteError({ reason: 'process_identity_unverified', pid });
     }
+    if (observation) await observation.reclaimIfDead();
+    else {
+      const state = await readDaemonState();
+      if (!state || state.pid === pid) await reclaimDeadDaemonPublication({ expectedState: state, expectedPid: pid });
+    }
     return { status: 'not_running' };
   }
   const ownerProcess = await classifyDaemonLifecycleProcessByPid(pid)
@@ -1139,6 +1126,11 @@ async function forceKillKnownDaemonPid(pid: number, observation?: PublishedDaemo
   }
   if (isPidAliveBySignal(pid)) {
     throw new DaemonStopIncompleteError({ reason: 'force_kill_unconfirmed', pid });
+  }
+  if (observation) await observation.reclaimIfDead();
+  else {
+    const state = await readDaemonState();
+    if (!state || state.pid === pid) await reclaimDeadDaemonPublication({ expectedState: state, expectedPid: pid });
   }
   return { status: 'stopped', method: 'force' };
 }
@@ -1162,12 +1154,16 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}): Promi
       return lockPid ? await forceKillKnownDaemonPid(lockPid) : { status: 'not_running' };
     }
     const observation = observePublishedDaemonOwner(state);
-    if (!await observation.isPresent()) return { status: 'not_running' };
+    if (!await observation.isPresent()) {
+      await observation.reclaimIfDead();
+      return { status: 'not_running' };
+    }
 
     try {
       await stopDaemonHttp({ stopSessions: params.stopSessions === true });
       observation.acknowledgeStop();
       await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs(), observation);
+      await observation.reclaimIfDead();
       return { status: 'stopped', method: 'graceful' };
     } catch (error) {
       logger.debug('[CONTROL CLIENT] HTTP stop failed; checking verified force stop', error);
@@ -1190,25 +1186,40 @@ export type PublishedDaemonOwnerObservation = Readonly<{
   isPresent: () => Promise<boolean>;
   hasHiddenPid: () => boolean;
   acknowledgeStop: () => void;
+  reclaimIfDead: () => Promise<void>;
 }>;
 
-/** Stop observes the existing lock before requesting shutdown; it never owns cleanup. */
+/** Stop captures exact publication ownership before requesting shutdown. */
 export function observePublishedDaemonOwner(
-  state: Readonly<{ pid: number; httpPort: number; controlToken?: string }>,
+  state: Readonly<{ pid: number; httpPort: number; startedAt?: number; controlToken?: string }>,
   lockFile = configuration.daemonLockFile,
   options: Readonly<{ unobservablePidIsUnverified?: boolean }> = {},
 ): PublishedDaemonOwnerObservation {
   let observedLock = false;
+  let observedLockRaw: string | null | undefined;
   let hiddenPid = false;
   let unobservablePid = false;
   try {
-    observedLock = readDaemonLockPid(lockFile, true) === state.pid;
+    try { observedLockRaw = readFileSync(lockFile, 'utf8'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      observedLockRaw = null;
+    }
+    observedLock = observedLockRaw !== null && Number(observedLockRaw.trim()) === state.pid;
   } catch {
     // No readable matching lifecycle lock means hidden-process exit cannot be confirmed.
   }
   return {
     hasHiddenPid: () => hiddenPid,
     acknowledgeStop: () => { if (unobservablePid) hiddenPid = true; },
+    async reclaimIfDead() {
+      if (hiddenPid || observedLockRaw === undefined || options.unobservablePidIsUnverified) return;
+      await reclaimDeadDaemonPublication({
+        stateFile: lockFile.slice(0, -'.lock'.length),
+        expectedState: state,
+        expectedLockRaw: observedLockRaw,
+      });
+    },
     async isPresent() {
       const inspection = await inspectPublishedDaemonPresence(state);
       if (inspection.status === 'running') {

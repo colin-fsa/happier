@@ -703,7 +703,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 '[claude]',
                 'sdk_metadata',
             );
-        });
+        }, { claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory });
     });
 
     // Variable to track current session instance (updated via onSessionReady callback)
@@ -1301,6 +1301,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
             initialClaudeUnifiedTerminalMode,
             claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
+            claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory,
             startedBy: options.startedBy,
             terminalRuntime: initialTerminalRuntime,
             messageQueue,
@@ -1837,7 +1838,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         '[claude]',
                         'sdk_metadata',
                     );
-                });
+                }, { claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory });
 
                 // Set initial agent state (best-effort; failure is non-fatal).
                 updateAgentStateBestEffort(
@@ -2174,6 +2175,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
                         claudeUnifiedTerminalEnabled: unifiedTerminalRuntimeActive,
                         initialClaudeUnifiedTerminalMode,
                         claudeCodeExperimentalAgentTeamsEnabled: currentClaudeRemoteMetaState.claudeCodeExperimentalAgentTeamsEnabled,
+                        claudeCodeIncludeInNativeHistory: currentClaudeRemoteMetaState.claudeCodeIncludeInNativeHistory,
                         startedBy: options.startedBy,
                         terminalRuntime: options.terminalRuntime ?? null,
                         messageQueue,

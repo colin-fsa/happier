@@ -7,9 +7,10 @@ import {
     APP_STORE_URL,
     DESKTOP_PLATFORMS,
     DESKTOP_RELEASES_PAGE,
+    LINUX_APPIMAGE_REQUIREMENTS_URL,
     type DesktopPlatformId,
 } from '../data/downloads';
-import { detectPlatform, isHandheld } from './usePlatform';
+import { detectDesktopArchitecture, detectPlatform, isHandheld, readDesktopArchitectureHint } from './usePlatform';
 import { trackDownloadBadgeClicked } from '../analytics/events';
 import { locationOf } from '../analytics/location';
 import { rich } from '../i18n/rich';
@@ -21,12 +22,13 @@ import { useSiteData } from '../i18n/siteData';
  *
  * The SERVER RENDER is the complete list and nothing else. That is what a
  * crawler, a no-JS reader and the first client paint all see, and it is a
- * usable page on its own: four desktop builds, both stores, the APK, the
+ * usable page on its own: every desktop format, both stores, the APK, the
  * releases page. Detection runs in an effect (the usePlatform rule — never
  * during render, so hydration cannot mismatch) and then does the LEAST
  * confident thing the platform allows:
  *
- *   windows / linux   one artifact each, so redirect immediately via
+ *   windows / linux   default to the EXE / AppImage (unless Linux reports ARM,
+ *                     for which no desktop artifact is published) via
  *                     `location.replace` — the page stays visible underneath,
  *                     because replacing to a binary asset does not navigate.
  *   mac               two artifacts, and the UA string does not say which
@@ -83,16 +85,18 @@ function Card({
     label,
     sublabel,
     chip,
+    target,
 }: {
     href: string;
     label: string;
     sublabel: string;
     chip?: string;
+    target?: '_blank';
 }) {
     return (
         <a
             href={href}
-            target="_blank"
+            target={target}
             rel="noreferrer"
             className="flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-transform hover:-translate-y-[1px]"
             style={chip ? { ...CARD_STYLE, borderColor: 'var(--fg)' } : CARD_STYLE}
@@ -146,26 +150,29 @@ export function DownloadHub() {
 
         const platform = detectPlatform();
         if (platform === 'windows') return begin('win-x86_64');
-        if (platform === 'linux') return begin('linux-x86_64');
+        if (platform === 'linux' && detectDesktopArchitecture() === 'arm64') return;
         if (isHandheld(platform)) {
             return setHint({
                 kind: 'handheld',
                 store: platform === 'android' ? 'google-play' : 'app-store',
             });
         }
-        if (platform !== 'mac') return; // 'unknown': the full list is the answer.
+        if (platform !== 'mac' && platform !== 'linux') return; // 'unknown': the full list is the answer.
 
-        type UAData = { getHighEntropyValues?: (keys: string[]) => Promise<{ architecture?: string }> };
-        const uaData = (navigator as unknown as { userAgentData?: UAData }).userAgentData;
-        if (!uaData?.getHighEntropyValues) return setHint({ kind: 'pick-your-mac' });
-        uaData
-            .getHighEntropyValues(['architecture'])
-            .then((data) => {
-                if (data?.architecture === 'arm') begin('mac-arm64');
-                else if (data?.architecture === 'x86') begin('mac-x86_64');
-                else setHint({ kind: 'pick-your-mac' });
-            })
-            .catch(() => setHint({ kind: 'pick-your-mac' }));
+        const withoutArchitectureHint = () => {
+            if (platform === 'linux') begin('linux-x86_64');
+            else setHint({ kind: 'pick-your-mac' });
+        };
+
+        void readDesktopArchitectureHint().then((architecture) => {
+            if (platform === 'linux') {
+                if (architecture !== 'arm64') begin('linux-x86_64');
+                return;
+            }
+            if (architecture === 'arm64') begin('mac-arm64');
+            else if (architecture === 'x86_64') begin('mac-x86_64');
+            else withoutArchitectureHint();
+        });
     }, []);
 
     const redirecting =
@@ -191,6 +198,7 @@ export function DownloadHub() {
                 <Card
                     key={store.id}
                     href={store.href}
+                    target="_blank"
                     label={store.label}
                     sublabel={store.id === 'android-apk' ? PAGE_PROSE.downloadBadges.p6 : store.sublabel}
                     chip={hint.kind === 'handheld' && store.id === hint.store ? copy.p10 : undefined}
@@ -236,6 +244,12 @@ export function DownloadHub() {
             </div>
 
             <p className="mt-6 text-[13.5px] leading-[1.6]" style={{ color: 'var(--muted)' }}>
+                <a
+                    href={LINUX_APPIMAGE_REQUIREMENTS_URL}
+                    className="underline underline-offset-2"
+                    style={{ color: 'var(--fg)' }}
+                >{PAGE_PROSE.downloadBadges.p12}</a>
+                {' · '}
                 {rich(copy.p14, { 1: (children) => <a
                     href={DESKTOP_RELEASES_PAGE}
                     target="_blank"

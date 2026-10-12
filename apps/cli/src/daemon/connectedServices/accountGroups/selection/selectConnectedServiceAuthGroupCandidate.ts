@@ -548,21 +548,10 @@ function primaryLeftForLimitAndResetLanded(
 }
 
 /**
- * Restore the priority-primary member as the selection target — overriding priority ranking and the
- * soft-switch "stay put" decision — when the group had switched away from it because it was limited
- * and that limit has since reset. Opt-in via `policy.autoRestorePrimaryWhenReset`. Gated so restore
- * does EXACTLY what its name promises:
- *  - F3: only under `strategy === 'priority'`. Under `least_limited` there is no fixed primary
- *    (selection is headroom-based and members commonly share the default priority), so restore
- *    would silently pin the pool to the oldest account — never do that.
- *  - F2: only when the primary actually left BECAUSE it was limited and its provider reset has
- *    landed (`primaryLeftForLimitAndResetLanded`). A primary that was never limited (e.g. after a
- *    manual "Make Active" to a backup) carries no landed-reset marker, so a manual/among-equals
- *    choice is never bounced back, and a still-pending reset is not restored early.
- *  - F1: fail closed on unknown headroom. Without a fresh score we cannot prove the primary has
- *    enough headroom to avoid an immediate soft-switch-away (flap), so treat unknown as not-safe.
- * Reuses the existing eligibility machinery (`candidates`) and the same preferred-candidate
- * override seam as soft-switch — no new switch path.
+ * Restore an eligible priority primary on fresh healthy quota after an automatic limit fallback.
+ * Group switch provenance survives member failure-state reconciliation and also distinguishes a
+ * deliberate manual selection. Older groups without provenance retain their landed-reset proof.
+ * Eligibility and fresh headroom remain owned by the normal candidate path.
  */
 function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
   members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
@@ -571,6 +560,8 @@ function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
   policy: ConnectedServiceAuthGroupPolicyV1;
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
   nowMs: number;
+  lastSwitchReason?: string | null;
+  lastSwitchAt?: number | null;
 }>): ConnectedServiceAuthGroupCandidate | null {
   if (!params.policy.autoRestorePrimaryWhenReset) return null;
   if (params.policy.strategy !== 'priority') return null;
@@ -580,7 +571,14 @@ function resolvePrimaryRestorePreferredCandidate(params: Readonly<{
   const primaryCandidate = params.candidates.find((candidate) => candidate.profileId === primaryProfileId) ?? null;
   if (!primaryCandidate) return null;
   const primaryState = params.memberStatesByProfileId.get(primaryProfileId) ?? null;
-  if (!primaryLeftForLimitAndResetLanded(primaryState, params.nowMs)) return null;
+  if (params.lastSwitchReason) {
+    if (!['usage_limit', 'rate_limit', 'capacity', 'soft_threshold', 'same_provider_account_exhausted'].includes(params.lastSwitchReason)) return null;
+    const capturedAtMs = numberOrNull(primaryState?.quotaSnapshot?.capturedAtMs);
+    const lastSwitchAt = numberOrNull(params.lastSwitchAt);
+    if (lastSwitchAt !== null && (capturedAtMs === null || capturedAtMs <= lastSwitchAt)) return null;
+  } else if (!primaryLeftForLimitAndResetLanded(primaryState, params.nowMs)) {
+    return null;
+  }
   if (primaryCandidate.leastLimitedScore === null) return null;
   const threshold = resolveSoftSwitchRemainingPercent(params.policy);
   if (threshold !== null && primaryCandidate.leastLimitedScore <= threshold) {
@@ -647,6 +645,8 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
   nowMs: number;
   quotaFreshnessMs: number;
   activeProfileId: string | null;
+  lastSwitchReason?: string | null;
+  lastSwitchAt?: number | null;
   policy: ConnectedServiceAuthGroupPolicyV1;
   members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
@@ -876,6 +876,8 @@ export function selectConnectedServiceAuthGroupCandidate(params: Readonly<{
     policy: params.policy,
     memberStatesByProfileId: params.memberStatesByProfileId,
     nowMs: params.nowMs,
+    lastSwitchReason: params.lastSwitchReason,
+    lastSwitchAt: params.lastSwitchAt,
   });
 
   const softSwitchPreferred = resolveSoftSwitchPreferredCandidate({

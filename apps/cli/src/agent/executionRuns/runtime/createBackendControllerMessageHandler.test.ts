@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AgentBackend, AgentMessage, SessionId } from '@/agent/core/AgentBackend';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
+import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
 import { createBackendControllerMessageHandler } from './createBackendControllerMessageHandler';
 
 function createBackendStub(): AgentBackend {
@@ -41,7 +42,7 @@ function createController(): ExecutionRunBackendController {
   };
 }
 
-function createHandlerHarness() {
+function createHandlerHarness(params: { streaming?: boolean } = {}) {
   const writes: Array<Readonly<{ runId: string; nowMs: number; force?: boolean }>> = [];
   const sent: Array<Readonly<{
     body: ACPMessageData;
@@ -49,12 +50,23 @@ function createHandlerHarness() {
   }>> = [];
   let nowMs = 1_700_000_000_000;
   const ctrl = createController();
+  const persisted = new Map<string, ACPMessageData>();
+  if (params.streaming) {
+    ctrl.streamWriter = createStreamedTranscriptWriter({
+      provider: 'pi',
+      session: {
+        sendAgentMessageCommitted: async (_provider, body, opts) => {
+          persisted.set(opts.localId, body);
+        },
+      },
+    });
+  }
   const handler = createBackendControllerMessageHandler({
     ctrl,
     runId: 'run_1',
     sidechainId: 'sidechain_1',
-    intent: 'delegate',
-    ioMode: 'request_response',
+    intent: params.streaming ? 'memory_hints' : 'delegate',
+    ioMode: params.streaming ? 'streaming' : 'request_response',
     sendAcp: (_provider: ACPProvider, body: ACPMessageData, options) => {
       sent.push({ body, ...(options ? { options } : {}) });
     },
@@ -72,6 +84,7 @@ function createHandlerHarness() {
     writes,
     sent,
     ctrl,
+    persisted,
     send(message: AgentMessage, nextNowMs = nowMs + 1_000): void {
       nowMs = nextNowMs;
       handler(message);
@@ -123,6 +136,47 @@ describe('createBackendControllerMessageHandler', () => {
     harness.send({ type: 'model-output', fullText: 'Done', fullTextScope: 'segment' });
 
     expect(harness.ctrl.buffer).toBe('artifact payloadDone');
+  });
+
+  it('replaces a draft snapshot within the current segment', () => {
+    const harness = createHandlerHarness();
+    harness.send({ type: 'model-output', fullText: 'retained artifact', fullTextScope: 'segment' });
+    harness.send({ type: 'tool-call', toolName: 'read', args: {}, callId: 'tool_1' });
+    harness.send({ type: 'model-output', fullText: 'draft', fullTextScope: 'segment' });
+    harness.send({ type: 'model-output', fullText: 'corrected', fullTextScope: 'segment' });
+    expect(harness.ctrl.buffer).toBe('retained artifactcorrected');
+  });
+
+  it('persists a corrected streaming segment under its original row without duplicating the earlier segment', async () => {
+    const harness = createHandlerHarness({ streaming: true });
+    harness.send({ type: 'model-output', fullText: 'retained artifact', fullTextScope: 'segment' });
+    harness.send({ type: 'tool-call', toolName: 'read', args: {}, callId: 'tool_1' });
+    harness.send({ type: 'model-output', fullText: 'draft', fullTextScope: 'segment' });
+    await vi.waitFor(() => expect([...harness.persisted.values()]).toContainEqual(
+      expect.objectContaining({ type: 'message', message: 'draft' }),
+    ));
+    const draftId = [...harness.persisted].find(([, body]) => body.type === 'message' && body.message === 'draft')?.[0];
+    harness.send({ type: 'model-output', fullText: 'corrected', fullTextScope: 'segment' });
+    await harness.ctrl.streamWriter?.flushAll({ reason: 'turn-end' });
+
+    expect([...harness.persisted.values()]).toEqual([
+      expect.objectContaining({ type: 'message', message: 'retained artifact' }),
+      expect.objectContaining({ type: 'message', message: 'corrected' }),
+    ]);
+    expect(harness.persisted.get(draftId!)).toMatchObject({ type: 'message', message: 'corrected' });
+  });
+
+  it('keeps status-delimited segments distinct when the next segment is corrected', async () => {
+    const harness = createHandlerHarness({ streaming: true });
+    harness.send({ type: 'model-output', fullText: 'retained artifact', fullTextScope: 'segment' });
+    harness.send({ type: 'status', status: 'running' });
+    harness.send({ type: 'model-output', fullText: 'draft', fullTextScope: 'segment' });
+    harness.send({ type: 'model-output', fullText: 'corrected', fullTextScope: 'segment' });
+    await harness.ctrl.streamWriter?.flushAll({ reason: 'turn-end' });
+    expect([...harness.persisted.values()]).toEqual([
+      expect.objectContaining({ type: 'message', message: 'retained artifact' }),
+      expect.objectContaining({ type: 'message', message: 'corrected' }),
+    ]);
   });
 
   it('lets a turn-scoped snapshot replace the accumulated turn output', () => {

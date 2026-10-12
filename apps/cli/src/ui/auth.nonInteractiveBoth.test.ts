@@ -32,6 +32,7 @@ type AxiosLike = {
 };
 
 let capturedPublicKeyBase64: string | null = null;
+let requestExpiresAt: number | null = null;
 
 function encryptLegacyBundleForRecipientPublicKey(recipientPublicKeyBase64: string): string {
   const recipientPublicKey = new Uint8Array(Buffer.from(recipientPublicKeyBase64, 'base64'));
@@ -55,7 +56,7 @@ vi.mock('axios', async () => {
       if (url.endsWith('/v1/auth/request')) {
         const publicKey = (body as { publicKey?: unknown } | undefined)?.publicKey;
         capturedPublicKeyBase64 = typeof publicKey === 'string' ? publicKey : '';
-        return { data: { state: 'requested' } };
+        return { data: { state: 'requested', ...(requestExpiresAt === null ? {} : { expiresAt: requestExpiresAt }) } };
       }
       if (url.endsWith('/v1/auth/request/claim')) {
         const claimBody = body as { publicKey?: unknown } | undefined;
@@ -92,7 +93,8 @@ describe.sequential('doAuth (non-interactive)', () => {
     'HAPPIER_TAILSCALE_AUTO_PUBLIC_URL',
   ] as const;
 
-  it('prints both web + mobile instructions when method is not specified', async () => {
+  it.each([240_000, null])('prints both web + mobile instructions with server expiry %s when method is not specified', async (remainingMs) => {
+    requestExpiresAt = remainingMs === null ? null : Date.now() + remainingMs;
     const home = await createTempDir('happier-cli-auth-noninteractive-');
     const envScope = createEnvKeyScope(envKeys);
     const restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });
@@ -121,6 +123,13 @@ describe.sequential('doAuth (non-interactive)', () => {
       expect(out).toMatch(/Web app URL: +https:\/\/webapp\.example\.test/u);
       expect(out).toContain('Mobile app (recommended)');
       expect(out).toContain('Web browser');
+      if (requestExpiresAt === null) {
+        expect(out).toMatch(/link expires soon/i);
+        expect(out).toMatch(/rerun.*approval fails/i);
+      } else {
+        expect(out).toContain(new Date(requestExpiresAt).toISOString());
+        expect(out).toContain(`expiresAt=${requestExpiresAt}`);
+      }
       // The wait resolves as a step instead of trailing off.
       expect(out).toMatch(/^- \[✓\] Approved$/mu);
       expect(out).toContain('webapp.example.test/terminal/connect#key=');
@@ -131,6 +140,7 @@ describe.sequential('doAuth (non-interactive)', () => {
       restoreTty();
       envScope.restore();
       await removeTempDir(home);
+      requestExpiresAt = null;
     }
   }, 15_000);
 

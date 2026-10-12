@@ -3,6 +3,16 @@ import { describe, expect, it } from 'vitest';
 import { parseRawJsonLinesLine, parseRawJsonLinesObject } from './parseRawJsonLines';
 
 describe('parseRawJsonLines', () => {
+  it.each(['completed', 'failed', 'stopped'] as const)('projects native task %s before direct and history readers filter attachments', status => {
+    const parsed = parseRawJsonLinesObject({ type: 'attachment', uuid: 'native-task', isMeta: true,
+      attachment: { type: 'queued_command', commandMode: 'task-notification', prompt:
+        `<task-notification><task-id>task</task-id><tool-use-id>tool</tool-use-id><status>${status}</status><result>final</result></task-notification>` } });
+    expect(parsed).toMatchObject({ type: 'user', uuid: 'native-task', origin: { kind: 'task-notification', toolUseId: 'tool', status },
+      message: { content: [{ type: 'tool_result', tool_use_id: 'tool', is_error: status !== 'completed' }] } });
+    expect(parsed?.isMeta).toBeUndefined();
+    expect(parsed?.attachment).toBeUndefined();
+  });
+
   it('projects a delivered native cross-session attachment with its sender and peer origin', () => {
     // Claude Code 2.1.292 delivered JSONL shape reported in #508.
     const parsed = parseRawJsonLinesObject({

@@ -129,6 +129,12 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN: ProviderSettingsPlugin = {
             footer: { key: 'settingsProviders.plugins.claude.sections.claudeCodeExperiments.footer' },
             fields: [
                 {
+                    key: 'claudeCodeIncludeInNativeHistory',
+                    kind: 'boolean',
+                    title: { key: 'settingsProviders.plugins.claude.fields.claudeCodeIncludeInNativeHistory.title' },
+                    subtitle: { key: 'settingsProviders.plugins.claude.fields.claudeCodeIncludeInNativeHistory.subtitle' },
+                },
+                {
                     key: 'claudeCodeExperimentalAgentTeamsEnabled',
                     kind: 'boolean',
                     title: { key: 'settingsProviders.plugins.claude.fields.claudeCodeExperimentalAgentTeamsEnabled.title' },

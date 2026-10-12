@@ -16,7 +16,7 @@ function providerStub(id: string): ProviderUnderTest {
 }
 
 describe('scenarioCatalog (kilo resume metadata)', () => {
-  it('uses the expected metadata key per provider across ACP resume scenarios', () => {
+  it('uses the expected metadata key for load-resume and supported fresh-history scenarios', () => {
     const cases = [
       { providerId: 'kilo', key: 'kiloSessionId' },
       { providerId: 'qwen', key: 'qwenSessionId' },
@@ -26,9 +26,9 @@ describe('scenarioCatalog (kilo resume metadata)', () => {
 
     for (const testCase of cases) {
       const loadScenario = scenarioCatalog.acp_resume_load_session(providerStub(testCase.providerId));
-      const freshScenario = scenarioCatalog.acp_resume_fresh_session_imports_history(providerStub(testCase.providerId));
       expect(loadScenario.resume?.metadataKey).toBe(testCase.key);
-      expect(freshScenario.resume?.metadataKey).toBe(testCase.key);
     }
+    const freshScenario = scenarioCatalog.acp_resume_fresh_session_imports_history(providerStub('kilo'));
+    expect(freshScenario.resume?.metadataKey).toBe('kiloSessionId');
   });
 });

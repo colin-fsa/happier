@@ -17,7 +17,7 @@ import {
  */
 describe('download URLs', () => {
     it('uses stable rolling aliases for every desktop download', () => {
-        expect(DESKTOP_PLATFORMS).toHaveLength(4);
+        expect(DESKTOP_PLATFORMS).toHaveLength(6);
         for (const platform of DESKTOP_PLATFORMS) {
             expect(platform.href).not.toMatch(/-v\d/);
             expect(platform.href).toMatch(
@@ -26,12 +26,19 @@ describe('download URLs', () => {
         }
     });
 
-    it('offers exactly one asset per supported desktop target', () => {
+    it('offers the published Linux package formats beside the default AppImage', () => {
         expect(DESKTOP_PLATFORMS.map((p) => p.id)).toEqual([
             'mac-arm64',
             'mac-x86_64',
             'win-x86_64',
             'linux-x86_64',
+            'linux-x86_64-deb',
+            'linux-x86_64-rpm',
+        ]);
+        expect(DESKTOP_PLATFORMS.filter((p) => p.id.startsWith('linux-')).map((p) => new URL(p.href).pathname.split('/').pop())).toEqual([
+            'happier-ui-desktop-linux-x86_64.AppImage',
+            'happier-ui-desktop-linux-x86_64.deb',
+            'happier-ui-desktop-linux-x86_64.rpm',
         ]);
     });
 

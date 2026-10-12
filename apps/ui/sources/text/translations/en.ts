@@ -2499,6 +2499,7 @@ export const en = {
             },
         },
         quota: {
+            refreshing: 'Refreshing usage…',
             loading: 'Loading…',
             error: ({ message }: { message: string }) => `Error: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Last updated: ${time}`,
@@ -3823,6 +3824,10 @@ export const en = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Show sessions in Claude Code",
+                        subtitle: "Use Happier attribution for new Claude sessions, including Agent SDK runs. Off keeps runtime defaults."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Force-enable Agent Teams",
                         subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier."
@@ -4027,6 +4032,9 @@ export const en = {
             },
             droid: {
                 title: "Factory Droid"
+            },
+            codebuddy: {
+                title: "CodeBuddy"
             },
             grok: {
                 title: "Grok Build"
@@ -6200,7 +6208,9 @@ export const en = {
         fxSessionId: 'FX Session ID',
         fxSessionIdCopied: 'FX Session ID copied to clipboard',
         droidSessionId: 'Factory Droid Session ID',
+        codebuddySessionId: 'CodeBuddy Session ID',
         droidSessionIdCopied: 'Factory Droid Session ID copied to clipboard',
+        codebuddySessionIdCopied: 'CodeBuddy Session ID copied to clipboard',
         customAcpSessionId: 'Custom ACP Session ID',
         grokSessionId: "Grok Session ID",
         grokSessionIdCopied: "Grok Session ID copied to clipboard",
@@ -6411,6 +6421,8 @@ export const en = {
         permissionMode: {
             title: 'PERMISSION MODE',
             effectiveLabel: ({ label }: { label: string }) => `Effective: ${label}`,
+            nativeModeOverrides: ({ mode }: { mode: string }) => `Agent Mode ${mode} overrides this permission setting. Clear the Mode override to use the permission setting.`,
+            usePermissionSetting: 'Use permission setting',
             default: 'Default',
             readOnly: 'Read Only',
             acceptEdits: 'Accept Edits',
@@ -6440,6 +6452,7 @@ export const en = {
             devin: 'Devin',
             fx: 'FX',
             droid: 'Factory Droid',
+            codebuddy: 'CodeBuddy',
             customAcp: 'Custom ACP',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -9785,6 +9798,7 @@ settingsSession: {
         blockedTitle: 'Setup stopped',
         blockedStatusFallback: 'Setup could not finish. Your account and your sessions are untouched.',
         blockedServiceConflictStatus: 'Another background service on this computer has to be sorted out first. It was left as it is — open Details to see which one.',
+        blockedServiceManagerUnavailableStatus: 'Happier can’t set up the background service on this computer. Open Details for help, or continue with your other machines.',
         blockedConsentDeclinedStatus: 'Setup stopped. The background service already on this computer was left exactly as it was.',
         blockedAccountKeptStatus: 'Setup stopped. This computer stays connected to the account it is signed in to.',
         blockedAccountChangedStatus: 'This computer signed in to another account while setup ran, so setup stopped before pairing. Try again.',
@@ -10603,6 +10617,7 @@ settingsSession: {
             agySubtitleExperimental: 'Antigravity CLI (experimental)',
             fxSubtitleExperimental: 'FX CLI (experimental)',
             droidSubtitleExperimental: 'Factory Droid CLI (experimental)',
+            codebuddySubtitleExperimental: 'CodeBuddy Code CLI (experimental)',
             customAcpSubtitleExperimental: 'Custom ACP CLI (experimental)',
             grokSubtitleExperimental: "Grok Build CLI (experimental)",
             piSubtitleExperimental: 'Pi CLI (experimental)',

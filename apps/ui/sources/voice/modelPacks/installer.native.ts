@@ -80,10 +80,8 @@ export async function ensureModelPackInstalled(
 
       await downloadManifestFiles({
         fs,
-        fetchImpl,
         rootDir,
         manifest: remote,
-        timeoutMs: opts.timeoutMs,
         signal: opts.signal,
         onProgress: opts.onProgress,
       });
@@ -129,10 +127,8 @@ export async function ensureModelPackInstalled(
 
   await downloadManifestFiles({
     fs,
-    fetchImpl,
     rootDir,
     manifest,
-    timeoutMs: opts.timeoutMs,
     signal: opts.signal,
     onProgress: opts.onProgress,
   });

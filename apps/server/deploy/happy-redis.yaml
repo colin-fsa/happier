@@ -1,3 +1,5 @@
+# Optional private-network Redis example for multi-replica deployments.
+# See the Docker guide for fanout, worker, affinity, and production Redis security.
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,6 +7,7 @@ metadata:
   labels:
     app: happy-redis
 spec:
+  clusterIP: None
   ports:
   - port: 6379
     name: redis

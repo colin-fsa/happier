@@ -393,11 +393,11 @@ Supported attach styles include:
 
 For the full workflow, see [Features → Attach to a running session](/sessions/attach-to-session).
 
-In current development builds, `happier herdr` opens Herdr from the terminal. Happier requires a stable Herdr release, version `0.9.2` or newer, for both the executable and the running server. If you are already inside a Herdr pane, use Herdr's pane controls instead of starting a nested client.
+In Happier CLI 0.2.16 and later, including stable releases, `happier herdr` opens Herdr from the terminal. Happier requires a stable Herdr release, version `0.9.2` or newer, for both the executable and the running server. If you are already inside a Herdr pane, use Herdr's pane controls instead of starting a nested client.
 
-In current development builds, Herdr's saved Happier resume command retains the original local Happier home and relay profile. It also uses the session's release-channel command (`happier`, `hprev`, or `hdev`), rather than always invoking `happier`.
+Herdr's saved Happier resume command retains the original local Happier home and relay profile. It also uses the session's release-channel command (`happier`, `hprev`, or `hdev`), rather than always invoking `happier`.
 
-In current development builds, `happier resume <session-id>` can reopen a preserved local Herdr pane after its controller has stopped, including after a Herdr restart. Opening the pane starts its saved resume command; it is not confirmation that the Happier session has reconnected. Live or unverified controllers keep the existing admission checks. A session resumed in a foreground shell is borrowed: stopping Happier preserves that pane rather than assuming its former ownership.
+`happier resume <session-id>` can reopen a preserved local Herdr pane after its controller has stopped, including after a Herdr restart. Opening the pane starts its saved resume command; it is not confirmation that the Happier session has reconnected. Live or unverified controllers keep the existing admission checks. A session resumed in a foreground shell is borrowed: stopping Happier preserves that pane rather than assuming its former ownership.
 
 If a shared controller survives the Herdr restart, attaching inside its restored
 pane can rebind a verified native client to that same conversation with managed
@@ -476,7 +476,8 @@ Optional targeting:
 happier session create --path /path/to/repo --backend <backend-target-key> --tag <tag>
 ```
 
-`--backend` expects a **backend target key** (not a short name). Common forms:
+`--backend` accepts a **backend target key**, or a built-in agent name such as
+`opencode` as shorthand for `agent:opencode`. Common forms:
 
 ```bash
 # Built-in catalog agent

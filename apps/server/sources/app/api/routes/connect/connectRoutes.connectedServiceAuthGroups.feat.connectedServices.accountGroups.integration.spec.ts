@@ -524,6 +524,51 @@ describe("connectRoutes connected service auth groups (integration)", () => {
         })).resolves.toEqual({ activeProfileId: "backup", generation: 1 });
     });
 
+    it.each(["active-profile", "patch", "patch-legacy", "delete", "disable"])("records automatic fallback provenance and clears it for an old-client manual %s", async (action) => {
+        const user = await createAccount("pk-groups-switch-provenance");
+        await createConnectedProfile(user.id, "openai-codex", "primary");
+        await createConnectedProfile(user.id, "openai-codex", "backup");
+        await seedAuthGroup({ accountId: user.id, serviceId: "openai-codex", groupId: "pool",
+            memberProfileIds: ["primary", "backup"], activeProfileId: "primary" });
+        const app = await createReadyApp();
+        const switched = await app.inject({
+            method: "POST", url: "/v3/connect/openai-codex/groups/pool/active-profile",
+            headers: { ...authHeaders(user.id), "x-happier-connected-service-switch-reason": "usage_limit" },
+            payload: { profileId: "backup", expectedGeneration: 0, overrideRuntimeCooldown: true },
+        });
+        expect(switched.statusCode).toBe(200);
+        expect(switched.json().group.state).toMatchObject({ lastSwitchReason: "usage_limit", lastSwitchAt: expect.any(Number) });
+        const refreshed = await app.inject({
+            method: "PATCH", url: "/v3/connect/openai-codex/groups/pool/runtime-state",
+            headers: authHeaders(user.id),
+            payload: { expectedGeneration: switched.json().group.generation,
+                expectedRuntimeStateRevision: switched.json().group.runtimeStateRevision,
+                state: { status: "ready" } },
+        });
+        expect(refreshed.statusCode).toBe(200);
+        expect(refreshed.json().group.state.lastSwitchReason).toBe("usage_limit");
+        if (action === "patch-legacy") {
+            await db.connectedServiceAuthGroup.updateMany({
+                where: { accountId: user.id, groupId: "pool" }, data: { stateJson: "{}" },
+            });
+        }
+        const manual = await app.inject({
+            method: action === "active-profile" ? "POST" : action === "delete" ? "DELETE" : "PATCH",
+            url: action === "active-profile" ? "/v3/connect/openai-codex/groups/pool/active-profile"
+                : action.startsWith("patch") ? "/v3/connect/openai-codex/groups/pool"
+                : "/v3/connect/openai-codex/groups/pool/members/backup"
+                    + (action === "delete" ? "?expectedGeneration=" + switched.json().group.generation : ""),
+            headers: action === "delete" ? { "x-test-user-id": user.id } : authHeaders(user.id),
+            ...(action === "delete" ? {} : { payload: {
+                ...(action === "active-profile" ? { profileId: "backup" }
+                    : action.startsWith("patch") ? { activeProfileId: action === "patch-legacy" ? "backup" : "primary" } : { enabled: false }),
+                expectedGeneration: switched.json().group.generation,
+            } }),
+        });
+        expect(manual.statusCode, manual.body).toBe(200);
+        expect(manual.json().group.state.lastSwitchReason).toBe("manual");
+    });
+
     it("rejects unauthenticated active-profile CAS without mutating server truth", async () => {
         const user = await createAccount("pk-groups-active-profile-unauthenticated");
         await createConnectedProfile(user.id, "openai-codex", "work");
@@ -3088,7 +3133,7 @@ describe("connectRoutes connected service auth groups (integration)", () => {
             headers: { "x-test-user-id": user.id },
         });
         expect(fetched.statusCode).toBe(200);
-        expect(fetched.json().group.state).toEqual({});
+        expect(fetched.json().group.state).toMatchObject({ lastSwitchReason: "manual", lastSwitchAt: expect.any(Number) });
         expect(fetched.json().group.members).toEqual(expect.arrayContaining([
             expect.objectContaining({ profileId: "work", state: {} }),
         ]));

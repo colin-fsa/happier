@@ -50,6 +50,8 @@ import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermis
 import { SessionPermissionRpcRouter } from '@/agent/permissions/sessionPermissionRpcRouter';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { readCredentials, readAccountChangesCursor } from '@/persistence';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import {
     applyAccountSettingsV2Update,
     bootstrapAccountSettingsContext,
@@ -1035,6 +1037,7 @@ export class ApiSessionClient extends EventEmitter {
                 return { status: 'ready' };
             },
             sessionRuntimeControls: this.sessionRuntimeControls,
+            getUsageLimitRecoveryCheckNow: () => this.resolveUsageLimitRecoveryCheckNow(),
             // QAE-1: a user "Stop waiting" handled session-side (provider runtime
             // control or metadata fallback) must also cancel the daemon's durable
             // recovery wait state, or it resumes the session involuntarily later.
@@ -2437,6 +2440,41 @@ export class ApiSessionClient extends EventEmitter {
         this.explicitUserRecoveryCheckedLocalIdCleanupTimers.set(localId, timer);
     }
 
+    private resolveUsageLimitRecoveryCheckNow(): SessionRuntimeControls['checkUsageLimitRecoveryNow'] {
+        const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(
+            this.metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+        );
+        const providerCheck = this.sessionRuntimeControls.checkUsageLimitRecoveryNow;
+        if (!recovery.success || !recovery.data.runtimeAuthRecoveryAttemptId) return providerCheck;
+
+        // The durable attempt owns reset checks for active and inactive sessions alike.
+        // Provider-only actions retain their existing owner; a failed daemon check
+        // must not fall back to a second scheduler or resume the provider locally.
+        return async (request) => {
+            if (request.operation && request.operation !== 'check_now') {
+                return providerCheck
+                    ? await providerCheck(request)
+                    : { ok: false, errorCode: 'unsupported_session_runtime_method' };
+            }
+            if (request.sessionId !== this.sessionId) return { ok: false, errorCode: 'invalid_input' };
+            const unavailable = { ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' };
+            try {
+                const credentials = await readCredentials();
+                const machineId = this.metadata?.machineId?.trim();
+                if (!credentials || credentials.token !== this.token || !machineId) return unavailable;
+                return await callMachineRpc({
+                    credentials,
+                    machineId,
+                    method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+                    request,
+                    authorization: { kind: 'session.write', sessionId: this.sessionId },
+                });
+            } catch {
+                return unavailable;
+            }
+        };
+    }
+
     private async revalidateUsageLimitRecoveryForExplicitUserPrompt(localId: string): Promise<ExplicitUserRecoveryDecision> {
         const existing = this.explicitUserRecoveryDecisionsByLocalId.get(localId);
         if (existing) return await existing;
@@ -2445,7 +2483,16 @@ export class ApiSessionClient extends EventEmitter {
             if (hasClearedConnectedServiceTransitionConstraint(this.metadata)) {
                 return { status: 'ready' };
             }
-            const checkNow = this.sessionRuntimeControls.checkUsageLimitRecoveryNow;
+            const recovery = SessionUsageLimitRecoveryV1Schema.safeParse(
+                this.metadata?.[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
+            );
+            if (recovery.success && recovery.data.runtimeAuthRecoveryAttemptId) {
+                // Explicit input belongs in Pending before the daemon can decide
+                // whether an automatic continuation still has work to resume.
+                // Waking recovery here can enqueue old work and reject the new input.
+                return { status: 'ready' };
+            }
+            const checkNow = this.resolveUsageLimitRecoveryCheckNow();
             if (typeof checkNow !== 'function') {
                 return hasBlockingExplicitUserRecoveryEvidence(this.metadata)
                     ? {

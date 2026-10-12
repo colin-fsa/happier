@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import type { BackgroundServiceRepairPlan } from './types';
 
@@ -19,8 +22,16 @@ vi.mock('@/daemon/service/installer', async (importOriginal) => ({
 import { applyBackgroundServiceRepairPlan } from './applyBackgroundServiceRepairPlan';
 
 describe('applyBackgroundServiceRepairPlan', () => {
-  beforeEach(() => {
+  let commandDir: string;
+  beforeEach(async () => {
     vi.clearAllMocks();
+    commandDir = await createTempDir('repair-command-path-');
+    writeFileSync(join(commandDir, process.platform === 'win32' ? 'systemctl.exe' : 'systemctl'), 'test command');
+    vi.stubEnv('PATH', commandDir);
+  });
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await removeTempDir(commandDir);
   });
 
   it('reinstalls the canonical default service with replace-ring semantics after removing stale services', async () => {

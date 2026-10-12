@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from './claudeRemoteMetaState';
 
 describe('applyClaudeRemoteMetaState', () => {
+  it('accepts explicit Happier attribution and preserves it when old messages omit the field', () => {
+    const enabled = applyClaudeRemoteMetaState(DEFAULT_CLAUDE_REMOTE_META_STATE, { claudeCodeIncludeInNativeHistory: true });
+    expect(enabled).toMatchObject({ claudeCodeIncludeInNativeHistory: true });
+    expect(applyClaudeRemoteMetaState(enabled, {})).toMatchObject({ claudeCodeIncludeInNativeHistory: true });
+    expect(applyClaudeRemoteMetaState(enabled, { claudeCodeIncludeInNativeHistory: 'false' })).toMatchObject({ claudeCodeIncludeInNativeHistory: true });
+    expect(applyClaudeRemoteMetaState(enabled, { claudeCodeIncludeInNativeHistory: false })).toMatchObject({ claudeCodeIncludeInNativeHistory: false });
+  });
+
   it('defaults unified terminal metadata to disabled auto host', () => {
     expect((DEFAULT_CLAUDE_REMOTE_META_STATE as any).claudeUnifiedTerminalEnabled).toBe(false);
     expect((DEFAULT_CLAUDE_REMOTE_META_STATE as any).claudeUnifiedTerminalHost).toBe('auto');

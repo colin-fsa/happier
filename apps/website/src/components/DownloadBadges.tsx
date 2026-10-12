@@ -11,8 +11,8 @@ import { useTheme } from '../islands/themeStore';
  *   • Click the main area → direct-download the smart-detected variant
  *     (or open the popover if arch detection is uncertain — e.g. Safari
  *     on Mac, where Apple freezes the UA).
- *   • Click the chevron → always opens the popover with all four desktop
- *     variants (macOS Apple Silicon / Intel, Windows, Linux). The
+ *   • Click the chevron → always opens the popover with all published desktop
+ *     variants (macOS Apple Silicon / Intel, Windows, Linux formats). The
  *     detected one is highlighted with a "Detected" chip.
  *
  * Every URL comes from the shared download manifest. Public downloads use
@@ -26,13 +26,14 @@ import {
     APP_STORE_URL,
     DESKTOP_PLATFORMS,
     DESKTOP_RELEASES_PAGE,
+    LINUX_APPIMAGE_REQUIREMENTS_URL,
     type DesktopPlatformId,
 } from '../data/downloads';
 import { rich } from '../i18n/rich';
 import { useSiteData } from '../i18n/siteData';
+import { detectDesktopArchitecture, readDesktopArchitectureHint, type DesktopArchitecture as Arch } from './usePlatform';
 
 type Os = 'mac' | 'win' | 'linux' | 'unknown';
-type Arch = 'arm64' | 'x86_64' | 'unknown';
 
 /**
  * Three of these are platform names and stay in every language; only the
@@ -53,14 +54,6 @@ function detectOs(): Os {
     if (ua.includes('mac') || platform.includes('mac')) return 'mac';
     if (ua.includes('win') || platform.includes('win')) return 'win';
     if (ua.includes('linux') || ua.includes('x11')) return 'linux';
-    return 'unknown';
-}
-
-function detectArchFromUserAgent(): Arch {
-    if (typeof navigator === 'undefined') return 'unknown';
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('aarch64') || ua.includes('arm64')) return 'arm64';
-    if (ua.includes('x86_64') || ua.includes('wow64') || ua.includes('win64') || ua.includes('x64')) return 'x86_64';
     return 'unknown';
 }
 
@@ -183,30 +176,18 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
     useEffect(() => {
         setOs(detectOs());
 
-        const syncArch = detectArchFromUserAgent();
+        const syncArch = detectDesktopArchitecture();
         if (syncArch !== 'unknown') {
             setArch(syncArch);
             setArchDetected(true);
         }
 
-        type UAData = { getHighEntropyValues?: (keys: string[]) => Promise<{ architecture?: string }> };
-        const uaData = (navigator as unknown as { userAgentData?: UAData }).userAgentData;
-        if (uaData?.getHighEntropyValues) {
-            uaData
-                .getHighEntropyValues(['architecture'])
-                .then((data) => {
-                    if (data?.architecture === 'arm') {
-                        setArch('arm64');
-                        setArchDetected(true);
-                    } else if (data?.architecture === 'x86') {
-                        setArch('x86_64');
-                        setArchDetected(true);
-                    }
-                })
-                .catch(() => {
-                    /* not supported */
-                });
-        }
+        void readDesktopArchitectureHint().then((hint) => {
+            if (hint !== 'unknown') {
+                setArch(hint);
+                setArchDetected(true);
+            }
+        });
     }, []);
 
     // Click-outside to dismiss the popover. The popover is portaled to
@@ -257,9 +238,18 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
         }
         function updatePos() {
             const anchor = desktopWrapperRef.current;
-            if (!anchor) return;
+            const popover = popoverRef.current;
+            if (!anchor || !popover) return;
             const rect = anchor.getBoundingClientRect();
-            setPopoverPos({ left: rect.left, top: rect.bottom + 8 });
+            const menu = popover.getBoundingClientRect();
+            const below = rect.bottom + 8;
+            const preferredTop = below + menu.height <= window.innerHeight - 8
+                ? below
+                : rect.top - menu.height - 8;
+            setPopoverPos({
+                left: Math.max(8, Math.min(rect.left, window.innerWidth - menu.width - 8)),
+                top: Math.max(8, Math.min(preferredTop, window.innerHeight - menu.height - 8)),
+            });
         }
         updatePos();
         window.addEventListener('scroll', updatePos, true);
@@ -403,7 +393,6 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                 >
                     <a
                         href={detectedHref}
-                        target="_blank"
                         rel="noreferrer"
                         onClick={handleMainClick}
                         className="group flex items-center gap-2.5 px-3.5 py-2 transition-transform hover:-translate-y-[1px]"
@@ -444,15 +433,18 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                     </button>
                 </div>
 
-                {popoverOpen && popoverPos && createPortal(
+                {popoverOpen && createPortal(
                     <div
                         ref={popoverRef}
                         role="menu"
                         className="min-w-[260px] rounded-2xl border p-1.5"
                         style={{
                             position: 'fixed',
-                            left: popoverPos.left,
-                            top: popoverPos.top,
+                            left: popoverPos?.left ?? 0,
+                            top: popoverPos?.top ?? 0,
+                            visibility: popoverPos ? undefined : 'hidden',
+                            maxHeight: 'calc(100vh - 16px)',
+                            overflowY: 'auto',
                             zIndex: 100,
                             background: isDark ? 'rgba(15,15,18,0.92)' : 'rgba(252,250,245,0.96)',
                             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(10,10,11,0.08)',
@@ -470,7 +462,6 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                                 <a
                                     key={p.id}
                                     href={p.href}
-                                    target="_blank"
                                     rel="noreferrer"
                                     onClick={() => setPopoverOpen(false)}
                                     role="menuitem"
@@ -511,6 +502,15 @@ export function DownloadBadges({ webApp = false }: { webApp?: boolean } = {}) {
                                 </a>
                             );
                         })}
+                        <a
+                            href={LINUX_APPIMAGE_REQUIREMENTS_URL}
+                            role="menuitem"
+                            onClick={() => setPopoverOpen(false)}
+                            className="block rounded-xl px-3 py-2 text-[11.5px] underline underline-offset-2"
+                            style={{ color: 'var(--muted)' }}
+                        >
+                            {PAGE_PROSE.downloadBadges.p12}
+                        </a>
                     </div>,
                     document.body,
                 )}

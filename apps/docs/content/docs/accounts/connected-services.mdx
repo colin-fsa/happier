@@ -56,6 +56,19 @@ In the CLI:
 - `happier connect claude ...`
 - `happier connect gemini`
 
+## Continuing after a usage limit
+
+Development-only usage-limit recovery lets a waiting session continue after a directly selected account's reported
+usage-limit reset. It requires usage-limit recovery support on the relay and
+automatic resume to be enabled. The same recovery attempt handles checks from
+an active session, the CLI, and MCP; changing how you check does not start a
+separate recovery loop.
+
+Happier sends the configured continuation prompt, not a replay of your original
+request. A queued prompt is not confirmation that the Agent recovered: recovery
+remains pending until the Agent runs successfully. Cancelling the wait, stopping
+the session, or sending newer work takes precedence over automatic continuation.
+
 ## Model-capacity retries
 
 In development builds, a terminal model-capacity failure such as Codex

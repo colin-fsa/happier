@@ -266,6 +266,7 @@ export function registerSessionControlHandlers(
       result: TResult;
     }>) => Promise<TResult> | TResult) | null;
     sessionRuntimeControls?: SessionRuntimeControls | null;
+    getUsageLimitRecoveryCheckNow?: () => SessionRuntimeControls['checkUsageLimitRecoveryNow'];
     /**
      * QAE-1: propagates a SUCCESSFUL user wait-resume cancel to the daemon-side
      * durable recovery owners (runtime-auth recovery + inactive usage-limit
@@ -572,13 +573,16 @@ export function registerSessionControlHandlers(
     if (!await usageLimitRecoveryFeatureEnabled()) {
       return usageLimitRecoveryFeatureDisabledResult({ sessionId: parsed.data.sessionId });
     }
-    if (typeof opts.sessionRuntimeControls?.checkUsageLimitRecoveryNow !== 'function') {
+    const checkNow = opts.getUsageLimitRecoveryCheckNow
+      ? opts.getUsageLimitRecoveryCheckNow()
+      : opts.sessionRuntimeControls?.checkUsageLimitRecoveryNow;
+    if (typeof checkNow !== 'function') {
       return normalizeUsageLimitRecoveryOperationResult(
         unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW),
         parsed.data.sessionId,
       );
     }
-    return normalizeUsageLimitRecoveryOperationResult(await opts.sessionRuntimeControls.checkUsageLimitRecoveryNow({
+    return normalizeUsageLimitRecoveryOperationResult(await checkNow({
       sessionId: parsed.data.sessionId,
       ...(typeof parsed.data.provider === 'string' ? { provider: parsed.data.provider } : {}),
       ...(parsed.data.operation ? { operation: parsed.data.operation } : {}),

@@ -2498,6 +2498,7 @@ export const de: TranslationStructure = {
             },
         },
         quota: {
+            refreshing: 'Nutzung wird aktualisiert…',
             loading: 'Wird geladen…',
             error: ({ message }: { message: string }) => `Fehler: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Zuletzt aktualisiert: ${time}`,
@@ -3822,6 +3823,10 @@ export const de: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Sitzungen in Claude Code anzeigen",
+                        subtitle: "Happier-Zuordnung für neue Claude-Sitzungen verwenden, auch mit dem Agent SDK. Aus behält die Laufzeitstandards bei."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Agent Teams erzwingen",
                         subtitle: "Die experimentellen Agent Teams von Claude Code (Agent-Schwarm) in allen von Happier gestarteten Claude-Sessions aktivieren."
@@ -4010,6 +4015,7 @@ export const de: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6170,7 +6176,9 @@ export const de: TranslationStructure = {
         fxSessionId: "FX-Session-ID",
         fxSessionIdCopied: "FX-Session-ID in die Zwischenablage kopiert",
         droidSessionId: "Factory-Droid-Session-ID",
+        codebuddySessionId: "CodeBuddy-Session-ID",
         droidSessionIdCopied: "Factory-Droid-Session-ID in die Zwischenablage kopiert",
+        codebuddySessionIdCopied: "CodeBuddy-Session-ID in die Zwischenablage kopiert",
         customAcpSessionId: 'Session-ID des eigenen ACP',
         grokSessionId: "Grok-Session-ID",
         grokSessionIdCopied: "Grok-Session-ID in die Zwischenablage kopiert",
@@ -6381,6 +6389,8 @@ export const de: TranslationStructure = {
         permissionMode: {
             title: 'BERECHTIGUNGSMODUS',
             effectiveLabel: ({ label }: { label: string }) => `Effektiv: ${label}`,
+            nativeModeOverrides: ({ mode }: { mode: string }) => `Der Agent-Modus ${mode} hat Vorrang vor dieser Berechtigungseinstellung. Entferne die Modus-Auswahl, um die Berechtigungseinstellung zu verwenden.`,
+            usePermissionSetting: 'Berechtigungseinstellung verwenden',
             default: 'Standard',
             readOnly: 'Nur Lesen',
             acceptEdits: 'Änderungen annehmen',
@@ -6411,6 +6421,7 @@ export const de: TranslationStructure = {
             agy: 'Antigravity',
             fx: "FX",
             droid: "Factory Droid",
+            codebuddy: "CodeBuddy",
             customAcp: 'Eigenes ACP',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -9755,6 +9766,7 @@ settingsSession: {
         blockedTitle: 'Einrichtung angehalten',
         blockedStatusFallback: 'Die Einrichtung konnte nicht abgeschlossen werden. Dein Konto und deine Sitzungen bleiben unverändert.',
         blockedServiceConflictStatus: 'Ein anderer Hintergrunddienst auf diesem Computer muss zuerst geklärt werden. Er blieb, wie er war – öffne Details, um zu sehen, welcher.',
+        blockedServiceManagerUnavailableStatus: 'Happier kann den Hintergrunddienst auf diesem Computer nicht einrichten. Öffne Details für Hilfe oder nutze deine anderen Computer weiter.',
         blockedConsentDeclinedStatus: 'Die Einrichtung wurde gestoppt. Der bereits vorhandene Hintergrunddienst blieb genau so, wie er war.',
         blockedAccountKeptStatus: 'Die Einrichtung wurde gestoppt. Dieser Computer bleibt mit dem Konto verbunden, mit dem er angemeldet ist.',
         blockedAccountChangedStatus: 'Dieser Computer hat sich während der Einrichtung bei einem anderen Konto angemeldet, daher wurde die Einrichtung vor dem Koppeln gestoppt. Versuch es noch einmal.',
@@ -10573,6 +10585,7 @@ settingsSession: {
             agySubtitleExperimental: "Antigravity CLI (experimentell)",
             fxSubtitleExperimental: "FX CLI (experimentell)",
             droidSubtitleExperimental: "Factory Droid CLI (experimentell)",
+            codebuddySubtitleExperimental: "CodeBuddy Code CLI (experimentell)",
             customAcpSubtitleExperimental: 'Eigene ACP-CLI (experimentell)',
             grokSubtitleExperimental: "Grok Build CLI (experimentell)",
             piSubtitleExperimental: 'Pi CLI (experimentell)',

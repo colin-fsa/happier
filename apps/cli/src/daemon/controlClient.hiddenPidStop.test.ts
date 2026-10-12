@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { resolveDaemonStateCandidatePaths } from './ownership/daemonOwnershipPaths';
 import { configuration } from '@/configuration';
@@ -17,8 +17,57 @@ beforeAll(async () => {
 // The HTTP service and child are real. Only the caller's PID namespace is an OS boundary fixture.
 describe('confirmed stop across a hidden daemon PID namespace', () => {
 
+  it('preserves another departed lock owner when force stop targets a different PID', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-dead-other-lock-' }, async () => {
+      const target = spawnSleepyDetachedProcess();
+      const replacement = spawnSleepyDetachedProcess();
+      expect(await target.kill()).toBe(true);
+      expect(await replacement.kill()).toBe(true);
+      mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
+      const replacementRaw = String(replacement.pid);
+      writeFileSync(configuration.daemonLockFile, replacementRaw);
+      await controlClient.forceStopKnownDaemonPid(target.pid);
+      expect(readFileSync(configuration.daemonLockFile, 'utf8')).toBe(replacementRaw);
+    });
+  });
 
-  it.each(['state', 'lock'] as const)('ignores an unchanged stale %s sibling after a hidden owner stops', async (kind) => {
+  it.each(['single', 'all'] as const)('%s stop reclaims a dead lock without a state publication', async (mode) => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-dead-lock-' }, async () => {
+      const child = spawnSleepyDetachedProcess();
+      expect(await child.kill()).toBe(true);
+      mkdirSync(dirname(configuration.daemonLockFile), { recursive: true });
+      writeFileSync(configuration.daemonLockFile, String(child.pid));
+      await expect(mode === 'single' ? controlClient.stopDaemon() : multiDaemon.stopAllDaemonsBestEffort()).resolves.toEqual({ status: 'not_running' });
+      expect(existsSync(configuration.daemonLockFile)).toBe(false);
+    });
+  });
+
+  it.each(['state', 'lock'] as const)('preserves a replacement %s observed during a dead owner probe', async (changed) => {
+    await withConfiguredDaemonTestHome({ prefix: 'daemon-dead-successor-' }, async ({ homeDir }) => {
+      const child = spawnSleepyDetachedProcess();
+      expect(await child.kill()).toBe(true);
+      await writeDaemonStateFixture(homeDir, configuration.activeServerId, { pid: child.pid, httpPort: 43123, controlToken: 'old-token' });
+      writeFileSync(configuration.daemonLockFile, String(child.pid));
+      const oldState = readFileSync(configuration.daemonStateFile, 'utf8');
+      const oldLock = readFileSync(configuration.daemonLockFile, 'utf8');
+      const newState = JSON.stringify({ pid: process.pid, httpPort: 43124, startedAt: Date.now(), startedWithCliVersion: '0.0.0-test', controlToken: 'new-token' });
+      const newLock = String(process.pid);
+      // The network probe is the external boundary at which another daemon can publish.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+        writeFileSync(changed === 'state' ? configuration.daemonStateFile : configuration.daemonLockFile, changed === 'state' ? newState : newLock);
+        throw Object.assign(new Error('control endpoint refused'), { cause: { code: 'ECONNREFUSED' } });
+      });
+      try {
+        await expect(controlClient.stopDaemon()).resolves.toEqual({ status: 'not_running' });
+        expect(readFileSync(configuration.daemonStateFile, 'utf8')).toBe(changed === 'state' ? newState : oldState);
+        expect(readFileSync(configuration.daemonLockFile, 'utf8')).toBe(changed === 'lock' ? newLock : oldLock);
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+  });
+
+  it.each(['state', 'lock'] as const)('reclaims a proven-dead %s sibling after a hidden owner stops', async (kind) => {
     await withConfiguredDaemonTestHome({ prefix: 'daemon-hidden-stale-sibling-' }, async ({ homeDir }) => {
       const exited = spawnSleepyDetachedProcess();
       expect(await exited.kill()).toBe(true);
@@ -28,7 +77,6 @@ describe('confirmed stop across a hidden daemon PID namespace', () => {
         renameSync(configuration.daemonStateFile, legacyPath);
       }
       writeFileSync(`${legacyPath}.lock`, String(exited.pid));
-      const oldLock = readFileSync(`${legacyPath}.lock`, 'utf8');
       const port = await reserveEphemeralPort();
       const child = spawnStoppableHttpDaemon(port, 200, { controlToken: 'owned-token', lockFile: configuration.daemonLockFile, stateFile: configuration.daemonStateFile });
       await writeDaemonStateFixture(homeDir, configuration.activeServerId, { pid: child.pid, httpPort: port, controlToken: 'owned-token' });
@@ -40,8 +88,8 @@ describe('confirmed stop across a hidden daemon PID namespace', () => {
           return realKill(pid, signal);
         });
         await expect(multiDaemon.stopAllDaemonsBestEffort()).resolves.toEqual({ status: 'stopped', stoppedCount: 1 });
-        expect(readFileSync(`${legacyPath}.lock`, 'utf8')).toBe(oldLock);
-        if (kind === 'state') expect(existsSync(legacyPath)).toBe(true);
+        expect(existsSync(`${legacyPath}.lock`)).toBe(false);
+        if (kind === 'state') expect(existsSync(legacyPath)).toBe(false);
       } finally {
         vi.restoreAllMocks();
         await child.kill();
@@ -60,7 +108,8 @@ describe('confirmed stop across a hidden daemon PID namespace', () => {
         expect(await waitForHttpReady(port)).toBe(true);
         expect(await child.kill()).toBe(true);
         await expect(mode === 'single' ? controlClient.stopDaemon() : multiDaemon.stopAllDaemonsBestEffort()).resolves.toEqual({ status: 'not_running' });
-        expect(existsSync(statePath)).toBe(true);
+        expect(existsSync(statePath)).toBe(false);
+        if (staleLock) expect(existsSync(configuration.daemonLockFile)).toBe(false);
       } finally {
         await child.kill();
       }

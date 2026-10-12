@@ -2713,6 +2713,7 @@ export const es: TranslationStructure = {
       },
     },
     quota: {
+      refreshing: "Actualizando uso…",
       loading: "Cargando…",
       error: ({ message }: { message: string }) => `Error: ${message}`,
       lastUpdated: ({ time }: { time: string }) =>
@@ -4102,6 +4103,10 @@ export const es: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Mostrar sesiones en Claude Code",
+                        subtitle: "Usar la atribución de Happier para nuevas sesiones de Claude, incluidas las del Agent SDK. Desactivado conserva los valores predeterminados."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forzar activación de Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (enjambre de agentes) en todas las sesiones de Claude iniciadas por Happier."
@@ -4290,6 +4295,7 @@ export const es: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6548,7 +6554,9 @@ export const es: TranslationStructure = {
     fxSessionId: "ID de sesión de FX",
     fxSessionIdCopied: "ID de sesión de FX copiado al portapapeles",
     droidSessionId: "ID de sesión de Factory Droid",
+    codebuddySessionId: "ID de sesión de CodeBuddy",
     droidSessionIdCopied: "ID de sesión de Factory Droid copiado al portapapeles",
+    codebuddySessionIdCopied: "ID de sesión de CodeBuddy copiado al portapapeles",
     customAcpSessionId: "ID de sesión de ACP personalizado",
     grokSessionId: "ID de sesión de Grok",
     grokSessionIdCopied: "ID de sesión de Grok copiado al portapapeles",
@@ -6766,6 +6774,8 @@ export const es: TranslationStructure = {
     permissionMode: {
       title: "MODO DE PERMISOS",
       effectiveLabel: ({ label }: { label: string }) => `Efectivo: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `El modo del agente ${mode} tiene prioridad sobre este permiso. Borra la selección de Modo para usar el permiso.`,
+            usePermissionSetting: 'Usar el ajuste de permisos',
       default: "Por defecto",
       readOnly: "Solo lectura",
       acceptEdits: "Aceptar ediciones",
@@ -6796,6 +6806,7 @@ export const es: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "ACP personalizado",
       pi: "Pi",
       copilot: "Copilot",
@@ -10401,6 +10412,7 @@ settingsSession: {
     blockedTitle: 'Configuración detenida',
     blockedStatusFallback: 'La configuración no pudo terminar. Tu cuenta y tus sesiones siguen intactas.',
     blockedServiceConflictStatus: 'Primero hay que resolver otro servicio en segundo plano de este ordenador. Se dejó tal cual: abre Detalles para ver cuál es.',
+    blockedServiceManagerUnavailableStatus: 'Happier no puede configurar el servicio en segundo plano en este ordenador. Abre Detalles para obtener ayuda o continúa con tus otras máquinas.',
     blockedConsentDeclinedStatus: 'La configuración se detuvo. El servicio en segundo plano que ya había en este ordenador se dejó tal cual.',
     blockedAccountKeptStatus: 'La configuración se detuvo. Este ordenador sigue conectado a la cuenta con la que tiene la sesión iniciada.',
     blockedAccountChangedStatus: 'Este ordenador inició sesión en otra cuenta mientras se configuraba, así que la configuración se detuvo antes de vincularlo. Inténtalo de nuevo.',
@@ -11264,6 +11276,7 @@ settingsSession: {
       agySubtitleExperimental: "CLI de Antigravity (experimental)",
       fxSubtitleExperimental: "CLI de FX (experimental)",
       droidSubtitleExperimental: "CLI de Factory Droid (experimental)",
+      codebuddySubtitleExperimental: "CLI de CodeBuddy Code (experimental)",
       customAcpSubtitleExperimental: "CLI de ACP personalizado (experimental)",
       grokSubtitleExperimental: "CLI de Grok Build (experimental)",
       piSubtitleExperimental: "CLI de Pi (experimental)",

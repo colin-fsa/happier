@@ -4,6 +4,15 @@ Happier ships binary installers. First-party runtime paths must work on machines
 
 ## Runtime contract
 
+In current development source, `scripts/pipeline/release/bun-standalone.entitlements.plist`
+owns the macOS hardened-runtime permissions for shipped Bun executables. Standalone
+signing consumes it directly. Tauri's base configuration references this file
+directly, so stable, preview and dev desktop bundles give the same JIT permission
+to the bundled Bun-compiled `hsetup`.
+Signature validity and notarization alone do not prove startup: release validation
+must inspect the bundled helper's JIT entitlement and execute `hsetup --help` on
+the native target without disabling JIT.
+
 Do not introduce direct product-runtime calls to:
 
 - `spawn('node', ...)`

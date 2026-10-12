@@ -123,6 +123,8 @@ export function buildConnectedServiceAuthGroupSwitchStateFromAccountUsage(input:
       serviceId: input.group.serviceId,
       groupId: input.group.groupId,
       activeProfileId: input.group.activeProfileId,
+      lastSwitchReason: input.group.state.lastSwitchReason,
+      lastSwitchAt: input.group.state.lastSwitchAt,
       generation: input.group.generation,
       runtimeStateRevision: input.group.runtimeStateRevision,
       policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),

@@ -1491,6 +1491,7 @@ export const ja: TranslationStructure = {
       agySubtitleExperimental: "Antigravity CLI（実験）",
       fxSubtitleExperimental: "FX CLI（実験）",
       droidSubtitleExperimental: "Factory Droid CLI（実験）",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI（実験）",
       customAcpSubtitleExperimental: "カスタム ACP CLI（実験）",
       grokSubtitleExperimental: "Grok Build CLI（実験）",
       piSubtitleExperimental: "Pi CLI（実験）",
@@ -3015,6 +3016,7 @@ localTailscale: {
       },
     },
     quota: {
+      refreshing: "使用量を更新中…",
       loading: "読み込み中…",
       error: ({ message }: { message: string }) => `エラー: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `最終更新: ${time}`,
@@ -4394,6 +4396,10 @@ localTailscale: {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Claude Code にセッションを表示",
+                        subtitle: "Agent SDK を含む新しい Claude セッションを Happier として識別します。オフでは実行環境の既定値を維持します。"
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Agent Teams を強制的に有効化",
                         subtitle: "Happier から開始するすべての Claude セッションで、Claude Code の実験的 Agent Teams（エージェント群）を有効にします。"
@@ -4582,6 +4588,7 @@ localTailscale: {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6818,7 +6825,9 @@ localTailscale: {
     fxSessionId: "FX セッション ID",
     fxSessionIdCopied: "FX セッション ID をクリップボードにコピーしました",
     droidSessionId: "Factory Droid セッション ID",
+    codebuddySessionId: "CodeBuddy セッション ID",
     droidSessionIdCopied: "Factory Droid セッション ID をクリップボードにコピーしました",
+    codebuddySessionIdCopied: "CodeBuddy セッション ID をクリップボードにコピーしました",
     customAcpSessionId: "カスタム ACP セッション ID",
     grokSessionId: "Grok セッション ID",
     grokSessionIdCopied: "Grok セッション ID をクリップボードにコピーしました",
@@ -7036,6 +7045,8 @@ localTailscale: {
     permissionMode: {
       title: "権限モード",
       effectiveLabel: ({ label }: { label: string }) => `適用中: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `エージェントモード ${mode} がこの権限設定より優先されます。権限設定を使うにはモードの上書きを解除してください。`,
+            usePermissionSetting: '権限設定を使用',
       default: "デフォルト",
       readOnly: "読み取り専用",
       acceptEdits: "編集を許可",
@@ -7066,6 +7077,7 @@ localTailscale: {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "カスタム ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -10620,6 +10632,7 @@ settingsSession: {
     blockedTitle: 'セットアップが停止しました',
     blockedStatusFallback: 'セットアップを完了できませんでした。アカウントとセッションはそのままです。',
     blockedServiceConflictStatus: 'このコンピュータの別のバックグラウンドサービスを先に解決する必要があります。そのサービスはそのままです。詳細を開くとどれか確認できます。',
+    blockedServiceManagerUnavailableStatus: 'このコンピュータではHappierのバックグラウンドサービスを設定できません。詳細を開いて対処方法を確認するか、他のマシンで作業を続けてください。',
     blockedConsentDeclinedStatus: 'セットアップを停止しました。すでにあったバックグラウンドサービスはそのままです。',
     blockedAccountKeptStatus: 'セットアップを停止しました。このコンピュータは、サインインしているアカウントに接続されたままです。',
     blockedAccountChangedStatus: 'セットアップ中にこのコンピュータが別のアカウントにサインインしたため、ペアリングの前にセットアップを停止しました。もう一度お試しください。',

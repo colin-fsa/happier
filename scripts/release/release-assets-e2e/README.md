@@ -128,8 +128,9 @@ node scripts/release/release-assets-e2e/desktop-setup.mjs --desktop-artifact <de
   `daemon status` `runtimeConvergence` is fully true (INV8), `happier` on a login PATH is
   `~/.happier/bin/happier`, and the machine answers a relay-routed `capabilities.describe` RPC with an
   empty payload (INV10; `bin/machine-rpc-probe.mjs`).
-- **upgrade** (desktop2): the previous published stable desktop + CLI (resolved from `ui-desktop-stable`
-  / `cli-stable`, then pinned to their immutable `ui-desktop-v*` / `cli-v*` tags; override with
+- **upgrade** (desktop2): the published stable desktop is pinned from `ui-desktop-stable` to its
+  immutable `ui-desktop-v*` tag; its source CLI manifest selects the matching immutable `cli-v*`
+  baseline, so an already-advanced `cli-stable` feed cannot replace the predecessor (override with
   `--upgrade-from-desktop-tag` / `--upgrade-from-cli-tag`) set the machine up; then the new hsetup's
   setup and `cli.update.v1` run. The daemon must end on the new CLI (`cliVersionMatches`), as the same
   machine, still answering through the relay. The daemon version between the new setup and the update
@@ -140,6 +141,11 @@ node scripts/release/release-assets-e2e/desktop-setup.mjs --desktop-artifact <de
   (`PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG` in `desktop-setup-driver.mjs`; 0.2.12 sent
   `{ surface: 'desktop.ui', target: 'thisComputer' }`). A baseline not listed there is reported
   BLOCKED instead of being driven with another version's contract.
+- The 0.2.12 predecessor's read-only first-launch inspection acquires its staged CLI, then that
+  CLI's public `server set` selects the Docker relay before setup. Both the released hsetup's
+  `server current` and its default-following service read the persisted profile. Caller-only URL
+  overrides would pair against Docker while leaving the service pointed at the saved cloud relay;
+  the harness therefore runs predecessor setup and subsequent observations without those overrides.
 - Requires an x86_64 Linux Docker host (Linux desktop artifacts ship for x86_64 only). The suite
   gates the desktop build, not release verification: `build-tauri.yml` job `desktop_setup` runs it
   on `ubuntu-latest` against the just-finalized `tauri-updates-production-linux-x86_64` `.deb`, and

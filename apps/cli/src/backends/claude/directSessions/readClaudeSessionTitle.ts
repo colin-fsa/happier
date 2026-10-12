@@ -29,43 +29,45 @@ function coerceTextContent(content: unknown): string | null {
   return readDirectSessionTitleCandidate(text);
 }
 
-function readClaudeTitleRecordCandidate(record: Record<string, unknown>): string | null {
-  if (record.type === 'ai-title') {
-    return readDirectSessionTitleCandidate(typeof record.aiTitle === 'string' ? record.aiTitle : '');
-  }
-  if (record.type === 'custom-title') {
-    return readDirectSessionTitleCandidate(typeof record.customTitle === 'string' ? record.customTitle : '');
-  }
-  return null;
-}
-
 async function readClaudeTitleFromTail(filePath: string): Promise<string | null> {
   const fileSize = (await stat(filePath).catch(() => null))?.size ?? 0;
   let endOffsetBytes = fileSize;
-  let scannedBytes = 0;
-  let scannedItems = 0;
+  let aiTitle: string | null = null;
+  let sawAiTitle = false;
+  let sawCustomTitle = false;
 
-  while (endOffsetBytes > 0 && scannedBytes < TITLE_SCAN_TOTAL_MAX_BYTES && scannedItems < TITLE_SCAN_TOTAL_MAX_ITEMS) {
+  // Claude loads the latest value of each title independently. A later AI
+  // metadata snapshot cannot override a manual rename, even on an older page.
+  while (endOffsetBytes > 0) {
     const page = await readJsonlFileBackwardPage({
       filePath,
       endOffsetBytes,
-      maxBytes: Math.min(TITLE_SCAN_CHUNK_MAX_BYTES, TITLE_SCAN_TOTAL_MAX_BYTES - scannedBytes),
-      maxItems: Math.min(TITLE_SCAN_CHUNK_MAX_ITEMS, TITLE_SCAN_TOTAL_MAX_ITEMS - scannedItems),
+      maxBytes: TITLE_SCAN_CHUNK_MAX_BYTES,
+      // The byte page already bounds memory. Every JSONL record consumes at
+      // least one byte, so do not stop at 64 items and reread the same chunk.
+      maxItems: TITLE_SCAN_CHUNK_MAX_BYTES,
     });
     for (let index = page.items.length - 1; index >= 0; index -= 1) {
       const value = page.items[index]?.value;
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
-      const title = readClaudeTitleRecordCandidate(value as Record<string, unknown>);
-      if (title) return title;
+      const record = value as Record<string, unknown>;
+      if (!sawCustomTitle && record.type === 'custom-title' && typeof record.customTitle === 'string') {
+        sawCustomTitle = true;
+        const customTitle = readDirectSessionTitleCandidate(record.customTitle);
+        if (customTitle) return customTitle;
+      }
+      if (!sawAiTitle && record.type === 'ai-title' && typeof record.aiTitle === 'string') {
+        sawAiTitle = true;
+        aiTitle = readDirectSessionTitleCandidate(record.aiTitle);
+      }
+      if (sawCustomTitle && sawAiTitle) return aiTitle;
     }
 
     if (page.reachedStart || page.nextEndOffsetBytes >= endOffsetBytes) break;
-    scannedBytes += endOffsetBytes - page.nextEndOffsetBytes;
-    scannedItems += page.items.length;
     endOffsetBytes = page.nextEndOffsetBytes;
   }
 
-  return null;
+  return aiTitle;
 }
 
 export async function readClaudeSessionTitle(filePath: string): Promise<string | null> {

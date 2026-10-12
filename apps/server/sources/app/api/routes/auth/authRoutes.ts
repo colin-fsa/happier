@@ -2,7 +2,7 @@ import { type Fastify } from "../../types";
 import { registerTerminalAuthRequestRoutes } from "./registerTerminalAuthRequestRoutes";
 import { registerAccountAuthRoutes } from "./registerAccountAuthRoutes";
 import { registerPairingAuthRoutes } from "./registerPairingAuthRoutes";
-import { resolveTerminalAuthRequestPolicyFromEnv } from "./terminalAuthRequestPolicy";
+import { resolveTerminalAuthRequestPolicyFromEnv, terminalAuthRequestExpiresAt } from "./terminalAuthRequestPolicy";
 import { readAuthFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveAuthFeature } from "@/app/features/authFeature";
 import { resolveAuthMethodRegistry } from "@/app/auth/methods/registry";
@@ -37,8 +37,7 @@ export function authRoutes(app: Fastify): void {
 
     const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv(process.env);
     const isTerminalAuthExpired = (createdAt: Date): boolean => {
-        const ageMs = Date.now() - createdAt.getTime();
-        return ageMs > terminalAuthPolicy.ttlMs;
+        return Date.now() > terminalAuthRequestExpiresAt(createdAt, terminalAuthPolicy);
     };
 
     const authFeatureEnv = readAuthFeatureEnv(process.env);

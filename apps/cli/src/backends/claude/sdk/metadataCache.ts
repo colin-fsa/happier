@@ -294,7 +294,7 @@ function selectedEnvironmentFingerprint(): Record<string, string | null> {
     return out
 }
 
-function resolveConfigFingerprint(): string | null {
+function resolveConfigFingerprint(entrypoint?: string): string | null {
     const hash = createHash('sha256')
     const cwd = resolve(process.cwd())
     const configDir = resolveConfiguredClaudeConfigDir({ env: process.env })
@@ -303,6 +303,7 @@ function resolveConfigFingerprint(): string | null {
         cwd,
         configDir,
         env: selectedEnvironmentFingerprint(),
+        ...(entrypoint ? { entrypoint } : {}),
     })
 
     const configFiles = ['settings.json', 'settings.local.json', '.claude.json']
@@ -332,9 +333,10 @@ function resolveConfigFingerprint(): string | null {
 export function resolveSDKMetadataCacheKey(params: Readonly<{
     claudePath: string
     runtimeExecutable?: string
+    entrypoint?: string
 }>): CacheKey | null {
     const claudeVersion = resolveClaudeVersion(params)
-    const configFingerprint = resolveConfigFingerprint()
+    const configFingerprint = resolveConfigFingerprint(params.entrypoint)
     if (!claudeVersion || !configFingerprint) return null
     return {
         schemaVersion: 1,

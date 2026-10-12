@@ -2570,6 +2570,7 @@ export const ru: TranslationStructure = {
       },
     },
     quota: {
+      refreshing: "Обновление использования…",
       loading: "Загрузка…",
       error: ({ message }: { message: string }) => `Ошибка: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Обновлено: ${time}`,
@@ -4056,6 +4057,10 @@ export const ru: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Показывать сессии в Claude Code",
+                        subtitle: "Использовать идентификацию Happier для новых сессий Claude, включая Agent SDK. При отключении сохраняются настройки среды по умолчанию."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Принудительно включить Agent Teams",
                         subtitle: "Включает экспериментальный Agent Teams в Claude Code (рой агентов) во всех сессиях Claude, запущенных из Happier."
@@ -4244,6 +4249,7 @@ export const ru: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -5519,7 +5525,9 @@ export const ru: TranslationStructure = {
     fxSessionId: "ID сессии FX",
     fxSessionIdCopied: "ID сессии FX скопирован в буфер обмена",
     droidSessionId: "ID сессии Factory Droid",
+    codebuddySessionId: "ID сессии CodeBuddy",
     droidSessionIdCopied: "ID сессии Factory Droid скопирован в буфер обмена",
+    codebuddySessionIdCopied: "ID сессии CodeBuddy скопирован в буфер обмена",
     customAcpSessionId: "ID пользовательской ACP-сессии",
     grokSessionId: "ID сессии Grok",
     grokSessionIdCopied: "ID сессии Grok скопирован в буфер обмена",
@@ -6767,6 +6775,8 @@ export const ru: TranslationStructure = {
     permissionMode: {
       title: "РЕЖИМ РАЗРЕШЕНИЙ",
       effectiveLabel: ({ label }: { label: string }) => `Эффективно: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `Режим агента ${mode} имеет приоритет над этой настройкой разрешений. Сбросьте выбор режима, чтобы использовать настройку разрешений.`,
+            usePermissionSetting: 'Использовать настройку разрешений',
       default: "По умолчанию",
       readOnly: "Только чтение",
       acceptEdits: "Принимать правки",
@@ -6797,6 +6807,7 @@ export const ru: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "Пользовательский АКП",
       pi: "Pi",
       copilot: "Copilot",
@@ -10288,6 +10299,7 @@ settingsSession: {
     blockedTitle: 'Настройка остановлена',
     blockedStatusFallback: 'Настройку не удалось завершить. Ваша учётная запись и сессии не затронуты.',
     blockedServiceConflictStatus: 'Сначала нужно разобраться с другой фоновой службой на этом компьютере. Она осталась как была — откройте «Подробности», чтобы увидеть, с какой.',
+    blockedServiceManagerUnavailableStatus: 'Happier не может настроить фоновую службу на этом компьютере. Откройте «Подробности» для получения помощи или продолжайте работать на других машинах.',
     blockedConsentDeclinedStatus: 'Настройка остановлена. Фоновая служба, которая уже была здесь, осталась ровно такой же.',
     blockedAccountKeptStatus: 'Настройка остановлена. Этот компьютер остаётся подключён к аккаунту, в который он вошёл.',
     blockedAccountChangedStatus: 'Во время настройки этот компьютер вошёл в другой аккаунт, поэтому настройка остановилась до сопряжения. Попробуйте ещё раз.',
@@ -11175,6 +11187,7 @@ settingsSession: {
       agySubtitleExperimental: "Antigravity CLI (экспериментально)",
       fxSubtitleExperimental: "FX CLI (экспериментально)",
       droidSubtitleExperimental: "Factory Droid CLI (экспериментально)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (экспериментально)",
       customAcpSubtitleExperimental: "Пользовательский ACP CLI (экспериментально)",
       grokSubtitleExperimental: "Grok Build CLI (экспериментально)",
       piSubtitleExperimental: "Pi CLI (экспериментально)",

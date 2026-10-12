@@ -61,7 +61,7 @@ Attach support depends on the session type.
 ### Terminal-hosted sessions
 
 <Callout type="info">
-  Herdr hosting and automatic terminal presentation for supported server-backed sessions are available in current development builds; they are not yet a released contract.
+  Herdr hosting and automatic terminal presentation for supported server-backed sessions are available in Happier CLI 0.2.16 and later, including stable releases.
 </Callout>
 
 Older released Happier apps can still read and manage the session's core metadata.
@@ -169,7 +169,7 @@ it in its terminal, rather than expecting the app to close it.
 If the session has a terminal host, `happier attach` restores its managed TUI there
 before opening or focusing the host. An already-attached TUI is reused.
 
-After a Herdr restart, development builds can also admit a native client started
+After a Herdr restart, Happier CLI 0.2.16 and later can also admit a native client started
 inside the session's restored pane while its shared controller remains running.
 Happier verifies the same conversation and current client before showing managed
 attachment and **Detach terminal**. Detaching closes that client, not the restored

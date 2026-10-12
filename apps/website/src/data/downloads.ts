@@ -21,7 +21,7 @@ const DESKTOP_ASSET_BASE = downloads.desktopAssetBase;
 
 export const DESKTOP_RELEASES_PAGE = downloads.desktopReleasesPage;
 
-export type DesktopPlatformId = 'mac-arm64' | 'mac-x86_64' | 'win-x86_64' | 'linux-x86_64';
+export type DesktopPlatformId = 'mac-arm64' | 'mac-x86_64' | 'win-x86_64' | 'linux-x86_64' | 'linux-x86_64-deb' | 'linux-x86_64-rpm';
 
 export type DesktopPlatform = {
     id: DesktopPlatformId;
@@ -39,6 +39,8 @@ export const DESKTOP_PLATFORMS: ReadonlyArray<DesktopPlatform> = downloads.deskt
     id: platform.id as DesktopPlatformId,
     href: desktopAsset(platform.file),
 }));
+
+export const LINUX_APPIMAGE_REQUIREMENTS_URL = downloads.linuxAppimageRequirementsUrl;
 
 export const APP_STORE_URL = downloads.appStoreUrl;
 

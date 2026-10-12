@@ -325,7 +325,11 @@ probe failures as inconclusive, preserving live ownership. For a PID hidden by a
 the existing authenticated control probe establishes publication presence. Its transport failures
 remain unverified. After observing a hidden owner through authenticated ping or an accepted
 authenticated stop, confirmed stop requires the matching lifecycle lock to release after control ceases, because control closes before final cleanup; without an
-observed lock confirmation remains incomplete. Ordinary dead publications remain absent. Status
+observed lock confirmation remains incomplete. Ordinary dead publications remain absent, and stop
+reclaims their unchanged state and matching lifecycle lock through persistence's exact-owner file
+primitive. Cleanup requires proven process absence and the captured lock bytes; a replacement
+state or lock cancels reclamation. Live, inaccessible, unverified, and hidden owners are not
+reclaimed by the stop observer. Status
 projections and service-update readers share the same presence owner; full daemon health inspection
 also validates process identity. An unverified publication remains explicit in status output and
 blocks service-update planning until authenticated presence can be observed. Initial startup-only
@@ -338,8 +342,9 @@ locks. It attempts siblings after a failed target and returns a confirmed stoppe
 `not_running`. It re-enumerates the same inventory after shutdown to detect a live successor
 publication or startup-only lock before `auth logout --all` can delete the home.
 After an observed hidden owner stops, namespace uncertainty remains scoped to its exact
-publication and lock path; unrelated stale release-ring siblings retain ordinary absence. State and lock
-cleanup remain owned by the daemon lifecycle holder; these observers do not delete publications.
+publication and lock path; unrelated stale release-ring siblings retain ordinary absence and may
+be reclaimed with the same proven-dead ownership checks. Normal shutdown cleanup remains owned
+by the daemon lifecycle holder; persistence owns narrowly scoped departed-publication reclamation.
 Stop commands and authentication report the returned outcome, and logout-all preserves the
 home on incomplete stop. Restart remains best effort for its stop phase, logs incomplete stop
 through the default file logger, and requires its existing distinct running identity proof.
@@ -1410,6 +1415,28 @@ read that same lock, so a runner waiting to publish its first webhook prevents
 another activation from allocating a terminal host. Startup failure and normal
 runner exit release the scope's locks; process-exit cleanup uses the same owner.
 
+Before the child receives the created Session id, its server row can already trigger
+Pending activation. Development source closes that remaining pre-lock window in
+`resolveAcceptedExistingSessionStartup`: it reads the existing attach metadata only
+when fresh daemon children await a webhook, and uses the webhook owner's shared
+PID, wrapper and Windows-tab correlation. `createSessionMetadata` publishes the
+optional `hostProcessInstanceFingerprint` beside `hostPid`; the daemon verifies
+that runner generation, machine and home before learning the tracked Session id.
+It then rejoins accepted startup rather than launching another child. Learning
+identity does not complete the webhook waiter, promote markers or claim readiness.
+Process uncertainty and Stop still use the normal presence/resume fencing owner.
+A correlated pending child with legacy or unreadable generation evidence is
+explicitly fenced until startup completes; a positively different generation is
+not associated. This adds no new lock, timer or cross-process registry.
+Verified runner identity also owns presence when a Windows Terminal dispatcher
+has already exited. Until that identity arrives, pending Windows startup has
+unknown runner presence; launcher disappearance cannot retire it. Heartbeat and
+visible-console polling delegate inferred process absence to `createOnChildExited`;
+the poller no longer independently fails the startup waiter. Explicit runner exit,
+cancellation and the existing startup timeout retain their finalization ownership.
+Wrapper promotion with a recorded generation uses that same presence classifier,
+so a reused runner PID cannot be promoted into session custody.
+
 In current development, `createOnChildExited` releases session-marker evidence only
 through the tracked exit lifecycle. An exit notification for an untracked PID does
 not authorize marker deletion. Failed terminal-exit staging retains tracking and
@@ -1425,6 +1452,26 @@ An explicit lifecycle identity survives endpoint changes. Existing local markers
 can supply ownership evidence when process inventory is incomplete, but cannot
 override recorded foreign-home or foreign-scope facts. The child-environment
 builder publishes the resolved home even when the daemon inherited no home override.
+
+### Usage-limit reset continuation (development)
+
+`RuntimeAuthRecoveryScheduler` owns a daemon-backed wait for the exact failed
+turn. When a directly selected profile reaches its reported reset time, recovery
+admits a continuation through the existing dispatcher and Pending queue instead
+of reclassifying the old failure or merely restarting an idle runner. Native
+quota probes use the same continuation owner when they confirm readiness.
+Admission and provider acceptance are not recovery proof; the existing outcome
+proof must observe successful execution under the selected credential.
+
+Active Session RPC checks and CLI/MCP checks route
+daemon-owned attempts to that same scheduler. Provider-local checks remain for
+attempts without daemon ownership; account-switch and reset-credit controls keep
+their existing owners. A failed daemon check does not fall back to a competing
+provider-local scheduler. Explicit user input is admitted through Pending rather
+than waking an automatic continuation during pre-admission revalidation; the
+existing dispatcher suppresses obsolete continuation when newer input is queued.
+Cancellation, newer user input, and disabled automatic
+resume take precedence, and the original interrupted input is never replayed.
 
 ### Model-capacity recovery (development)
 

@@ -1,7 +1,5 @@
 import {
   SPAWN_SESSION_ERROR_CODES,
-  type SpawnSessionErrorCode,
-  type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
@@ -11,7 +9,7 @@ import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@/daemon/spawn/waitForSessio
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
-import { awaitSpawnedSessionId } from './awaitSpawnedSessionId';
+import { awaitSpawnedSessionId, readSpawnSessionNonceResolution } from './awaitSpawnedSessionId';
 
 /**
  * `unsupported` is a statement about CAPABILITY — this Session cannot be resumed
@@ -31,34 +29,6 @@ export type InactiveSessionResumeResult =
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readSpawnSessionNonceResolution(value: unknown): SpawnSessionNonceResolution {
-  if (!value || typeof value !== 'object') return { status: 'unsupported' };
-  const record = value as Record<string, unknown>;
-  if (record.status === 'success') {
-    const sessionId = readNonEmptyString(record.sessionId);
-    return sessionId ? { status: 'success', sessionId } : { status: 'pending' };
-  }
-  if (record.status === 'pending' || record.status === 'not_found' || record.status === 'unsupported') {
-    return { status: record.status };
-  }
-  if (record.status === 'error') {
-    const errorCode = readNonEmptyString(record.errorCode);
-    const errorMessage = readNonEmptyString(record.errorMessage);
-    if (
-      errorCode
-      && errorMessage
-      && (Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode)
-    ) {
-      return {
-        status: 'error',
-        errorCode: errorCode as SpawnSessionErrorCode,
-        errorMessage,
-      };
-    }
-  }
-  return { status: 'unsupported' };
 }
 
 function buildMachineResumeRequest(

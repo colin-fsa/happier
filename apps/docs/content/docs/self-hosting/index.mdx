@@ -14,7 +14,7 @@ Your clients and machines then point at your URL — say `https://api.example.co
 
 <Cards>
   <Card title="Server quickstart" href="/self-hosting/quickstart" description="The minimum production configuration, and which env vars actually matter." />
-  <Card title="Docker" href="/self-hosting/docker" description="Compose files for single-container and split API/worker deployments." />
+  <Card title="Docker and Kubernetes" href="/self-hosting/docker" description="Compose files and a plain Kubernetes recipe, including migrations and scaling." />
   <Card title="Self-host runtime" href="/self-hosting/self-host-runtime" description="A managed service on a host or VPS — what the installer and the runner each own." />
   <Card title="Run from a monorepo clone" href="/self-hosting/repo-local" description="Repo-local mode, for developing or customizing from source." />
   <Card title="Proxmox VE" href="/self-hosting/proxmox" description="Deploying with the community helper scripts." />
@@ -93,7 +93,7 @@ that it needs one, and presence will not be written durably until you run one.
 
 For multi-replica API deployments, enable Redis fanout and configure sticky
 sessions at your load balancer. [Docker](/self-hosting/docker) has a working
-example.
+example, plus a [Kubernetes recipe](/self-hosting/docker#kubernetes).
 
 ## Reverse proxy basics
 

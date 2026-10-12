@@ -301,6 +301,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     const unavailableProfileIds = new Set<string>();
     for (;;) {
       const selected = selectConnectedServiceAuthGroupCandidate({
+        lastSwitchReason: input.state.lastSwitchReason,
+        lastSwitchAt: input.state.lastSwitchAt,
         nowMs: this.deps.nowMs(),
         quotaFreshnessMs: this.deps.quotaFreshnessMs,
         activeProfileId: input.activeProfileId ?? null,
@@ -422,6 +424,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
       return { kind: 'retry', state: observed };
     }
     const observedGenerationSelection = selectConnectedServiceAuthGroupCandidate({
+      lastSwitchReason: observed.lastSwitchReason,
+      lastSwitchAt: observed.lastSwitchAt,
       nowMs: this.deps.nowMs(),
       quotaFreshnessMs: this.deps.quotaFreshnessMs,
       activeProfileId: failedProfileId,
@@ -1086,6 +1090,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           didProbeForSelection = true;
           const currentLoadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
           const observedGenerationSelection = selectConnectedServiceAuthGroupCandidate({
+            lastSwitchReason: loaded.lastSwitchReason,
+            lastSwitchAt: loaded.lastSwitchAt,
             nowMs: this.deps.nowMs(),
             quotaFreshnessMs: this.deps.quotaFreshnessMs,
             activeProfileId: selectionActiveProfileId,
@@ -1184,6 +1190,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         const loadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
         if (observedProfileId && loadedActiveProfileId && observedProfileId !== loadedActiveProfileId) {
           const observedGenerationSelection = selectConnectedServiceAuthGroupCandidate({
+            lastSwitchReason: loaded.lastSwitchReason,
+            lastSwitchAt: loaded.lastSwitchAt,
             nowMs: this.deps.nowMs(),
             quotaFreshnessMs: this.deps.quotaFreshnessMs,
             activeProfileId: observedProfileId,
@@ -1300,6 +1308,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         && this.deps.consumeAvailableRecoveryCreditForProfile) {
         const unavailableProfileIds = new Set(selected.excluded.filter((entry) => entry.reason === 'credential_unavailable').map((entry) => entry.profileId));
         const resetCandidates = () => resolveConnectedServiceAuthGroupQuotaResetCandidates({
+          lastSwitchReason: loaded.lastSwitchReason,
+          lastSwitchAt: loaded.lastSwitchAt,
           nowMs: this.deps.nowMs(), quotaFreshnessMs: this.deps.quotaFreshnessMs,
           activeProfileId: loaded.activeProfileId, policy: loaded.policy,
           members: loaded.members, memberStatesByProfileId: loaded.memberStatesByProfileId,
@@ -1345,6 +1355,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
           if (prepared?.status === 'ineligible') {
             unavailableProfileIds.add(candidate.profileId);
             selected = selectConnectedServiceAuthGroupCandidate({
+              lastSwitchReason: loaded.lastSwitchReason,
+              lastSwitchAt: loaded.lastSwitchAt,
               nowMs: this.deps.nowMs(), quotaFreshnessMs: this.deps.quotaFreshnessMs,
               activeProfileId: loaded.activeProfileId, allowCurrentProfileRetry: true,
               policy: loaded.policy, members: loaded.members, memberStatesByProfileId: loaded.memberStatesByProfileId,

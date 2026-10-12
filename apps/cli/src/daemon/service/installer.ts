@@ -6,6 +6,7 @@ import { configuration } from '@/configuration';
 import {
   applyDaemonServiceInstallPlan,
   applyDaemonServiceUninstallPlan,
+  assertDaemonServiceCommandsAvailable,
   type DaemonServiceCommandFailureMode,
 } from './apply';
 import {
@@ -430,6 +431,10 @@ export async function installDaemonService(options: Readonly<{
       conflictNotice.message,
       preview.conflictPlan.competingServices,
     );
+  }
+
+  if (options.runCommands !== false) {
+    assertDaemonServiceCommandsAvailable(preview.plan.commands);
   }
 
   for (const service of preview.conflictPlan.servicesToRemove) {

@@ -606,6 +606,8 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   }
 
   const selected = selectConnectedServiceAuthGroupCandidate({
+    lastSwitchReason: state.lastSwitchReason,
+    lastSwitchAt: state.lastSwitchAt,
     nowMs: params.nowMs,
     quotaFreshnessMs: params.quotaFreshnessMs,
     activeProfileId: state.activeProfileId,
@@ -785,6 +787,8 @@ function isAuthoritativeGroupActiveProfileEligible(params: Readonly<{
   const activeMembers = state.members.filter((member) => member.profileId === params.activeProfileId);
   if (activeMembers.length === 0) return false;
   const selected = selectConnectedServiceAuthGroupCandidate({
+    lastSwitchReason: state.lastSwitchReason,
+    lastSwitchAt: state.lastSwitchAt,
     nowMs: params.nowMs,
     quotaFreshnessMs: params.quotaFreshnessMs,
     activeProfileId: params.activeProfileId,

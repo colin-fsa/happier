@@ -11,7 +11,7 @@ import { getProjectPath } from "./utils/path";
 import { getClaudeSystemPrompt } from "./utils/systemPrompt";
 import { restoreStdinBestEffort } from "@/ui/ink/restoreStdinBestEffort";
 import { isClaudeCliJavaScriptFile, resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
-import { stripNestedSessionDetectionEnv } from "@/utils/processEnv/stripNestedSessionDetectionEnv";
+import { prepareClaudeSubprocessEnv } from "@/backends/claude/spawn/buildClaudeSubprocessEnv";
 import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
 import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
 import { resolveClaudeConfigDirEnvOverlay } from "./utils/resolveClaudeConfigDirEnvOverlay";
@@ -21,9 +21,7 @@ import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happie
 import { resolveCliRuntimeAssetPath } from '@/runtime/assets/resolveCliRuntimeAssetPath';
 import { HAPPIER_BASE_SYSTEM_PROMPT_V1 } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
-import { isolateClaudeRuntimeAuthEnv } from './spawn/isolateClaudeRuntimeAuthEnv';
 import { logClaudeRuntimeAuthEnvDiagnostic } from './spawn/logClaudeRuntimeAuthEnvDiagnostic';
-import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { claudeCliFlagCanConsumeNextArg } from './cli/flagArity';
 import {
     buildClaudePermissionModeLaunchSettings,
@@ -425,19 +423,17 @@ export async function claudeLocal(opts: {
             // Note: Local mode uses global Claude installation with --session-id flag
             // Launcher only intercepts fetch for thinking state tracking
             const env = withCurrentHappierSessionId(
-                stripNestedSessionDetectionEnv({
-                    ...processEnv,
-                    // Keep behavior consistent with our wrapper script.
-                    DISABLE_AUTOUPDATER: '1',
-                    ...resolveClaudeConfigDirEnvOverlay(processEnv),
-                    ...(opts.envOverlay ?? {}),
+                prepareClaudeSubprocessEnv({
+                    baseEnv: processEnv,
+                    envOverlay: {
+                        // Keep behavior consistent with our wrapper script.
+                        DISABLE_AUTOUPDATER: '1',
+                        ...resolveClaudeConfigDirEnvOverlay(processEnv),
+                        ...(opts.envOverlay ?? {}),
+                    },
                 }),
                 opts.happierSessionId ?? '',
             );
-            isolateClaudeRuntimeAuthEnv(env);
-            // Internal daemon→CLI marker used for strict env filtering in Agent SDK remote mode.
-            // Never forward it into the Claude Code subprocess environment.
-            delete env[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR];
             logClaudeRuntimeAuthEnvDiagnostic({
                 logPrefix: 'ClaudeLocal',
                 sessionId: opts.sessionId,

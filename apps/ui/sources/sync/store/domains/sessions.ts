@@ -18,7 +18,10 @@ import {
     preserveSessionListRenderableTransientState,
     type SessionListRenderableSession,
 } from '../../domains/session/listing/sessionListRenderable';
-import { assessSessionListRenderableChange } from './sessionListRenderableStoreUpdate';
+import {
+    assessSessionListRenderableChange,
+    type SessionListRenderableReplacementOptions,
+} from './sessionListRenderableStoreUpdate';
 import { createKeyedTimeoutScheduler } from '@/utils/time/keyedTimeoutScheduler';
 import {
     type SessionListAttentionPromotionMode,
@@ -166,7 +169,10 @@ export type SessionsDomain = {
     clearSessionLocalStateScope: () => void;
     getActiveSessions: () => Session[];
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
-    replaceSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
+    replaceSessionListRenderables: (
+        sessions: SessionListRenderableSession[],
+        options?: SessionListRenderableReplacementOptions,
+    ) => void;
     mergeSessionListRenderables: (sessions: SessionListRenderableSession[]) => void;
     applySessionListRenderablePatches: (
         patches: ReadonlyArray<Readonly<{
@@ -1347,10 +1353,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 return nextState;
             }),
         ),
-        replaceSessionListRenderables: (sessions) => set((state) => {
+        replaceSessionListRenderables: (sessions, options) => set((state) => {
             const plan = planSessionListRenderableReplacementCommit({
                 state,
                 incomingRenderables: sessions,
+                coversWholeList: options?.coversWholeList === true,
             });
             syncPerformanceTelemetry.countLazy('sync.store.sessions.renderables.replace', () => ({
                 incoming: sessions.length,

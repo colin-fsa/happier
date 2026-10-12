@@ -2498,6 +2498,7 @@ export const fr: TranslationStructure = {
             },
         },
         quota: {
+            refreshing: 'Actualisation de l’utilisation…',
             loading: 'Chargement…',
             error: ({ message }: { message: string }) => `Erreur : ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Dernière mise à jour : ${time}`,
@@ -3822,6 +3823,10 @@ export const fr: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Afficher les sessions dans Claude Code",
+                        subtitle: "Utiliser l’attribution Happier pour les nouvelles sessions Claude, y compris avec l’Agent SDK. Désactivé conserve les valeurs par défaut."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forcer l’activation des Agent Teams",
                         subtitle: "Active les Agent Teams expérimentales de Claude Code (essaim d’agents) dans toutes les sessions Claude démarrées par Happier."
@@ -4010,6 +4015,7 @@ export const fr: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6157,7 +6163,9 @@ export const fr: TranslationStructure = {
         fxSessionId: "ID de session FX",
         fxSessionIdCopied: "ID de session FX copié dans le presse-papiers",
         droidSessionId: "ID de session Factory Droid",
+        codebuddySessionId: "ID de session CodeBuddy",
         droidSessionIdCopied: "ID de session Factory Droid copié dans le presse-papiers",
+        codebuddySessionIdCopied: "ID de session CodeBuddy copié dans le presse-papiers",
         customAcpSessionId: 'ID de session Custom ACP',
         grokSessionId: "ID de session Grok",
         grokSessionIdCopied: "ID de session Grok copié dans le presse-papiers",
@@ -6368,6 +6376,8 @@ export const fr: TranslationStructure = {
         permissionMode: {
             title: 'MODE DE PERMISSION',
             effectiveLabel: ({ label }: { label: string }) => `Effectif : ${label}`,
+            nativeModeOverrides: ({ mode }: { mode: string }) => `Le mode de l’agent ${mode} a priorité sur ce réglage de permissions. Effacez la sélection de Mode pour utiliser ce réglage.`,
+            usePermissionSetting: 'Utiliser le réglage des permissions',
             default: 'Défaut',
             readOnly: 'Lecture seule',
             acceptEdits: 'Accepter les modifications',
@@ -6398,6 +6408,7 @@ export const fr: TranslationStructure = {
             agy: 'Antigravity',
             fx: "FX",
             droid: "Factory Droid",
+            codebuddy: "CodeBuddy",
             customAcp: 'Custom ACP',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -9742,6 +9753,7 @@ settingsSession: {
         blockedTitle: 'Configuration interrompue',
         blockedStatusFallback: 'La configuration n’a pas pu se terminer. Votre compte et vos sessions sont intacts.',
         blockedServiceConflictStatus: 'Un autre service en arrière-plan sur cet ordinateur doit d’abord être réglé. Il est resté tel quel — ouvrez Détails pour voir lequel.',
+        blockedServiceManagerUnavailableStatus: 'Happier ne peut pas configurer le service en arrière-plan sur cet ordinateur. Ouvrez Détails pour obtenir de l’aide, ou continuez avec vos autres machines.',
         blockedConsentDeclinedStatus: 'La configuration s’est arrêtée. Le service en arrière-plan déjà présent est resté exactement tel quel.',
         blockedAccountKeptStatus: 'La configuration s’est arrêtée. Cet ordinateur reste connecté au compte avec lequel il est identifié.',
         blockedAccountChangedStatus: 'Cet ordinateur s’est connecté à un autre compte pendant la configuration, qui s’est donc arrêtée avant l’appairage. Réessaie.',
@@ -10560,6 +10572,7 @@ settingsSession: {
             agySubtitleExperimental: "CLI Antigravity (expérimental)",
             fxSubtitleExperimental: "FX CLI (expérimental)",
             droidSubtitleExperimental: "Factory Droid CLI (expérimental)",
+            codebuddySubtitleExperimental: "CodeBuddy Code CLI (expérimental)",
             customAcpSubtitleExperimental: 'CLI ACP personnalisé (expérimental)',
             grokSubtitleExperimental: "Grok Build CLI (expérimental)",
             piSubtitleExperimental: 'Pi CLI (expérimental)',

@@ -485,6 +485,8 @@ describe('AccountBlock', () => {
         const refresh = screen.findByTestId('acct:refresh');
 
         expect(screen.findByTestId('acct:refreshing')).toBeTruthy();
+        expect(screen.findByTestId('acct:refresh-status')).toBeTruthy();
+        expect(screen.findByTestId('acct:meter:weekly')).toBeTruthy();
         expect(refresh?.props.disabled).toBe(true);
         expect(refresh?.props.accessibilityState).toEqual(expect.objectContaining({
             busy: true,

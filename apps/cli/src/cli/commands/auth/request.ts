@@ -1,7 +1,6 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
-import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 
 import { encodeBase64, encodeBase64Url } from '@/api/encryption';
@@ -11,8 +10,11 @@ import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 import {
   createTerminalPairingAuthentication,
+  applyTerminalAuthRequestExpiry,
+  formatTerminalPairingExpiryNotice,
   readTerminalPairingRequirement,
 } from '@/auth/terminalProvisioningResponse';
+import { postTerminalAuthRequestCompatible } from '@/auth/terminalAuthRequest';
 
 function sha256Base64Url(input: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(input)).digest('base64url');
@@ -42,18 +44,20 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
   const claimSecretB64Url = Buffer.from(claimSecret).toString('base64url');
   const claimSecretHash = sha256Base64Url(claimSecret);
   const pairingRequirement = readTerminalPairingRequirement();
-  const pairing = createTerminalPairingAuthentication({
+  let pairing = createTerminalPairingAuthentication({
     nowMs: Date.now(),
     randomBytes: (length) => new Uint8Array(randomBytes(length)),
   });
   const pairingSecretB64Url = Buffer.from(pairing.secret).toString('base64url');
 
   const publicKeyB64 = encodeBase64(keypair.publicKey);
-  await axios.post(`${configuration.apiServerUrl}/v1/auth/request`, {
+  const response = await postTerminalAuthRequestCompatible({
+    serverUrl: configuration.apiServerUrl,
     publicKey: publicKeyB64,
     supportsV2: true,
     claimSecretHash,
   });
+  pairing = applyTerminalAuthRequestExpiry(pairing, response);
 
   const statePath = pendingAuthStatePath(keypair.publicKey);
   await mkdir(pendingAuthStateDir(), { recursive: true });
@@ -96,6 +100,8 @@ export async function handleAuthRequest(args: string[]): Promise<void> {
   });
 
   await writeJsonStdout({
+    expiresAtMs: pairing.requestExpiresAtMs ?? null,
+    expiryNotice: formatTerminalPairingExpiryNotice(pairing),
     publicKey: publicKeyB64,
     publicKeyB64Url,
     claimSecret: claimSecretB64Url,

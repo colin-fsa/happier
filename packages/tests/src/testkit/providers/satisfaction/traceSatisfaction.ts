@@ -1,4 +1,5 @@
 import type { ProviderTraceEvent } from '../types';
+import { shouldEnqueueNextStepAfterSatisfaction } from '../harness/harnessSignals';
 
 import { payloadContainsSubstring } from './payloadContainsSubstring';
 
@@ -134,7 +135,7 @@ export function scenarioSatisfiedByTrace(events: ToolTraceEventV1[], scenario: {
   requiredFixtureKeys?: string[];
   requiredAnyFixtureKeys?: string[][];
   requiredTraceSubstrings?: string[];
-}): boolean {
+}, turnCompletion?: Omit<Parameters<typeof shouldEnqueueNextStepAfterSatisfaction>[0], 'traceEvents'>): boolean {
   for (const key of scenario.requiredFixtureKeys ?? []) {
     if (!hasTraceForKey(events, key)) return false;
   }
@@ -145,7 +146,7 @@ export function scenarioSatisfiedByTrace(events: ToolTraceEventV1[], scenario: {
     const ok = events.some((e) => payloadContainsSubstring(e.payload, needle));
     if (!ok) return false;
   }
-  return true;
+  return !turnCompletion || shouldEnqueueNextStepAfterSatisfaction({ ...turnCompletion, traceEvents: events });
 }
 
 export function checkMaxTraceEvents(

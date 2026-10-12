@@ -1,4 +1,6 @@
+import { buildUsageLimitIssueFingerprint } from '@/session/usageLimitRecoveryControls/buildUsageLimitIssueFingerprint';
 import { randomUUID } from 'node:crypto';
+import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
 import type { PermissionResult } from '@/agent/permissions/permissionResult';
 
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -599,18 +601,6 @@ function readSwitchAttemptVerificationStatus(
     return verification?.status === 'verified' || verification?.status === 'weakly_verified'
         ? verification.status
         : null;
-}
-
-function buildUsageLimitIssueFingerprint(issue: SessionRuntimeIssueV1): string {
-    return [
-        'usage-limit',
-        issue.provider ?? 'codex',
-        issue.providerTurnId ?? 'unknown-turn',
-        String(issue.occurredAt),
-        issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
-            ? 'no-reset'
-            : String(issue.usageLimit.resetAtMs),
-    ].join(':');
 }
 
 function deriveCodexUsageLimitRecoveryTiming(issue: SessionRuntimeIssueV1): ReturnType<typeof deriveUsageLimitRecoveryTiming> {
@@ -2098,7 +2088,11 @@ export function createCodexAppServerRuntime(params: Readonly<{
         return null;
     };
 
-    const publishThreadId = (): void => {
+    const publishThreadId = (isExistingResume = false): void => {
+        if (!canPublishSessionResumeIdentity({
+            isExistingResume,
+            hasResumeEvidence: nativeReadyThreadId !== null && nativeReadyThreadId === threadId,
+        })) return;
         void publishCodexSessionIdMetadata({
             session: params.session,
             getCodexThreadId: () => threadId,
@@ -2134,7 +2128,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         const nextThreadId = trimSessionId(requestedThreadId);
         if (!nextThreadId) return;
         threadId = nextThreadId;
-        publishThreadId();
+        publishThreadId(true);
     };
 
     const publishSessionControls = async (
@@ -3602,7 +3596,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                 logger.debug('[codex-app-server] Failed to read usage-limit recovery reset credits while auto-arming (non-fatal)', error);
                 return null;
             });
-            const issueFingerprint = buildUsageLimitIssueFingerprint(latestUsageLimitIssue);
+            const issueFingerprint = buildUsageLimitIssueFingerprint(latestUsageLimitIssue, 'codex');
             // Auto-arm must honor the account's configured resume-prompt behavior — routed/manual
             // and daemon-report paths resolve it through the canonical precedence helper, so this
             // auto path does too instead of leaving `enable` to silently default to 'standard'.
@@ -3854,7 +3848,6 @@ export function createCodexAppServerRuntime(params: Readonly<{
 
         if (!threadId && activityThreadId) {
             threadId = activityThreadId;
-            publishThreadId();
         }
 
         if (hasProviderTurnAlreadyTerminated(activityParams, startedTurnId)) {
@@ -3866,6 +3859,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
         }
 
         nativeReadyThreadId = activeThreadId;
+        publishThreadId();
 
         pendingTurnStartSeqInclusive = readLastObservedMessageSeq(params.session);
         activeTurnHasMeaningfulContextWindowRecoveryActivity = false;
@@ -5746,7 +5740,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             try {
                 const intent = await usageLimitRecoveryScheduler.enable({
                     sessionId: request.sessionId,
-                    issueFingerprint: request.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue),
+                    issueFingerprint: request.issueFingerprint ?? buildUsageLimitIssueFingerprint(issue, 'codex'),
                     resetAtMs: timing.resetAtMs,
                     nextCheckAtMs: timing.nextCheckAtMs,
                     resumePromptMode: request.resumePromptMode,
@@ -5820,7 +5814,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     });
                     await usageLimitRecoveryScheduler.enable({
                         sessionId: request.sessionId,
-                        issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+                        issueFingerprint: buildUsageLimitIssueFingerprint(issue, 'codex'),
                         resetAtMs: timing.resetAtMs,
                         nextCheckAtMs: timing.nextCheckAtMs,
                         resumePromptMode: request.resumePromptMode,

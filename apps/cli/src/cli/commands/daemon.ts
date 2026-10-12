@@ -191,19 +191,15 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
   }
 
   if (daemonSubcommand === 'list') {
-    try {
-      const sessions = await listDaemonSessions();
+    const sessions = await listDaemonSessions();
 
-      if (sessions.length === 0) {
-        console.log(
-          'No active sessions this daemon is aware of (they might have been started by a previous version of the daemon)',
-        );
-      } else {
-        console.log('Active sessions:');
-        await writeJsonStdout(sessions, { pretty: true });
-      }
-    } catch {
-      console.log('No daemon running');
+    if (sessions.length === 0) {
+      console.log(
+        'This daemon has no tracked active sessions. Use `happier session list --active` to list active sessions on the relay.',
+      );
+    } else {
+      console.log('Active sessions:');
+      await writeJsonStdout(sessions, { pretty: true });
     }
     return;
   }

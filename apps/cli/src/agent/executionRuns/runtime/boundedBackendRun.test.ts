@@ -4,6 +4,8 @@ import type { AgentBackend, AgentMessage, SessionId } from '@/agent/core/AgentBa
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import type { FinishExecutionRun } from '@/agent/executionRuns/runtime/executionRunFinishRun';
+import type { ExecutionRunState } from '@/agent/executionRuns/runtime/executionRunTypes';
+import { finishExecutionRun } from './executionRunManager/finishExecutionRun';
 import { createBackendControllerMessageHandler } from './createBackendControllerMessageHandler';
 
 import { executeBoundedBackendRun } from './boundedBackendRun';
@@ -713,6 +715,7 @@ describe('executeBoundedBackendRun', () => {
         prompts.push(prompt);
         sendPromptCount += 1;
         if (sendPromptCount === 1) {
+          messageHandler?.({ type: 'model-output', fullText: 'stale draft', fullTextScope: 'segment' });
           messageHandler?.({ type: 'model-output', fullText: 'artifact payload', fullTextScope: 'segment' });
           messageHandler?.({ type: 'tool-call', toolName: 'write', args: {}, callId: 'tool_1' });
           messageHandler?.({ type: 'tool-result', toolName: 'write', result: 'ok', callId: 'tool_1' });
@@ -756,7 +759,39 @@ describe('executeBoundedBackendRun', () => {
     };
 
     const controllers = new Map([[runId, ctrl]]);
-    const finishRun = vi.fn<FinishExecutionRun>();
+    const runs = new Map<string, ExecutionRunState>([[runId, {
+      runId,
+      callId,
+      sidechainId,
+      sessionId: 'parent_session_delegate_segment_artifact',
+      depth: 0,
+      intent: 'delegate',
+      backendTarget: { kind: 'builtInAgent', agentId: 'pi' },
+      backendId: 'pi',
+      instructions: 'write the artifact',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      status: 'running',
+      startedAtMs: 0,
+    }]]);
+    const finishRun = vi.fn<FinishExecutionRun>((finishedRunId, next, toolResult, structuredMeta) => {
+      finishExecutionRun({
+        runId: finishedRunId,
+        next,
+        toolResult,
+        structuredMeta,
+        runs,
+        controllers,
+        budgetRegistry: null,
+        parentProvider: 'pi',
+        sendAcp: (_provider, body) => acpMessages.push(body),
+        // Machine listing marker IO is outside the artifact/result contract under test.
+        enqueueMarkerWrite: async () => {},
+        terminalMarkerWritePromises: new Map(),
+      });
+    });
     messageHandler = createBackendControllerMessageHandler({
       ctrl,
       runId,
@@ -765,7 +800,7 @@ describe('executeBoundedBackendRun', () => {
       ioMode: 'request_response',
       sendAcp: (_provider, body) => acpMessages.push(body),
       parentProvider: 'pi',
-      runs: new Map(),
+      runs,
       backendSupportsResume: false,
       writeActivityMarker: async () => {},
       getNowMs: () => 1,
@@ -796,6 +831,8 @@ describe('executeBoundedBackendRun', () => {
     });
 
     expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('artifact payloadDone');
+    expect(prompts[1]).not.toContain('stale draft');
     expect(acpMessages).toContainEqual(expect.objectContaining({
       type: 'message',
       message: expect.stringContaining('artifact payload'),
@@ -807,6 +844,20 @@ describe('executeBoundedBackendRun', () => {
       expect.objectContaining({ output: expect.objectContaining({ status: 'succeeded' }) }),
       expect.objectContaining({ kind: 'delegate_output.v1' }),
     );
+    expect(acpMessages.filter((body) => body.type === 'message')).toEqual([
+      expect.objectContaining({ type: 'message', message: 'artifact payloadDone', sidechainId }),
+    ]);
+    expect(runs.get(runId)).toMatchObject({
+      status: 'succeeded',
+      latestToolResult: {
+        status: 'succeeded',
+        runId,
+        callId,
+        sidechainId,
+        deliverablesDigest: [{ id: 'd1', title: 'artifact payload' }],
+      },
+      structuredMeta: { kind: 'delegate_output.v1', payload: { deliverables: [{ id: 'd1', title: 'artifact payload' }] } },
+    });
   });
 
   it('uses a repair prompt whose JSON example can be copied verbatim (delegate)', async () => {

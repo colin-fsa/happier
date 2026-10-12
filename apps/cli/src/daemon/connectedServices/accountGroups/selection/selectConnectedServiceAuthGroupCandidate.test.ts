@@ -200,6 +200,31 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
     expect(result.selected?.profileId).toBe('primary');
   });
 
+  it.each([
+    {},
+    { lastFailureKind: 'usage_limit', providerResetsAtMs: null },
+    { lastFailureKind: 'usage_limit', providerResetsAtMs: 500 },
+    { providerResetsAtMs: 5_000 },
+  ])('restores fresh healthy primary quota after an automatic fallback without reset history (%j)', (failureState) => {
+    const input = {
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      activeProfileId: 'backup',
+      allowCurrentProfileRetry: true,
+      lastSwitchReason: 'usage_limit',
+      lastSwitchAt: 400,
+      policy: { ...basePolicy, strategy: 'priority' as const, autoRestorePrimaryWhenReset: true, softSwitchRemainingPercent: 0 },
+      members: [member('primary', 100, 1), member('backup', 200, 2)],
+      memberStatesByProfileId: new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
+        ['primary', { ...failureState, quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 37 } }],
+        ['backup', { quotaSnapshot: { capturedAtMs: 900, effectiveRemainingPercent: 9 } }],
+      ]),
+    };
+    expect(selectConnectedServiceAuthGroupCandidate(input).selected?.profileId).toBe('primary');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, lastSwitchReason: 'manual' }).selected?.profileId).toBe('backup');
+    expect(selectConnectedServiceAuthGroupCandidate({ ...input, lastSwitchAt: 950 }).selected?.profileId).toBe('backup');
+  });
+
   it('does not restore the primary when autoRestorePrimaryWhenReset is disabled (default)', () => {
     const states = new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
       ['primary', {

@@ -189,6 +189,13 @@ export const CLAUDE_REMOTE_PROVIDER_FIELDS = {
       serializeCurrent: (value) => serializeClaudeSettingSourcesV2(value),
     },
   },
+  claudeCodeIncludeInNativeHistory: {
+    schema: z.boolean(),
+    default: false,
+    description: 'Use Happier attribution for Claude sessions so they can appear in Claude Code history',
+    storageScope: 'account',
+    analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'person' },
+  },
   claudeCodeExperimentalAgentTeamsEnabled: {
     schema: z.boolean(),
     default: false,
@@ -340,6 +347,7 @@ export function buildClaudeRemoteOutgoingMessageMetaExtras(settings: Readonly<Re
       ?? CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS.claudeUnifiedTerminalWorkspaceTrust,
     claudeRemoteSettingSourcesV2: effectiveV2,
     ...(legacyFromV2 ? { claudeRemoteSettingSources: legacyFromV2 } : {}),
+    claudeCodeIncludeInNativeHistory: readBoolean('claudeCodeIncludeInNativeHistory'),
     claudeCodeExperimentalAgentTeamsEnabled: readBoolean('claudeCodeExperimentalAgentTeamsEnabled'),
     claudeLocalPermissionBridgeEnabled: readBoolean('claudeLocalPermissionBridgeEnabled'),
     claudeLocalPermissionBridgeWaitIndefinitely: readBoolean('claudeLocalPermissionBridgeWaitIndefinitely'),

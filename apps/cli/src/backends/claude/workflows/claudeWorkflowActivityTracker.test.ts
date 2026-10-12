@@ -186,6 +186,7 @@ function taskNotification(params: Readonly<{
   const result = params.result ?? '{"subsystemsAnalyzed":8}';
   return {
     type: 'user',
+    origin: { kind: 'task-notification' },
     session_id: params.sessionId ?? 'claude-session-1',
     message: {
       content: [{

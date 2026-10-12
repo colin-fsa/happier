@@ -8,6 +8,8 @@ export type TerminalPairingAuthentication = Readonly<{
   secret: Uint8Array;
   createdAtMs: number;
   expiresAtMs: number;
+  /** Effective approval deadline; absent/null when an older relay does not report it. */
+  requestExpiresAtMs?: number | null;
 }>;
 
 export type TerminalPairingRequirement = 'v3';
@@ -46,6 +48,26 @@ export function createTerminalPairingAuthentication(params: Readonly<{
     createdAtMs: params.nowMs,
     expiresAtMs: params.nowMs + TERMINAL_PAIRING_AUTHENTICATION_TTL_MS,
   };
+}
+
+export function applyTerminalAuthRequestExpiry(
+  pairing: TerminalPairingAuthentication,
+  response: unknown,
+): TerminalPairingAuthentication {
+  const expiresAt = response && typeof response === 'object' && 'expiresAt' in response
+    ? response.expiresAt
+    : undefined;
+  if (typeof expiresAt !== 'number' || !Number.isSafeInteger(expiresAt) || expiresAt <= pairing.createdAtMs) {
+    return { ...pairing, requestExpiresAtMs: null };
+  }
+  const expiresAtMs = Math.min(pairing.expiresAtMs, expiresAt);
+  return { ...pairing, expiresAtMs, requestExpiresAtMs: expiresAtMs };
+}
+
+export function formatTerminalPairingExpiryNotice(pairing: TerminalPairingAuthentication): string {
+  return pairing.requestExpiresAtMs == null
+    ? 'This link expires soon. Rerun the command if approval fails.'
+    : `This link expires at ${new Date(pairing.requestExpiresAtMs).toISOString()}. Rerun the command if approval fails.`;
 }
 
 export function openTerminalProvisioningResponse(params: Readonly<{

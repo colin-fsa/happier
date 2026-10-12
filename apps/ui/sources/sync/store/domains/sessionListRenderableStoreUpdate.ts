@@ -17,6 +17,11 @@ export type SessionListRenderablePatch = Readonly<{
     patch: SessionListRenderablePatchFields;
 }>;
 
+export type SessionListRenderableReplacementOptions = Readonly<{
+    /** The response has no further page, so it is authoritative for every row it omits. */
+    coversWholeList?: boolean;
+}>;
+
 /**
  * Inclusive floor, on the server list ordering key (`meaningfulActivityAt desc, id
  * desc`), of the range a session-list response actually covers.
@@ -45,8 +50,9 @@ function resolveRenderableOrderingActivityAt(renderable: SessionListRenderableSe
  * the ordered page — so its last row is the oldest row the ordered page reached.
  *
  * A supplementary row landing last only raises the floor, which retains more rows than
- * strictly necessary; that fails safe, because archive and delete both have their own
- * explicit signals (`archivedAt` on the row, `deleteSession` from the changes stream).
+ * strictly necessary. Retention is not free: the list endpoint omits archived rows, so a
+ * retained row archived elsewhere keeps its stale state. Callers therefore skip the window
+ * when the response has no further page and covers the whole list.
  */
 export function resolveSessionListRenderableRemovalWindow(
     incomingRenderables: ReadonlyArray<SessionListRenderableSession>,

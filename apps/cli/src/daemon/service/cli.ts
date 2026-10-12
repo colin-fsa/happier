@@ -13,7 +13,7 @@ import { buildMissingLocalRelayError, resolveLocalRelay } from '@/utils/localRel
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '@/cli/commands/server/commandUtilities';
-import { applyDaemonServiceInstallPlan, runDaemonServiceCommands } from './apply';
+import { applyDaemonServiceInstallPlan, assertDaemonServiceCommandsAvailable, runDaemonServiceCommands } from './apply';
 import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
 
 import { resolveCliVersionFromBinary } from './resolveCliVersionFromBinary';
@@ -738,17 +738,18 @@ async function assertExpectedDaemonServiceOwnership(params: Readonly<{
 async function withManualRelayTakeoverRecovery<T>(params: Readonly<{
   shouldTakeOverManualOwner: boolean;
   action: 'install' | 'start' | 'restart';
-  run: () => Promise<T> | T;
+  run: (beforeApply: () => Promise<void>) => Promise<T> | T;
 }>): Promise<T> {
-  if (!params.shouldTakeOverManualOwner) {
-    return await params.run();
-  }
-
-  await stopDaemon();
-
+  let stoppedManualOwner = false;
   try {
-    return await params.run();
+    return await params.run(async () => {
+      if (!params.shouldTakeOverManualOwner) return;
+      await stopDaemon();
+      stoppedManualOwner = true;
+    });
   } catch (error) {
+    // Preflight errors must preserve both the owner and their typed public error.
+    if (!stoppedManualOwner) throw error;
     const restored = await restartDaemonAndWait({ takeover: true }).catch(() => ({ ok: false }));
     const restoredOk = typeof restored === 'boolean' ? restored : restored.ok;
     const originalMessage = error instanceof Error ? error.message : String(error);
@@ -1384,6 +1385,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   // `--json` keeps stdout machine-readable.
   const steps = createStepPrinter({ enabled: !flags.json });
 
+  try {
   if (flags.help) {
       if (flags.json) {
         printJson({
@@ -1686,14 +1688,17 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       await steps.run('Installing background service', () => withManualRelayTakeoverRecovery({
         shouldTakeOverManualOwner: takeoverDecision.kind === 'manual-owner-takeover',
         action: 'install',
-        run: async () => {
+        run: async (beforeApply) => {
           await installDaemonService({
-            beforeApply: () => stopCurrentWindowsServiceOwnerIfNeeded({
-              platform: installRuntime.platform,
-              ownership,
-              expectedServiceLabel: paths.label,
-              action: 'install',
-            }),
+            beforeApply: async () => {
+              await beforeApply();
+              await stopCurrentWindowsServiceOwnerIfNeeded({
+                platform: installRuntime.platform,
+                ownership,
+                expectedServiceLabel: paths.label,
+                action: 'install',
+              });
+            },
             platform: installRuntime.platform,
             uid: installRuntime.uid ?? undefined,
             userHomeDir: installRuntime.userHomeDir,
@@ -2014,6 +2019,7 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
               `Background service runs ${runtimeReplacement.current}; leaving its definition as it is (switching it to ${runtimeReplacement.replacement} needs \`${commandPath} install\`).\n`,
             );
           } else if (!matches) {
+            assertDaemonServiceCommandsAvailable(expectedPlan.commands);
             process.stderr.write('Refreshing background service definition (drifted from current template).\n');
             await applyDaemonServiceInstallPlan(expectedPlan, { runCommands: false });
             refreshedInstalledServiceDefinition = true;
@@ -2152,7 +2158,9 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
       await steps.run(runningLabel, () => withManualRelayTakeoverRecovery({
         shouldTakeOverManualOwner: takeoverDecision.kind === 'manual-owner-takeover',
         action,
-        run: async () => {
+        run: async (beforeApply) => {
+          assertDaemonServiceCommandsAvailable(plan.commands);
+          await beforeApply();
           await stopCurrentWindowsServiceOwnerIfNeeded({
             platform: runtime.platform,
             ownership,
@@ -2401,4 +2409,11 @@ export async function runDaemonServiceCliCommand(params: Readonly<{
   const msg = `Unknown background service subcommand: ${action}`;
   if (flags.json) printJson({ ok: false, error: 'invalid_subcommand', message: msg });
   else process.stderr.write(`${msg}\n`);
+  } catch (error) {
+    if (flags.json && error instanceof Error && 'code' in error && error.code === 'service_manager_unavailable') {
+      printJson({ ok: false, error: error.code, message: error.message, platform: runtime.platform });
+      return;
+    }
+    throw error;
+  }
 }
