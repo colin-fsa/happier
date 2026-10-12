@@ -28,9 +28,11 @@ installConnectedServicesCommonModuleMocks({
 });
 installConnectedServiceDetailShellMocks();
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
-}));
+vi.mock('@/auth/context/AuthContext', () => {
+  // AuthProvider retains credentials between renders; quota effects rely on that identity.
+  const credentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') };
+  return { useAuth: () => ({ credentials }) };
+});
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: (featureId: string) => featureId !== 'connectedServices.accountGroups',
