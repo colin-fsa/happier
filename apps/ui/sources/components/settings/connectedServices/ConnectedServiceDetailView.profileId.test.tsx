@@ -11,9 +11,11 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ credentials: { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') } }),
-}));
+vi.mock('@/auth/context/AuthContext', () => {
+  // AuthProvider retains credentials between renders; quota effects rely on that identity.
+  const credentials = { token: 't', secret: Buffer.from(new Uint8Array(32).fill(3)).toString('base64url') };
+  return { useAuth: () => ({ credentials }) };
+});
 
 const promptSpy = vi.fn(async () => 'work/bad');
 const alertSpy = vi.fn(async () => {});
