@@ -5,7 +5,7 @@ import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { debug } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
-import { type TerminalAuthRequestPolicy } from "./terminalAuthRequestPolicy";
+import { terminalAuthRequestExpiresAt, type TerminalAuthRequestPolicy } from "./terminalAuthRequestPolicy";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 
 const BASE64_URL_REGEX = /^[A-Za-z0-9_-]+$/;
@@ -49,7 +49,7 @@ export function registerTerminalAuthRequestRoutes(
             }),
             response: {
                 200: z.union([
-                    z.object({ state: z.literal('requested') }).strict(),
+                    z.object({ state: z.literal('requested'), expiresAt: z.number().int() }).strict(),
                     z.object({
                         state: z.literal('authorized'),
                         token: z.string(),
@@ -129,7 +129,7 @@ export function registerTerminalAuthRequestRoutes(
             }));
         }
 
-        return reply.send({ state: 'requested' });
+        return reply.send({ state: 'requested', expiresAt: terminalAuthRequestExpiresAt(answer.createdAt, terminalAuthPolicy) });
     });
 
     // Get auth request status

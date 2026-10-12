@@ -6,7 +6,11 @@ import {
   type SessionRunnerRestartDisabledReason,
 } from '@happier-dev/protocol';
 
+import { isSamePlannedRunnerRestartIntent, isRestartCancelledBeforeSignal, type RestartCompletionWaiter, type RestartCompletionWaiters } from './completionWaiters';
+import type { RestartSessionRunnerCompletion } from './restartSessionRunnerOnCurrentRuntime';
+
 import type {
+  PlannedRunnerRestartIntent,
   PlannedRunnerRestartDeferral,
   PlannedRunnerRestartNotSignaledReason,
   PlannedRunnerRestartReason,
@@ -18,13 +22,12 @@ import type {
 async function runWithDeferral(input: Readonly<{
   sessionId: string;
   deferral: PlannedRunnerRestartDeferral;
-  runSwitch: () => Promise<void>;
-}>): Promise<void> {
+  runSwitch: () => Promise<unknown>;
+}>): Promise<unknown> {
   if (input.deferral.kind === 'none') {
-    await input.runSwitch();
-    return;
+    return await input.runSwitch();
   }
-  await input.deferral.turnDeferralQueue.requestSwitch({
+  return await input.deferral.turnDeferralQueue.requestSwitch({
     sessionId: input.sessionId,
     source: input.deferral.source,
     policy: input.deferral.policy,
@@ -41,12 +44,29 @@ function normalizeActivityDisabledReason(
   return typeof value === 'string' && RESTART_DISABLED_REASON_SET.has(value) ? value : null;
 }
 
+// The queue also executes pre-turn account switches whose callbacks return void. Keep the
+// selected restart result nominal so a coalesced caller cannot mistake that other operation for
+// a restart, and preserve the completion promise even if retirement settles before it resumes.
+class PlannedRunnerRestartExecution {
+  constructor(readonly outcome: Readonly<{
+    intent: PlannedRunnerRestartIntent;
+    signaled: boolean;
+    completionPromise: Promise<RestartSessionRunnerCompletion> | null;
+    notSignaledReason?: PlannedRunnerRestartNotSignaledReason;
+    activityDisabledReason?: SessionRunnerRestartDisabledReason;
+  }>) {}
+}
+
 export async function requestPlannedRunnerRestart(input: Readonly<{
   sessionId: string;
   tracked: TrackedSession;
   reason: PlannedRunnerRestartReason;
   deferral: PlannedRunnerRestartDeferral;
   restartRequestedPids: Set<number>;
+  completionWaiters: RestartCompletionWaiters;
+  awaitCompletion?: boolean;
+  observeRunnerRetirement?: (tracked: TrackedSession, sessionId: string) => void | Promise<void>;
+  onRestartSignaled?: () => void;
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   requestSignal: (request: PlannedRunnerRestartSignalRequest) => Promise<PlannedRunnerRestartSignalResult>;
   canSignal?: () => PlannedRunnerRestartSignalActivityGateResult | Promise<PlannedRunnerRestartSignalActivityGateResult>;
@@ -62,17 +82,49 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
   logWarn?: (message: string, payload?: unknown) => void;
 }>): Promise<Readonly<{
   signaled: boolean;
+  completion?: RestartSessionRunnerCompletion;
   notSignaledReason?: PlannedRunnerRestartNotSignaledReason;
   activityDisabledReason?: SessionRunnerRestartDisabledReason;
 }>> {
   let signaled = false;
+  let completionWaiter: RestartCompletionWaiter | null = null;
+  let completionPromise: Promise<RestartSessionRunnerCompletion> | null = null;
+  let ownsReservation = false;
+  const intent: PlannedRunnerRestartIntent = {
+    reason: input.reason,
+    tracked: input.tracked,
+    ...(input.deferral.kind === 'connected_service_switch' ? { target: input.deferral.target } : {}),
+  };
+  const clearUnsignaledRequest = () => {
+    completionWaiter?.cancel();
+    if (!ownsReservation) return;
+    ownsReservation = false;
+    input.restartRequestedPids.delete(input.tracked.pid);
+    input.clearRestartIntentForPid?.(input.tracked.pid);
+  };
   let notSignaledReason: PlannedRunnerRestartNotSignaledReason | undefined;
   let activityDisabledReason: SessionRunnerRestartDisabledReason | undefined;
   const isProcessSafeToSignal = input.isProcessSafeToSignal ?? isPidSafeHappySessionProcess;
+  const captureExecution = () => new PlannedRunnerRestartExecution({
+    intent, signaled, completionPromise, notSignaledReason, activityDisabledReason,
+  });
+  let selectedExecution: unknown;
   try {
-    await runWithDeferral({
+    selectedExecution = await runWithDeferral({
       sessionId: input.sessionId,
       runSwitch: async () => {
+        completionPromise = input.completionWaiters.join(input.sessionId, input.tracked.pid, intent);
+        if (completionPromise) {
+          signaled = true;
+          return captureExecution();
+        }
+        if (input.restartRequestedPids.has(input.tracked.pid) || input.completionWaiters.join(input.sessionId, input.tracked.pid)) {
+          notSignaledReason = 'duplicate_restart';
+          return captureExecution();
+        }
+        completionWaiter = input.completionWaiters.create(input.sessionId, input.tracked.pid, intent);
+        completionPromise = completionWaiter.promise;
+        ownsReservation = true;
         input.restartRequestedPids.add(input.tracked.pid);
         let ownerStillCurrent = true;
         let missingProcessObserved = false;
@@ -80,6 +132,9 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
         const signalResult = await input.requestSignal({
           tracked: input.tracked,
           shouldSignal: async () => {
+            // Deferral cancellation may release this request while the signal delay or an
+            // awaited probe is pending. A released request must never send a late SIGTERM.
+            if (!ownsReservation) return false;
             ownerStillCurrent = input.pidToTrackedSession.get(input.tracked.pid) === input.tracked;
             if (!ownerStillCurrent) {
               notSignaledReason = 'stale_owner';
@@ -94,11 +149,13 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
                 ? { expectedProcessInstanceFingerprint: input.tracked.processInstanceFingerprint }
                 : {}),
             });
+            if (!ownsReservation) return false;
             if (!safe) {
               notSignaledReason = 'unsafe_process';
               return false;
             }
             const activityGateResult = await input.canSignal?.();
+            if (!ownsReservation) return false;
             const exactActivityDisabledReason = normalizeActivityDisabledReason(activityGateResult);
             if (exactActivityDisabledReason || activityGateResult === false) {
               notSignaledReason = 'activity_in_progress';
@@ -108,8 +165,7 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
             return true;
           },
           onSignalFailure: (error) => {
-            input.restartRequestedPids.delete(input.tracked.pid);
-            input.clearRestartIntentForPid?.(input.tracked.pid);
+            clearUnsignaledRequest();
             if (input.onSignalFailureLogMessage) {
               input.logWarn?.(input.onSignalFailureLogMessage, error);
             }
@@ -120,6 +176,9 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
           },
         });
 
+        if (signalResult.status === 'skipped_stale_owner' && !notSignaledReason) {
+          notSignaledReason = 'stale_owner';
+        }
         if (signalResult.status === 'skipped_duplicate_restart') {
           notSignaledReason = 'duplicate_restart';
         }
@@ -132,8 +191,7 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
           || signalResult.status === 'skipped_duplicate_restart'
           || signalResult.status === 'skipped_terminal_restart'
         ) {
-          input.restartRequestedPids.delete(input.tracked.pid);
-          input.clearRestartIntentForPid?.(input.tracked.pid);
+          clearUnsignaledRequest();
           if (notSignaledReason === 'unsafe_process') {
             input.logWarn?.('[DAEMON RUN] Refusing planned session runner restart because PID identity no longer matches tracked runner', {
               sessionId: input.sessionId,
@@ -141,22 +199,39 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
               reason: input.reason,
             });
           }
-          return;
+          return captureExecution();
         }
         if (signalResult.status === 'process_already_missing' && !missingProcessObserved) {
           input.observeProcessMissing?.(input.tracked);
         }
         signaled = true;
+        try {
+          input.onRestartSignaled?.();
+        } catch (error) {
+          input.logWarn?.('[DAEMON RUN] Failed to publish planned runner restart notification', error);
+        }
+        // Reattached runners have no child exit event. The daemon supplies the same physical-exit
+        // observer for every planned restart, using the existing completion window.
+        try {
+          const observation = input.observeRunnerRetirement?.(input.tracked, input.sessionId);
+          if (observation) void observation.catch((error) => {
+            input.logWarn?.('[DAEMON RUN] Failed to observe planned runner retirement', error);
+          });
+        } catch (error) {
+          input.logWarn?.('[DAEMON RUN] Failed to observe planned runner retirement', error);
+        }
+        return captureExecution();
       },
       deferral: input.deferral,
     });
   } catch (error) {
+    if (!signaled) clearUnsignaledRequest();
     if (
       input.deferral.kind === 'connected_service_switch' &&
       error instanceof ConnectedServiceSwitchDeferralConflictError &&
       error.code === 'switch_cancelled'
     ) {
-        input.logDebug('[DAEMON RUN] Planned runner restart superseded by a newer deferred request', {
+      input.logDebug('[DAEMON RUN] Planned runner restart superseded by a newer deferred request', {
         sessionId: input.sessionId,
         reason: input.reason,
         source: input.deferral.source,
@@ -166,6 +241,19 @@ export async function requestPlannedRunnerRestart(input: Readonly<{
     throw error;
   }
 
+  if (!(selectedExecution instanceof PlannedRunnerRestartExecution) || !isSamePlannedRunnerRestartIntent(selectedExecution.outcome.intent, intent)) {
+    return { signaled: false, notSignaledReason: 'duplicate_restart' };
+  }
+  const selected = selectedExecution.outcome;
+  signaled = selected.signaled;
+  completionPromise = selected.completionPromise;
+  notSignaledReason = selected.notSignaledReason;
+  activityDisabledReason = selected.activityDisabledReason;
+  if (signaled && (input.awaitCompletion || !ownsReservation) && completionPromise) {
+    const completion = await completionPromise;
+    if (isRestartCancelledBeforeSignal(completion)) return { signaled: false, notSignaledReason: 'duplicate_restart' };
+    return { signaled: true, completion };
+  }
   if (signaled || !notSignaledReason) return { signaled };
   return {
     signaled,

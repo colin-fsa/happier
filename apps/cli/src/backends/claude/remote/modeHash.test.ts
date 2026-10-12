@@ -12,6 +12,14 @@ function makeMode(overrides?: Partial<EnhancedMode>): EnhancedMode {
 }
 
 describe('hashClaudeEnhancedModeForQueue', () => {
+    it.each([{}, { claudeRemoteAgentSdkEnabled: false }, { claudeUnifiedTerminalEnabled: true }])('restarts for an entrypoint change in runtime %j', (runtime) => {
+        const base = makeMode(runtime);
+        const enabled = { ...base, claudeCodeIncludeInNativeHistory: true };
+        const disabled = { ...base, claudeCodeIncludeInNativeHistory: false };
+        expect(hashClaudeEnhancedModeForQueue(enabled)).not.toBe(hashClaudeEnhancedModeForQueue(base));
+        expect(hashClaudeEnhancedModeForQueue(disabled)).toBe(hashClaudeEnhancedModeForQueue(base));
+    });
+
     it('keeps runtime-selector changes out of the active runtime hash', () => {
         const agentSdkMode = makeMode({
             claudeRemoteAgentSdkEnabled: true,

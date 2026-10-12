@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createStore } from 'zustand/vanilla';
 
 import type { SessionListRenderableSession } from '../../domains/session/listing/sessionListRenderable';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
@@ -95,7 +96,7 @@ function mockSessionsDomainBoundaries() {
 }
 
 function createHarness(createSessionsDomain: any) {
-    let state: any = {
+    const state: any = {
         sessions: {},
         sessionListRenderables: {},
         sessionsData: null,
@@ -115,18 +116,15 @@ function createHarness(createSessionsDomain: any) {
         settings: { groupInactiveSessionsByProject: false },
     };
 
-    const get = () => state;
-    const set = (updater: any) => {
-        const next = typeof updater === 'function' ? updater(state) : updater;
-        state = { ...state, ...next };
-    };
+    const store = createStore(() => state);
+    const get = store.getState;
+    const set = store.setState;
 
     const domain = createSessionsDomain({ get, set } as any);
     return {
         get,
-        setState: (patch: Record<string, unknown>) => {
-            state = { ...state, ...patch };
-        },
+        setState: store.setState,
+        subscribe: store.subscribe,
         domain,
     };
 }
@@ -494,6 +492,63 @@ describe('sessions domain: renderable patches', () => {
         );
         expect(warmCacheEvent?.count).toBe(1);
         expect(warmCacheEvent?.fields.renderables).toBe(1);
+    });
+
+    describe('omitted rows older than the response floor', () => {
+        // The list endpoint never returns archived rows, so a session archived on another
+        // device is simply absent from the response. Seed it as the stale ACTIVE row the
+        // client last saw, older than every row the response still carries.
+        async function replaceOverStaleArchivedRow(options?: { coversWholeList?: boolean }) {
+            mockSessionsDomainBoundaries();
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain } = createHarness(createSessionsDomain);
+
+            const remaining = makeRenderable({ id: 's_remaining', createdAt: 200 });
+            const archivedElsewhere = makeRenderable({ id: 's_archived_elsewhere', createdAt: 100, active: true });
+            domain.replaceSessionListRenderables([remaining, archivedElsewhere]);
+            expect(get().sessionListRenderables.s_archived_elsewhere).toBeTruthy();
+
+            domain.replaceSessionListRenderables([remaining], options);
+            return get().sessionListRenderables;
+        }
+
+        it('evicts them when the response covers the whole list', async () => {
+            const renderables = await replaceOverStaleArchivedRow({ coversWholeList: true });
+
+            expect(renderables.s_archived_elsewhere).toBeUndefined();
+            expect(renderables.s_remaining).toBeTruthy();
+        });
+
+        it('retains them when more pages exist below the response', async () => {
+            const renderables = await replaceOverStaleArchivedRow({ coversWholeList: false });
+
+            expect(renderables.s_archived_elsewhere).toBeTruthy();
+        });
+
+        it('retains cached rows for an empty partial replacement but evicts them for a complete empty list', async () => {
+            mockSessionsDomainBoundaries();
+            const { createSessionsDomain } = await import('./sessions');
+            const { get, domain, subscribe } = createHarness(createSessionsDomain);
+            domain.replaceSessionListRenderables([makeRenderable({ id: 'retained' })]);
+            const previousState = get();
+            const previousRenderables = get().sessionListRenderables;
+            const previousList = get().sessionListViewData;
+            let notifications = 0;
+            const unsubscribe = subscribe(() => { notifications += 1; });
+
+            domain.replaceSessionListRenderables([], { coversWholeList: false });
+
+            expect(notifications).toBe(0);
+            expect(get()).toBe(previousState);
+            expect(get().sessionListRenderables).toBe(previousRenderables);
+            expect(get().sessionListViewData).toBe(previousList);
+
+            domain.replaceSessionListRenderables([], { coversWholeList: true });
+
+            expect(get().sessionListRenderables).toEqual({});
+            expect(get().sessionListViewData?.filter((item: SessionListViewItem) => item.type === 'session')).toEqual([]);
+            unsubscribe();
+        });
     });
 
     it('updates non-warm-cache replacement fields without rebuilding list data', async () => {

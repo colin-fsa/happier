@@ -28,6 +28,8 @@ Published images:
 
 The published `relay-server` image is built from signed server-runtime and UI-web release artifacts. It runs as the non-root `happier` user, embeds the UI bundle at image build time, and does not need a source checkout or `hstack`.
 
+For Kubernetes, use the [plain-manifest recipe](#kubernetes) below. It uses an external Postgres database and S3-compatible storage, with one replica and no Redis by default.
+
 Prebuilt `relay-server` images support the default SQLite setup and the documented Postgres override. They intentionally do not include the generated MySQL Prisma client. To run Happier with MySQL, build a source-based `server` image from this repository with MySQL included at build time.
 
 Tags:
@@ -558,11 +560,11 @@ The source-built `server` target and prebuilt `relay-server` image run DB migrat
 The default is convenient for a single container. For Postgres, MySQL, or PGlite deployments managed by an orchestrator, run migrations once before replacing application containers:
 
 ```bash
-docker compose run --rm relay run-server --migrate-only
+docker compose run --rm relay /opt/happier/server/happier-server-migrate
 docker compose up -d --force-recreate relay
 ```
 
-Set `RUN_MIGRATIONS=0` on the long-running API and worker services. The explicit `--migrate-only` command still runs migrations when that environment value is present, exits only after migration completion, and never starts the server. Your deployment system must treat a non-zero exit as a failed deployment and leave the existing application containers running.
+Set `RUN_MIGRATIONS=0` on the long-running API and worker services. The prebuilt image's dedicated migration binary exits after migration completion and never starts the server. For a source-built `server` image, use `run-server --migrate-only` instead. Your deployment system must treat a non-zero exit as a failed deployment and leave the existing application containers running.
 
 If your platform cannot run and await a blocking pre-deploy command (for example, separate Dokploy Applications triggered by independent webhooks), designate exactly one API service as the migration owner instead: set `RUN_MIGRATIONS=1` only there, set `RUN_MIGRATIONS=0` on every worker and other replica, use a start-first rollout with automatic rollback, and give the migration-owning container enough health-check startup grace for the largest expected migration. This fallback relies on backward-compatible migrations so workers may continue serving while the API owner upgrades the schema.
 
@@ -572,6 +574,94 @@ Notes:
 - Keep SQLite on its normal single-process startup path; the packaged SQLite runtime does not support `--migrate-only`.
 - PostgreSQL advisory locks serialize competing migration attempts, but they do not protect a migration if an orchestrator terminates its container for failing startup health checks. Use one dedicated migration owner when migrations can outlive the platform's startup grace period.
 - If migration deployment is interrupted, inspect the database and migration ledger before recovery. Never mark an unknown failed migration as applied merely to make the server start.
+
+## Kubernetes
+
+Run the published `relay-server` image with the plain manifests in [the server deployment examples](https://github.com/happier-dev/happier/tree/dev/apps/server/deploy). This recipe is for external Postgres and S3-compatible storage. It does not install a database, object store, ingress controller, Helm chart, or External Secrets operator.
+
+### Prepare the image, storage, and environment
+
+You need a namespace, `kubectl`, a reachable Postgres database, a provisioned S3 bucket, and a TLS ingress or Gateway that supports WebSocket upgrades. Managed Postgres, CloudNativePG, or your existing database deployment can supply the database. Keep its backups and lifecycle independent of the API pods.
+
+Choose a published image for your release channel and pin **the same digest** in `server.yaml` and `migrate.yaml`. `:preview` in the examples is a discovery default, not an immutable deployment. Check the [published tags](https://hub.docker.com/r/happierdev/relay-server/tags) rather than assuming a floating channel tracks another one. Use manifests from the matching source revision; newer migration commands must not be assumed to exist in historical source/Yarn images.
+
+The image declares a named non-root user. Set numeric `runAsUser: 1000` and `runAsGroup: 1000`, as the examples do, so `runAsNonRoot` can be checked by Kubernetes. Verify the UID for your chosen image before deploying it:
+
+```bash
+docker run --rm --entrypoint id YOUR_PINNED_IMAGE
+```
+
+Copy the examples locally and edit `config.yaml` for your public server and web-app URLs. Configure your namespace in your current `kubectl` context, then create `happier-server-env` from a private env file containing:
+
+```dotenv
+DATABASE_URL=postgresql://happier:YOUR_PASSWORD@postgres.example.com:5432/happier?sslmode=require
+HANDY_MASTER_SECRET=YOUR_LONG_RANDOM_SECRET
+S3_HOST=s3.example.com
+S3_PORT=443
+S3_USE_SSL=true
+S3_BUCKET=happier-public
+S3_PUBLIC_URL=https://files.example.com/happier-public
+S3_ACCESS_KEY=YOUR_ACCESS_KEY
+S3_SECRET_KEY=YOUR_SECRET_KEY
+```
+
+Keep the master secret stable and backed up. Add your authentication policy from [Server Auth](/self-hosting/auth), including OIDC settings if you use an IdP. Keep this env file out of Git. Use your platform's secret manager to populate the same Kubernetes Secret if preferred. Do not put conflicting topology keys in the Secret: `envFrom` loads it after the ConfigMap, so it takes precedence.
+
+```bash
+kubectl create secret generic happier-server-env --from-env-file=server.env
+kubectl apply -f config.yaml
+```
+
+The ConfigMap explicitly selects full flavor, Postgres, S3, `SERVER_ROLE=all`, and the in-memory socket adapter. `HAPPIER_SERVER_FLAVOR` overrides the legacy `HAPPY_SERVER_FLAVOR` image default; overriding flavor alone does not change the image's SQLite default, so set `HAPPIER_DB_PROVIDER=postgres` too.
+
+### Migrate before starting or upgrading the API
+
+Back up the database before an upgrade. Run one migration Job using the candidate image and the same environment as the API. The Job directly invokes the packaged migrator; it has no application probes or application startup deadline. `RUN_MIGRATIONS=0` prevents the API pods from becoming additional migration owners.
+
+```bash
+# Example operator wait budget; set it from your expected migration duration.
+MIGRATION_WAIT_TIMEOUT=30m
+migration_job=$(kubectl create -f migrate.yaml -o jsonpath='{.metadata.name}')
+kubectl logs --pod-running-timeout="$MIGRATION_WAIT_TIMEOUT" -f "job/$migration_job"
+kubectl wait --for=condition=complete "job/$migration_job" --timeout="$MIGRATION_WAIT_TIMEOUT"
+```
+
+Only continue once the Job is `Complete`. A log-streaming or wait timeout is not proof that migration failed: inspect Job status and logs. If it fails, leave the existing API running and inspect the database and migration ledger before retrying. Do not blindly delete the Job, mark migrations applied, or roll an older binary onto a partly migrated database.
+
+```bash
+kubectl apply -f server.yaml
+kubectl rollout status deployment/happier-server
+kubectl port-forward service/happier-server 3005:3005
+# In another terminal:
+curl --fail http://127.0.0.1:3005/health
+curl --fail http://127.0.0.1:3005/ready
+```
+
+Use a fresh Job for each upgrade. Keep completed/failed Job logs according to your deployment retention policy. Do not apply the whole example directory at once: applying a Job and Deployment together does not order them.
+
+Automatic application rollback does not undo migrations. Return to the previous image only if it supports the resulting schema; otherwise recover forward or restore the database backup in a coordinated maintenance window. See [Migrations](#migrations) for the single-owner fallback when your platform cannot await a pre-deploy operation.
+
+### Probes, ingress, and persistent data
+
+The Deployment uses `Recreate` at one replica. With an in-memory adapter, overlapping old and new pods cannot fan out socket events to each other's clients. Recreate avoids that overlap and introduces planned downtime and client reconnection.
+
+The startup probe uses `/health` on port `3005`; it holds off liveness and readiness probes until the process is listening. Its sample allowance is 30 failures at 10-second intervals: tune it from observed startup on your cluster. Migrations run in the separate Job and must not be cut short by this allowance. Liveness also uses `/health`; readiness uses `/ready`, which checks database connectivity and returns `503` on failure or shutdown. A readiness failure removes the pod from Service traffic; a liveness/startup failure can restart it. See [Kubernetes probe guidance](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/).
+
+For `SERVER_ROLE=worker`, there is no API listener. Keep `METRICS_ENABLED=true` and probe `/health` and `/ready` on `METRICS_PORT` (`9090`). The example Service exposes only the API port; keep metrics private and scrape pod port `9090`.
+
+Point your TLS ingress or Gateway at `happier-server:3005`. Preserve `/v1/updates`, WebSocket upgrades, HTTP polling, and long-lived connection timeouts. Set `HAPPIER_SERVER_TRUST_PROXY` for your actual trusted proxy path; do not trust forwarded headers from arbitrary clients.
+
+In this Postgres/S3 recipe, authoritative database and uploaded-file data live outside the pods; `/data` is temporary runtime storage. If you switch to SQLite or `HAPPIER_FILES_BACKEND=local`, replace the `emptyDir` with persistent storage owned by UID/GID 1000, retain it across upgrades, and stay on the supported single-node topology. An ephemeral volume loses local data when the pod is replaced.
+
+### Multiple API replicas
+
+Before increasing the replica count, use the same `REDIS_URL` and `HAPPIER_SOCKET_ADAPTER=redis-streams` on every API and worker. Redis is optional for the single `all` replica; sticky sessions alone do not provide cross-pod fanout.
+
+Split the Deployment into API replicas with `SERVER_ROLE=api` and one worker with `SERVER_ROLE=worker`. Use the same database, master secret, file backend, Redis, and image revision; keep migrations disabled on both. Probe the worker on port `9090`, exclude it from the API Service, and expose only API pods through ingress. Configure sticky sessions at the ingress/load balancer for Socket.IO HTTP polling, as described by [Socket.IO's multiple-node guide](https://socket.io/docs/v4/using-multiple-nodes/). WebSocket-only connections do not need polling affinity, but Redis fanout is still required across API pods.
+
+`happy-redis.yaml` is an optional Redis StatefulSet example, not a prerequisite for this recipe. It assumes a default StorageClass and a private network; it provides no authentication, TLS, or NetworkPolicy. Use your secured Redis service or add those controls before exposing it to other workloads. The examples supply no ingress-specific affinity configuration: configure and verify it for your own controller.
+
+Validate your edited manifests against your cluster's API schema before rollout. A schema check cannot prove image pullability, credentials, DNS, storage permissions, migrations, or realtime fanout. After deployment, sign in from the web app, connect a daemon, start a session, and verify live updates and reconnection through your actual ingress. With multiple replicas, verify updates across different API pods and polling affinity too.
 
 ## Reverse proxy checklist
 

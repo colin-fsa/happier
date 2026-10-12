@@ -2539,6 +2539,7 @@ export const zhHans: TranslationStructure = {
       },
     },
     quota: {
+      refreshing: "正在刷新用量…",
       loading: "加载中…",
       error: ({ message }: { message: string }) => `错误：${message}`,
       lastUpdated: ({ time }: { time: string }) => `最后更新：${time}`,
@@ -3991,6 +3992,10 @@ export const zhHans: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "在 Claude Code 中显示会话",
+                        subtitle: "将新的 Claude 会话标记为 Happier 来源，包括 Agent SDK 会话。关闭时保留运行时默认值。"
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "强制启用 Agent Teams",
                         subtitle: "在所有由 Happier 启动的 Claude 会话中启用 Claude Code 的实验性 Agent Teams（代理群）功能。"
@@ -4179,6 +4184,7 @@ export const zhHans: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6344,7 +6350,9 @@ export const zhHans: TranslationStructure = {
     fxSessionId: "FX 会话 ID",
     fxSessionIdCopied: "FX 会话 ID 已复制到剪贴板",
     droidSessionId: "Factory Droid 会话 ID",
+    codebuddySessionId: "CodeBuddy 会话 ID",
     droidSessionIdCopied: "Factory Droid 会话 ID 已复制到剪贴板",
+    codebuddySessionIdCopied: "CodeBuddy 会话 ID 已复制到剪贴板",
     customAcpSessionId: "自定义 ACP 会话 ID",
     grokSessionId: "Grok 会话 ID",
     grokSessionIdCopied: "Grok 会话 ID 已复制到剪贴板",
@@ -6557,6 +6565,8 @@ export const zhHans: TranslationStructure = {
     permissionMode: {
       title: "权限模式",
       effectiveLabel: ({ label }: { label: string }) => `生效：${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `智能体模式 ${mode} 优先于此权限设置。清除模式覆盖后即可使用权限设置。`,
+            usePermissionSetting: '使用权限设置',
       default: "默认",
       readOnly: "只读",
       acceptEdits: "接受编辑",
@@ -6587,6 +6597,7 @@ export const zhHans: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -10028,6 +10039,7 @@ settingsSession: {
     blockedTitle: '设置已停止',
     blockedStatusFallback: '设置未能完成。你的账户和会话没有受到影响。',
     blockedServiceConflictStatus: '需要先处理这台电脑上的另一个后台服务。它保持原样——打开“详情”可以查看是哪一个。',
+    blockedServiceManagerUnavailableStatus: 'Happier 无法在这台电脑上设置后台服务。打开“详情”查看帮助，或继续使用其他机器。',
     blockedConsentDeclinedStatus: '设置已停止。这台电脑上原有的后台服务保持原样。',
     blockedAccountKeptStatus: '设置已停止。这台电脑仍连接到它当前登录的账号。',
     blockedAccountChangedStatus: '设置期间这台电脑登录了另一个账号，因此设置在配对前已停止。请重试。',
@@ -10797,6 +10809,7 @@ settingsSession: {
       agySubtitleExperimental: "Antigravity 命令行（实验）",
       fxSubtitleExperimental: "FX 命令行（实验）",
       droidSubtitleExperimental: "Factory Droid 命令行（实验）",
+      codebuddySubtitleExperimental: "CodeBuddy Code 命令行（实验）",
       customAcpSubtitleExperimental: "自定义 ACP 命令行（实验）",
       grokSubtitleExperimental: "Grok Build 命令行（实验）",
       piSubtitleExperimental: "Pi 命令行（实验）",

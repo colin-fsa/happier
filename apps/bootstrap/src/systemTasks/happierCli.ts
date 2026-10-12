@@ -158,10 +158,14 @@ export async function runLocalHappierJsonCommand(params: LocalHappierJsonCommand
   });
 
   const parsed = parseFirstJsonObject(result.stdout);
+  const reportedFailure = readServiceManagerFailure(parsed);
 
   if (result.status !== 0) {
     if (params.allowJsonFailure && parsed && typeof parsed === 'object') {
       return parsed;
+    }
+    if (reportedFailure) {
+      throw new systemTasks.SystemTaskExecutionError(reportedFailure.code, reportedFailure.message);
     }
     throw new systemTasks.SystemTaskExecutionError(
       'cli_command_failed',
@@ -177,6 +181,9 @@ export async function runLocalHappierJsonCommand(params: LocalHappierJsonCommand
   }
 
   if (!params.allowJsonFailure && isJsonFailureEnvelope(parsed)) {
+    if (reportedFailure) {
+      throw new systemTasks.SystemTaskExecutionError(reportedFailure.code, reportedFailure.message);
+    }
     const envelope = parsed as {
       error?: { code?: unknown; message?: unknown } | unknown;
       message?: unknown;
@@ -191,6 +198,25 @@ export async function runLocalHappierJsonCommand(params: LocalHappierJsonCommand
   }
 
   return parsed;
+}
+
+/** Preserve the CLI's explicit manager prerequisite failure, without classifying raw output. */
+function readServiceManagerFailure(value: unknown) {
+  if (!isJsonFailureEnvelope(value)) return null;
+  const envelope = value as { error?: unknown; message?: unknown };
+  const error = envelope.error;
+  const detail = typeof error === 'object' && error !== null
+    ? error as { code?: unknown; message?: unknown }
+    : null;
+  const code = typeof error === 'string' ? error : detail?.code;
+  if (code !== 'service_manager_unavailable') return null;
+  const message = typeof envelope.message === 'string' ? envelope.message : detail?.message;
+  return {
+    code,
+    message: typeof message === 'string' && message.trim()
+      ? message.trim()
+      : 'The background service manager is not available on this computer.',
+  };
 }
 
 /**

@@ -140,7 +140,7 @@ A separate `happier attach` client stays independent. Close it in its own termin
 the app's detach action does not close that client. Its exit also does not detach a
 different TUI owned by the session runner.
 
-In development builds, a client admitted inside its restored Herdr pane after a
+In Happier CLI 0.2.16 and later, a client admitted inside its restored Herdr pane after a
 server restart is managed instead: **Detach terminal** closes that native client
 while preserving the restored shell and the same running OpenCode session.
 See [Attach to a running session](/sessions/attach-to-session) for the restoration
@@ -252,6 +252,11 @@ Important OpenCode notes:
 - Happier maps that intent to the closest OpenCode session permission ruleset,
 - some OpenCode behavior still depends on the installed OpenCode runtime.
 
+OpenCode's Bash tool can require approval even for `ls` or `cat` in `auto` mode.
+Permission rules apply to the tool; Happier does not infer whether an arbitrary
+shell command is read-only. Use OpenCode's native read/search tools when you want
+read-only operations to follow their own tool permissions.
+
 OpenCode can also expose provider-native session modes and model choices. When those are available, Happier surfaces them in the session UI.
 
 For the full user guide, see:
@@ -291,8 +296,11 @@ your own `OPENCODE_PASSWORD`.
 If OpenCode is not detected:
 
 1. Verify `opencode --version` or `opencode2 --version` works.
-2. Restart Happier.
-3. Set `HAPPIER_OPENCODE_PATH` if your binary is not in PATH.
+2. Restart the Happier daemon after installing OpenCode or changing PATH:
+   `happier daemon restart`. A running daemon retains the environment it started with.
+3. Set `HAPPIER_OPENCODE_PATH` to the executable before starting the daemon if your
+   binary is not in its PATH. Current development source also checks
+   `~/.local/bin` for user-local installations.
 
 ### The session is visible in the app but I want the TUI again
 

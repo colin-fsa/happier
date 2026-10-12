@@ -21,7 +21,9 @@ Auth flows:
 - `POST /v1/auth/request`
   - Body: `{ publicKey, supportsV2? }`
   - Creates or returns a terminal auth request.
-  - Response: `{ state: "requested" }` or `{ state: "authorized", token, response }`.
+  - Response: `{ state: "requested", expiresAt }` or `{ state: "authorized", token, response }`.
+  - Development correction for #403: `expiresAt` is Unix time in milliseconds, computed from the persisted request creation time and effective server TTL. Repeating a pending request does not renew it. Older clients ignore this additive field; older servers omit it.
+  - Current development CLIs cap pairing crypto validity by this deadline. `auth request --json` reports the effective `expiresAtMs` and `expiryNotice`; if the server omits expiry, `expiresAtMs` is `null` and the notice advises prompt approval and rerunning after failure. The nested `pairing.expiresAtMs` remains the crypto binding deadline, not a promise of server acceptance.
 
 - `GET /v1/auth/request/status?publicKey=...`
   - Response: `{ status: "not_found" | "pending" | "authorized", supportsV2 }`.

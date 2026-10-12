@@ -12,6 +12,8 @@ export function createAcpCliCapability(params: {
   title: string;
   acpArgs: string[];
   transport: TransportHandler;
+  resolveAcpProbeLaunch?: () => Promise<Readonly<{ command: string; args: readonly string[] }>>
+    | Readonly<{ command: string; args: readonly string[] }>;
   resolveAcpProbeArgs?: (params: Readonly<{
     resolvedPath: string;
     defaultArgs: readonly string[];
@@ -38,7 +40,7 @@ export function createAcpCliCapability(params: {
           })
         : params.acpArgs;
       const acpProbeArgs = resolvedAcpProbeArgs.length > 0 ? resolvedAcpProbeArgs : params.acpArgs;
-      const launchSpec = (() => {
+      const launchSpec = params.resolveAcpProbeLaunch ? null : (() => {
         try {
           const resolved = requireProviderCliLaunchSpec(params.agentId, { processEnv: process.env });
           return resolved.resolvedPath === base.resolvedPath ? resolved : null;
@@ -46,6 +48,25 @@ export function createAcpCliCapability(params: {
           return null;
         }
       })();
+
+      let probeLaunch: Readonly<{ command: string; args: readonly string[] }>;
+      try {
+        probeLaunch = params.resolveAcpProbeLaunch
+          ? await params.resolveAcpProbeLaunch()
+          : {
+              command: launchSpec?.command ?? base.resolvedPath,
+              args: [...(launchSpec?.args ?? []), ...acpProbeArgs],
+            };
+      } catch (error) {
+        return {
+          ...base,
+          acp: buildAcpCapabilitySnapshot({
+            ok: false,
+            checkedAt: Date.now(),
+            error: { message: error instanceof Error ? error.message : String(error) },
+          }),
+        };
+      }
 
       const defaultEnv: NodeJS.ProcessEnv = {
         // Keep output clean to avoid ACP stdout pollution.
@@ -57,8 +78,8 @@ export function createAcpCliCapability(params: {
         : defaultEnv;
 
       const probe = await probeAcpAgentCapabilities({
-        command: launchSpec?.command ?? base.resolvedPath,
-        args: [...(launchSpec?.args ?? []), ...acpProbeArgs],
+        command: probeLaunch.command,
+        args: probeLaunch.args,
         cwd: process.cwd(),
         env: probeEnv,
         transport: params.transport,

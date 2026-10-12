@@ -249,6 +249,7 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     alternativeBinaryNames: ['opencode2'],
     knownCommandCandidates: [
       { kind: 'homeBinDir', relativeDir: '.opencode/bin' },
+      { kind: 'homeBinDir', relativeDir: '.local/bin' },
       { kind: 'homePath', relativePath: 'AppData/Roaming/npm/opencode.cmd' },
     ],
     sourcePreferenceDefault: 'system-first',
@@ -538,6 +539,23 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     acceptsJavaScriptFileOverride: false,
     installGuideUrl: 'https://docs.factory.ai/cli/getting-started/quickstart',
     docsUrl: 'https://docs.factory.ai/ide-integrations',
+  },
+  codebuddy: {
+    id: 'codebuddy',
+    title: 'CodeBuddy Code CLI',
+    binaryName: 'codebuddy',
+    knownCommandCandidates: null,
+    sourcePreferenceDefault: 'system-first',
+    managedInstall: {
+      kind: 'managed_package',
+      packageName: '@tencent-ai/codebuddy-code',
+      binaryName: 'codebuddy',
+    },
+    manualInstallKind: 'command',
+    manualInstallRecipes: null,
+    acceptsJavaScriptFileOverride: false,
+    installGuideUrl: 'https://www.codebuddy.ai/docs/cli/quickstart',
+    docsUrl: 'https://www.codebuddy.ai/docs/cli/acp',
   },
 } as const;
 

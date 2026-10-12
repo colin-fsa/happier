@@ -13,7 +13,10 @@ import {
 } from '@/testkit/backends/apiSessionSocketHarness';
 import { waitForCondition } from '@/testkit/async/waitFor';
 import { decodeBase64, decrypt } from '../encryption';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import * as persistence from '@/persistence';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
@@ -173,8 +176,9 @@ async function waitForReleasedServerPendingInputContract(client: ApiSessionClien
 describe('ApiSessionClient session.userMessage.send delivery', () => {
   beforeEach(() => {
     vi.useRealTimers();
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({
       features: {
+        sessions: { enabled: true, usageLimitRecovery: { enabled: true } },
         sharing: {
           pendingQueueV2: { enabled: true },
           pendingDeliveryState: { enabled: true },
@@ -186,7 +190,7 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
           pendingInput: { protocolVersion: 1 },
         },
       },
-    }), { status: 200 })));
+    })), { status: 200 })));
     enqueuePendingQueueV2MessageViaHttpMock.mockReset();
     enqueuePendingQueueV2MessageViaHttpMock.mockResolvedValue(undefined);
     materializeNextPendingQueueV2MessageMock.mockReset();
@@ -774,6 +778,81 @@ describe('ApiSessionClient session.userMessage.send delivery', () => {
       operation: 'check_now',
     });
     expect(received).toHaveLength(1);
+  });
+
+  it('keeps active recovery checks with the daemon owner rather than the provider-local recovery loop', async () => {
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
+    const fixture = createPlainSessionFixture({ id: 's1' });
+    const client = new ApiSessionClient('tok', {
+      ...fixture,
+      metadata: {
+        ...fixture.metadata,
+        sessionUsageLimitRecoveryV1: {
+          v: 1,
+          status: 'waiting',
+          issueFingerprint: 'usage-limit:codex:turn-1:1:1000',
+          runtimeAuthRecoveryAttemptId: 'attempt-1',
+          armedAtMs: 1,
+          resetAtMs: 1000,
+          nextCheckAtMs: 1000,
+          attemptCount: 0,
+          maxAttempts: 5,
+          lastProbeError: null,
+          resumePromptMode: 'standard',
+          selectedAuth: { kind: 'profile', serviceId: 'openai-codex', profileId: 'profile-1' },
+        },
+      },
+    });
+    const localControl = vi.fn(async () => ({ ok: true, status: 'resumed' }));
+    client.setSessionRuntimeControls({ checkUsageLimitRecoveryNow: localControl });
+    const credentialRead = vi.spyOn(persistence, 'readCredentials').mockResolvedValue({
+      token: 'tok', encryption: { type: 'legacy', secret: new Uint8Array(32) },
+    });
+    const daemonCheck = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ ok: true, status: 'waiting' });
+    try {
+      await waitForCurrentPendingInputContract(client);
+      // Use the real registered control through its RPC boundary; no recovery owner is mocked.
+      const result = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, {
+        sessionId: 's1', provider: 'codex', resumePromptMode: 'custom',
+      });
+      expect(result).toMatchObject({ ok: true, status: 'waiting' });
+      expect(daemonCheck).toHaveBeenCalledWith(expect.objectContaining({
+        machineId: 'machine-1',
+        method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
+        request: { sessionId: 's1', provider: 'codex', resumePromptMode: 'custom' },
+        authorization: { kind: 'session.write', sessionId: 's1' },
+      }));
+      expect(localControl).not.toHaveBeenCalled();
+
+      const received: unknown[] = [];
+      client.onUserMessage((message) => received.push(message));
+      const prompt = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, {
+        text: 'explicit retry', localId: 'owned-retry', meta: { source: 'ui' },
+      });
+      expect(prompt).toMatchObject({ ok: true, providerAcceptancePending: true });
+      expect(enqueuePendingQueueV2MessageViaHttpMock).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 's1', body: expect.objectContaining({ localId: 'owned-retry' }),
+      }));
+      expect(daemonCheck).toHaveBeenCalledTimes(1);
+      expect(received).toHaveLength(1);
+      expect(localControl).not.toHaveBeenCalled();
+
+      daemonCheck.mockRejectedValueOnce(new Error('daemon unavailable'));
+      const unavailable = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, { sessionId: 's1' });
+      expect(unavailable).toMatchObject({ ok: false, errorCode: 'session_usage_limit_recovery_control_remote_unavailable' });
+      expect(localControl).not.toHaveBeenCalled();
+
+      const providerAction = await client.rpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, {
+        sessionId: 's1', operation: 'switch_account_now',
+      });
+      expect(providerAction).toMatchObject({ ok: true, status: 'resumed' });
+      expect(localControl).toHaveBeenLastCalledWith({ sessionId: 's1', operation: 'switch_account_now' });
+    } finally {
+      credentialRead.mockRestore();
+      daemonCheck.mockRestore();
+      await client.close();
+    }
   });
 
   it('coalesces exact replays without collapsing whitespace-distinct recovery request ids', async () => {

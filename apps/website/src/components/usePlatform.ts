@@ -13,6 +13,32 @@ import { useEffect, useState } from 'react';
  */
 export type Platform = 'mac' | 'windows' | 'linux' | 'ios' | 'ipados' | 'android' | 'unknown';
 
+export type DesktopArchitecture = 'arm64' | 'x86_64' | 'unknown';
+
+export function detectDesktopArchitecture(): DesktopArchitecture {
+    if (typeof navigator === 'undefined') return 'unknown';
+    const reported = `${navigator.userAgent} ${navigator.platform ?? ''}`.toLowerCase();
+    if (/aarch64|arm64/.test(reported)) return 'arm64';
+    if (/x86_64|wow64|win64|x64/.test(reported)) return 'x86_64';
+    return 'unknown';
+}
+
+/** Chromium can report the real chip even when its user agent is frozen. */
+export async function readDesktopArchitectureHint(): Promise<DesktopArchitecture> {
+    if (typeof navigator === 'undefined') return 'unknown';
+    type UAData = { getHighEntropyValues?: (keys: string[]) => Promise<{ architecture?: string }> };
+    const uaData = (navigator as unknown as { userAgentData?: UAData }).userAgentData;
+    if (!uaData?.getHighEntropyValues) return 'unknown';
+    try {
+        const data = await uaData.getHighEntropyValues(['architecture']);
+        if (data?.architecture === 'arm') return 'arm64';
+        if (data?.architecture === 'x86') return 'x86_64';
+    } catch {
+        // An unavailable optional browser hint leaves the existing picker/default.
+    }
+    return 'unknown';
+}
+
 /** Devices where "paste this into your terminal" is a dead end. */
 export const HANDHELD: ReadonlyArray<Platform> = ['ios', 'ipados', 'android'];
 

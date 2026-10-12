@@ -1206,7 +1206,7 @@ describe('claudeLocal launcher selection', () => {
         expect(spawnOpts?.env?.DISABLE_AUTOUPDATER).toBe('1');
     });
 
-    it('strips nested Claude Code env vars from the spawned process environment', async () => {
+    it.each([undefined, 'happier'] as const)('strips parent session markers and honors child entrypoint %s', async (entrypoint) => {
         const prevClaudeCode = process.env.CLAUDECODE;
         const prevEntrypoint = process.env.CLAUDE_CODE_ENTRYPOINT;
         process.env.CLAUDECODE = '1';
@@ -1219,12 +1219,13 @@ describe('claudeLocal launcher selection', () => {
                 path: '/tmp',
                 onSessionFound,
                 claudeArgs: [],
+                envOverlay: entrypoint ? { CLAUDE_CODE_ENTRYPOINT: entrypoint } : undefined,
             });
 
             expect(mockSpawn).toHaveBeenCalled();
             const spawnOpts = mockSpawn.mock.calls[0][2];
             expect(spawnOpts?.env?.CLAUDECODE).toBeUndefined();
-            expect(spawnOpts?.env?.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+            expect(spawnOpts?.env?.CLAUDE_CODE_ENTRYPOINT).toBe(entrypoint);
         } finally {
             if (typeof prevClaudeCode === 'string') process.env.CLAUDECODE = prevClaudeCode;
             else delete process.env.CLAUDECODE;

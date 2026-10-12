@@ -7,7 +7,7 @@ import type { SessionHookData } from "./utils/startHookServer";
 import type { ClaudeStatuslineRuntimeReconcileInput } from "./statusline/applyClaudeStatuslineUpdate";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import { configuration } from '@/configuration';
@@ -28,6 +28,7 @@ import {
 import { resolveConfiguredClaudeConfigDir } from './utils/resolveConfiguredClaudeConfigDir';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { resolveSessionCriticalMetadataDrainTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
+import { canPublishSessionResumeIdentity } from '@/session/metadata/sessionIdentityPublication';
 import { getProjectPath } from './utils/path';
 import { readExplicitClaudeResumeSessionIdFromArgs } from './utils/claudeResumeArgs';
 import {
@@ -42,6 +43,7 @@ import {
 } from './utils/sessionHookAttribution';
 import { ClaudeConnectedServiceAuthGroupRequestFence } from './connectedServices/claudeConnectedServiceAuthGroupRequestFence';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
+import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -149,33 +151,6 @@ function readTrimmedString(value: unknown): string | null {
         : null;
 }
 
-const CLAUDE_TRANSCRIPT_PROOF_MAX_BYTES = 64 * 1024;
-
-function readFirstFileChunk(path: string): Readonly<{ text: string; truncated: boolean }> | null {
-    let fd: number | null = null;
-    try {
-        fd = openSync(path, 'r');
-        const buffer = Buffer.alloc(CLAUDE_TRANSCRIPT_PROOF_MAX_BYTES + 1);
-        const bytesRead = readSync(fd, buffer, 0, buffer.byteLength, 0);
-        const truncated = bytesRead > CLAUDE_TRANSCRIPT_PROOF_MAX_BYTES;
-        const readableBytes = truncated ? CLAUDE_TRANSCRIPT_PROOF_MAX_BYTES : bytesRead;
-        return {
-            text: buffer.toString('utf8', 0, readableBytes),
-            truncated,
-        };
-    } catch {
-        return null;
-    } finally {
-        if (fd !== null) {
-            try {
-                closeSync(fd);
-            } catch {
-                // Best-effort close after a proof read; a close failure should not promote metadata.
-            }
-        }
-    }
-}
-
 function readClaudeTranscriptRecordSessionId(record: Record<string, unknown>): string | null {
     if (record.type === 'system' && record.subtype === 'init') {
         return readTrimmedString(record.session_id);
@@ -197,38 +172,40 @@ function readClaudeTranscriptRecordSessionId(record: Record<string, unknown>): s
     }
 }
 
-function readClaudeTranscriptProofSessionId(path: string): string | null {
-    const chunk = readFirstFileChunk(path);
-    if (!chunk?.text) return null;
-    const lines = chunk.text.split(/\r?\n/u);
-    if (chunk.truncated && !chunk.text.endsWith('\n') && !chunk.text.endsWith('\r')) {
-        lines.pop();
-    }
+async function readClaudeTranscriptProofSessionId(path: string): Promise<string | null> {
     let proofSessionId: string | null = null;
-    for (const rawLine of lines) {
-        const line = rawLine.trim();
-        if (!line) continue;
-        let record: Record<string, unknown> | null = null;
-        try {
-            record = readRecord(JSON.parse(line));
-        } catch {
-            return null;
+    let offsetBytes = 0;
+    try {
+        while (true) {
+            const page = await readJsonlFileForward({
+                filePath: path,
+                offsetBytes,
+                maxBytes: 64 * 1024,
+                maxItems: Number.POSITIVE_INFINITY,
+                // A page budget must not make a valid first prompt ineligible for resume.
+                maxOversizeLineBytes: Number.POSITIVE_INFINITY,
+            });
+            for (const item of page.items) {
+                const record = readRecord(item.value);
+                if (!record) continue;
+                const rowSessionId = readClaudeTranscriptRecordSessionId(record);
+                if (!rowSessionId) continue;
+                if (proofSessionId && proofSessionId !== rowSessionId) return null;
+                proofSessionId = rowSessionId;
+            }
+            if (page.reachedEnd) return proofSessionId;
+            if (!page.hitPageLimit || page.nextOffsetBytes <= offsetBytes) return null;
+            offsetBytes = page.nextOffsetBytes;
         }
-        if (!record) return null;
-        const rowSessionId = readClaudeTranscriptRecordSessionId(record);
-        if (!rowSessionId) continue;
-        if (proofSessionId && proofSessionId !== rowSessionId) {
-            return null;
-        }
-        proofSessionId = rowSessionId;
+    } catch {
+        return null;
     }
-    return proofSessionId;
 }
 
-function isProvenClaudeTranscriptPath(params: Readonly<{
+async function isProvenClaudeTranscriptPath(params: Readonly<{
     sessionId: string;
     transcriptPath: string | null;
-}>): boolean {
+}>): Promise<boolean> {
     const transcriptPath = params.transcriptPath;
     if (!transcriptPath) return false;
     if (readPathBasename(transcriptPath) !== `${params.sessionId}.jsonl`) {
@@ -236,7 +213,7 @@ function isProvenClaudeTranscriptPath(params: Readonly<{
     }
     return isClaudeNativeTranscriptPath(transcriptPath)
         && isReachableClaudeTranscriptPath(transcriptPath)
-        && readClaudeTranscriptProofSessionId(transcriptPath) === params.sessionId;
+        && await readClaudeTranscriptProofSessionId(transcriptPath) === params.sessionId;
 }
 
 function isClaudeNativeTranscriptPathCandidate(params: Readonly<{
@@ -256,12 +233,12 @@ function resolveNativeClaudeTranscriptPathCandidate(params: Readonly<{
     return join(getProjectPath(params.workingDirectory), `${params.sessionId}.jsonl`);
 }
 
-function resolveProvenNativeClaudeTranscriptPath(params: Readonly<{
+async function resolveProvenNativeClaudeTranscriptPath(params: Readonly<{
     sessionId: string;
     workingDirectory: string;
-}>): string | null {
+}>): Promise<string | null> {
     const transcriptPath = resolveNativeClaudeTranscriptPathCandidate(params);
-    return isProvenClaudeTranscriptPath({
+    return await isProvenClaudeTranscriptPath({
         sessionId: params.sessionId,
         transcriptPath,
     })
@@ -380,6 +357,7 @@ export class Session {
      * Applied on the next Claude subprocess spawn (local + remote).
      */
     claudeCodeExperimentalAgentTeamsEnabled: boolean = false;
+    claudeCodeIncludeInNativeHistory: boolean = false;
 
     /**
      * Timestamp of the most recent user-initiated abort request (UI abort, Ctrl-C exit,
@@ -874,18 +852,7 @@ export class Session {
                     sessionId,
                     workingDirectory: this.path,
                 });
-        const hookTranscriptPathIsProven = isProvenClaudeTranscriptPath({
-            sessionId,
-            transcriptPath: nextTranscriptPath,
-        });
-        const resumableTranscriptPath = hookTranscriptPathIsProven
-            ? nextTranscriptPath
-            : resolveProvenNativeClaudeTranscriptPath({
-                sessionId,
-                workingDirectory: this.path,
-            });
-        const metadataTranscriptPath = resumableTranscriptPath;
-        const observedTranscriptPath = resumableTranscriptPath ?? nextTranscriptPath ?? nativeTranscriptPathCandidate;
+        const observedTranscriptPath = nextTranscriptPath ?? nativeTranscriptPathCandidate;
 
         const prevSessionId = this.sessionId;
         const prevTranscriptPath = this.transcriptPath;
@@ -900,64 +867,45 @@ export class Session {
             // Same sessionId, but we learned/updated the exact transcript path.
             this.transcriptPath = observedTranscriptPath;
         }
-        const didKnownTranscriptPathChange =
-            !didSessionIdChange
-            && typeof prevTranscriptPath === 'string'
-            && typeof metadataTranscriptPath === 'string'
-            && prevTranscriptPath !== metadataTranscriptPath;
-
-        // Update metadata with the Claude-reported session ID immediately. Transcript
-        // proof only decides whether the path/direct-session source is resumable yet.
-        if (didSessionIdChange) {
-            this.trackCriticalMetadataWrite(
-                async () => {
-                    let updatedMetadata: Metadata | null = null;
-                    await this.client.updateMetadata((metadata) => {
-                        updatedMetadata = buildClaudeReportedSessionMetadata({
-                            metadata,
-                            sessionId,
-                            transcriptPath: metadataTranscriptPath,
-                            shouldClearAssistantResumeAnchor: true,
-                        });
-                        return updatedMetadata;
+        // Hooks need the observed identity immediately, but allocation alone does not
+        // establish a native session that a later inactive resume can load.
+        this.trackCriticalMetadataWrite(
+            async () => {
+                const hookTranscriptPathIsProven = await isProvenClaudeTranscriptPath({ sessionId, transcriptPath: nextTranscriptPath });
+                const metadataTranscriptPath = hookTranscriptPathIsProven
+                    ? nextTranscriptPath
+                    : await resolveProvenNativeClaudeTranscriptPath({ sessionId, workingDirectory: this.path });
+                // A newer observation can arrive while complete-record proof is being read.
+                if (this.sessionId !== sessionId || this.transcriptPath !== observedTranscriptPath) return;
+                if (!canPublishSessionResumeIdentity({ isExistingResume: false, hasResumeEvidence: Boolean(metadataTranscriptPath) })) return;
+                if (metadataTranscriptPath && this.transcriptPath !== metadataTranscriptPath) {
+                    this.transcriptPath = metadataTranscriptPath;
+                    for (const callback of this.sessionFoundCallbacks) callback({ sessionId, transcriptPath: metadataTranscriptPath });
+                }
+                const didKnownTranscriptPathChange = !didSessionIdChange
+                    && typeof prevTranscriptPath === 'string'
+                    && typeof metadataTranscriptPath === 'string'
+                    && prevTranscriptPath !== metadataTranscriptPath;
+                let updatedMetadata: Metadata | null = null;
+                await this.client.updateMetadata((metadata) => {
+                    updatedMetadata = buildClaudeReportedSessionMetadata({
+                        metadata,
+                        sessionId,
+                        transcriptPath: metadataTranscriptPath,
+                        shouldClearAssistantResumeAnchor: metadata.claudeSessionId !== sessionId || didKnownTranscriptPathChange,
                     });
-                    if (updatedMetadata) {
-                        await this.reportSessionMetadataToDaemon?.({
-                            sessionId: this.client.sessionId,
-                            metadata: updatedMetadata,
-                        });
-                    }
-                },
-                'claude_session_found',
-            );
-            logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
-
-        } else if (resumableTranscriptPath || didKnownTranscriptPathChange) {
-            // Same session, but we learned a more precise transcript path from hooks.
-            this.trackCriticalMetadataWrite(
-                async () => {
-                    let updatedMetadata: Metadata | null = null;
-                    await this.client.updateMetadata((metadata) => {
-                        updatedMetadata = buildClaudeReportedSessionMetadata({
-                            metadata,
-                            sessionId,
-                            transcriptPath: metadataTranscriptPath,
-                            shouldClearAssistantResumeAnchor: didKnownTranscriptPathChange,
-                        });
-                        return updatedMetadata;
+                    return updatedMetadata;
+                });
+                if (updatedMetadata) {
+                    await this.reportSessionMetadataToDaemon?.({
+                        sessionId: this.client.sessionId,
+                        metadata: updatedMetadata,
                     });
-                    if (updatedMetadata) {
-                        await this.reportSessionMetadataToDaemon?.({
-                            sessionId: this.client.sessionId,
-                            metadata: updatedMetadata,
-                        });
-                    }
-                },
-                'claude_transcript_path_found',
-            );
-        } else if (observedTranscriptPath) {
-            logger.debug(`[Session] Claude Code transcript path for session ID ${sessionId} observed but not promoted to metadata because it is not proven resumable`);
-        }
+                }
+                logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
+            },
+            'claude_session_found',
+        );
 
         // Notify callbacks when either the sessionId changes or we learned a better transcript path.
         const didTranscriptPathChange = Boolean(observedTranscriptPath) && observedTranscriptPath !== prevTranscriptPath;

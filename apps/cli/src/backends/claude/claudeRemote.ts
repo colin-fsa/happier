@@ -11,7 +11,7 @@ import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
 import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
 import { resolveClaudeConfigDirOverride } from "./utils/resolveClaudeConfigDirOverride";
 import { resolveClaudeConfigDirEnvOverlay } from "./utils/resolveClaudeConfigDirEnvOverlay";
-import { resolveClaudeCodeExperimentalEnvOverlay } from "./spawn/resolveClaudeCodeExperimentalEnvOverlay";
+import { resolveClaudeSessionEnvOverlay } from "./spawn/resolveClaudeSessionEnvOverlay";
 import { logClaudeRuntimeAuthEnvDiagnostic } from "./spawn/logClaudeRuntimeAuthEnvDiagnostic";
 import { ensureClaudeJsRuntimeExecutable } from "./utils/ensureClaudeJsRuntimeExecutable";
 import { resolveClaudeCliPath } from "./utils/resolveClaudeCliPath";
@@ -260,8 +260,9 @@ export async function claudeRemote(opts: {
     const resolvedClaudeCliPath = resolveClaudeCliPath();
     const happierSessionId = normalizeCurrentHappierSessionId(opts.happySessionId);
     const launcherEnv: NodeJS.ProcessEnv = {
-        ...resolveClaudeCodeExperimentalEnvOverlay({
+        ...resolveClaudeSessionEnvOverlay({
             claudeCodeExperimentalAgentTeamsEnabled: mode.claudeCodeExperimentalAgentTeamsEnabled,
+            claudeCodeIncludeInNativeHistory: mode.claudeCodeIncludeInNativeHistory,
         }),
         ...resolveClaudeConfigDirEnvOverlay(process.env),
         ...(happierSessionId ? { HAPPIER_SESSION_ID: happierSessionId } : {}),

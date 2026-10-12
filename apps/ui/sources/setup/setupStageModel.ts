@@ -171,6 +171,7 @@ const ACQUISITION_FAILURE_KEY = {
  * than leaking whatever the process printed.
  */
 const BLOCKED_STATUS_KEY: Readonly<Record<string, TranslationKeyNoParams>> = {
+    service_manager_unavailable: 'setupSurface.blockedServiceManagerUnavailableStatus',
     service_install_blocked: 'setupSurface.blockedServiceConflictStatus',
     service_consent_declined: 'setupSurface.blockedConsentDeclinedStatus',
     account_consent_declined: 'setupSurface.blockedAccountKeptStatus',

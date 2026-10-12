@@ -24,6 +24,7 @@ import { logger } from '@/ui/logger';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 import { reclaimJsonOwnerFileLockSnapshot } from '@/utils/fs/jsonOwnerFileLock';
+import { isPidAliveBySignal } from '@/daemon/processRunState';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
@@ -1084,10 +1085,64 @@ export async function clearDaemonStateForTests(options: Readonly<{
 }
 
 /**
- * Acquire an exclusive lock file for the daemon.
- * The lock file proves the daemon is running and prevents multiple instances.
- * Returns the file handle to hold for the daemon's lifetime, or null if locked.
+ * Reclaim a departed publication through the exact-owner file primitive. Stop observers
+ * capture the lock before probing control; a replaced lock or state cancels cleanup.
+ * Live, access-denied and uninspectable PIDs stay protected by the shared signal probe.
  */
+export async function reclaimDeadDaemonPublication(options: Readonly<{
+  stateFile?: string;
+  expectedState?: Readonly<{ pid: number; httpPort: number; startedAt?: number; controlToken?: string }> | null;
+  expectedPid?: number;
+  expectedLockRaw?: string | null;
+}> = {}): Promise<boolean> {
+  const stateFile = options.stateFile ?? configuration.daemonStateFile;
+  const lockFile = `${stateFile}.lock`;
+  const readOptional = (path: string): string | null => {
+    try { return readFileSync(path, 'utf8'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  try {
+    const lockRaw = options.expectedLockRaw === undefined ? readOptional(lockFile) : options.expectedLockRaw;
+    const expected = options.expectedState ?? null;
+    const lockPid = lockRaw === null ? null : Number(lockRaw.trim());
+    const pid = expected?.pid ?? lockPid;
+    if (options.expectedPid !== undefined && pid !== options.expectedPid) return false;
+    if (!pid || !Number.isSafeInteger(pid) || pid <= 0 || isPidAliveBySignal(pid)) return false;
+    if (lockRaw !== null && lockPid !== pid) return false;
+    if (readOptional(lockFile) !== lockRaw) return false;
+    const stateRaw = readOptional(stateFile);
+    if (stateRaw !== null) {
+      const parsed = DaemonLocallyPersistedStateSchema.safeParse(JSON.parse(stateRaw));
+      if (!parsed.success || !expected) return false;
+      const current = normalizeDaemonState(parsed.data);
+      if (current.pid !== expected.pid || current.httpPort !== expected.httpPort
+        || current.controlToken !== expected.controlToken
+        || (expected.startedAt !== undefined && current.startedAt !== expected.startedAt)) return false;
+      const reclaimed = await reclaimJsonOwnerFileLockSnapshot(stateFile, stateRaw, async (quarantinePath) => {
+        const raw = await readFile(quarantinePath, 'utf8');
+        if (isPidAliveBySignal(pid) || readOptional(lockFile) !== lockRaw) throw new Error('Daemon owner changed during cleanup');
+        return raw;
+      });
+      if (reclaimed !== 'reclaimed') return false;
+    } else if (expected) {
+      // A daemon may have completed its own publication cleanup already.
+      if (readOptional(lockFile) !== lockRaw) return false;
+    }
+    if (lockRaw === null) return true;
+    return await reclaimJsonOwnerFileLockSnapshot(lockFile, lockRaw, async (quarantinePath) => {
+      const raw = await readFile(quarantinePath, 'utf8');
+      if (isPidAliveBySignal(pid) || readOptional(stateFile) !== null) throw new Error('Daemon publication changed during cleanup');
+      return raw;
+    }) === 'reclaimed';
+  } catch {
+    return false;
+  }
+}
+
+/** Acquire the exclusive lifecycle lock, retaining live or unverified owners. */
 export async function acquireDaemonLock(
   maxAttempts: number = 5,
   delayIncrementMs: number = 200
@@ -1140,13 +1195,7 @@ export async function acquireDaemonLock(
               return null;
             }
 
-            let processExists = false;
-            try {
-              process.kill(pid, 0); // Check if process exists
-              processExists = true;
-            } catch (probeError) {
-              processExists = (probeError as NodeJS.ErrnoException | null)?.code === 'EPERM';
-            }
+            const processExists = isPidAliveBySignal(pid);
             if (processExists) {
               // PID reuse safety: only treat the lock as valid if the PID looks like a happier daemon.
               // Otherwise a recycled PID can wedge daemon startup forever.

@@ -358,7 +358,7 @@ describe('claude sdk query executable resolution', () => {
     expect(spawnOpts?.windowsVerbatimArguments).toBe(true);
   });
 
-  it('strips nested Claude Code env vars from the spawned process environment', async () => {
+  it.each([undefined, 'happier'] as const)('strips parent session markers and honors child entrypoint %s', async (entrypoint) => {
     envScope.patch({
       CLAUDECODE: '1',
       CLAUDE_CODE_ENTRYPOINT: 'parent',
@@ -386,6 +386,7 @@ describe('claude sdk query executable resolution', () => {
         options: {
           cwd: '/tmp',
           pathToClaudeCodeExecutable: '/tmp/fake-claude.cjs',
+          env: entrypoint ? { CLAUDE_CODE_ENTRYPOINT: entrypoint } : undefined,
         },
       }),
     ).toThrow(/spawn invoked/);
@@ -393,7 +394,7 @@ describe('claude sdk query executable resolution', () => {
     expect(spawnMock).toHaveBeenCalled();
     const spawnOpts = spawnMock.mock.calls[0]?.[2] as Record<string, any> | undefined;
     expect(spawnOpts?.env?.CLAUDECODE).toBeUndefined();
-    expect(spawnOpts?.env?.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(spawnOpts?.env?.CLAUDE_CODE_ENTRYPOINT).toBe(entrypoint);
   });
 
   it('does not forward HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON into the spawned Claude process environment', async () => {

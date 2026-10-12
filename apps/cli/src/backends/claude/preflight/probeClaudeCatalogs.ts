@@ -12,7 +12,7 @@ import { buildClaudeSubprocessEnv } from '@/backends/claude/spawn/buildClaudeSub
 import { resolveClaudeSettingSources } from '@/backends/claude/utils/resolveClaudeSettingSources';
 import { ensureJavaScriptRuntimeExecutable } from '@/runtime/js/ensureJavaScriptRuntimeExecutable';
 import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
-import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv';
+import { resolveClaudeSessionEnvOverlay } from '../spawn/resolveClaudeSessionEnvOverlay';
 import { isBun } from '@/utils/runtime';
 import { remainingCatalogProbeMs, withCatalogProbeLifecycle } from '@/capabilities/probes/catalogProbeLifecycle';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
@@ -20,7 +20,10 @@ import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 /** Native initialization advertises slash commands; it does not advertise a typed skill-mention catalog. */
 export async function probeClaudeCatalogs(params: PreflightSessionControlsProbeParams): Promise<PreflightSessionCatalogsRaw> {
   const processEnv = params.processEnv ?? process.env;
-  const subprocessEnv = stripNestedSessionDetectionEnv(buildClaudeSubprocessEnv({ baseEnv: processEnv }));
+  const subprocessEnv = buildClaudeSubprocessEnv({
+    baseEnv: processEnv,
+    envOverlay: resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: params.accountSettings?.claudeCodeIncludeInNativeHistory === true }),
+  });
   const messages = new PushableAsyncIterable<SDKUserMessage>();
   const abortController = new AbortController();
   const lifecycle: { response: Query | null } = { response: null };

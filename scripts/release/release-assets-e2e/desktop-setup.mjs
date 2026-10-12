@@ -14,7 +14,7 @@
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -123,6 +123,35 @@ export function evaluateUpgrade(observed) {
     { check: 'systemd user service still active', pass: observed.systemd.active === 'active', detail: observed.systemd },
     { check: 'upgraded daemon answers through the relay (INV10)', pass: observed.finalProbe?.ok === true && observed.finalProbe?.machineId === previousMachineId, detail: observed.finalProbe },
   ];
+}
+
+/**
+ * Drive the released predecessor through its process boundaries.
+ * @param {{ relayUrl: string; webappUrl: string; setupParams: unknown; inspectionParams: unknown; runHsetup: (kind: string, params: unknown, env?: Record<string, string>) => Promise<{ exitCode: unknown; result: { ok: boolean; error?: { code: string; message: string } } | null }>; runCli: (args: string[]) => unknown }} options
+ */
+export async function runPredecessorSetup({ relayUrl, webappUrl, setupParams, inspectionParams, runHsetup, runCli }) {
+  // 0.2.12's server current reads the saved profile, not URL environment overrides. Its
+  // default-following service does too. Acquire through the app's read-only inspection, then
+  // select the relay using that released CLI's public command before the old app reads it.
+  await runHsetup('daemon.service.status.v1', inspectionParams);
+  runCli(['server', 'set', '--server-url', relayUrl, '--webapp-url', webappUrl, '--json']);
+  return runHsetup('setup.thisComputer.v1', setupParams);
+}
+
+/**
+ * Observe the installed Linux unit reported by the CLI, rather than its daemon ownership label.
+ * @param {{ serviceStatus: { installed?: boolean; installedPath?: string } | null; run: (command: string) => { stdout: string } }} options
+ */
+export function readSystemdState({ serviceStatus, run }) {
+  if (serviceStatus?.installed !== true || typeof serviceStatus.installedPath !== 'string' || !serviceStatus.installedPath.endsWith('.service')) {
+    throw new Error('CLI service status did not report an installed systemd unit');
+  }
+  const unit = basename(serviceStatus.installedPath);
+  return {
+    unit,
+    active: run(`systemctl --user is-active '${unit}'`).stdout.trim(),
+    enabled: run(`systemctl --user is-enabled '${unit}'`).stdout.trim(),
+  };
 }
 
 function createCompose({ projectName, envFile }) {
@@ -314,14 +343,10 @@ async function main() {
     const out = execAs(machine, `node /opt/happier-npm-e2e/bin/machine-rpc-probe.mjs --relay-url ${RELAY_URL} --machine-id '${status?.auth?.machineId ?? ''}' --server-id '${status?.server?.activeServerId ?? ''}'`, { allowFailure: true });
     return parseLastJsonObject(out.stdout);
   };
-  const systemdState = (/** @type {string} */ machine, /** @type {any} */ status) => {
-    const unit = `${status?.daemon?.serviceLabel ?? status?.service?.label ?? 'missing-service-label'}.service`;
-    return {
-      unit,
-      active: execAs(machine, `systemctl --user is-active '${unit}'`, { allowFailure: true }).stdout.trim(),
-      enabled: execAs(machine, `systemctl --user is-enabled '${unit}'`, { allowFailure: true }).stdout.trim(),
-    };
-  };
+  const systemdState = (/** @type {string} */ machine) => readSystemdState({
+    serviceStatus: parseLastJsonObject(execAs(machine, '"$HOME/.happier/bin/happier" service status --json', { allowFailure: true }).stdout),
+    run: (command) => execAs(machine, command, { allowFailure: true }),
+  });
 
   let exitCode = 0;
   try {
@@ -398,7 +423,7 @@ async function main() {
         pathCommandResolved: pathCommand ? execAs(machine, `readlink -f '${pathCommand}'`).stdout.trim() : '',
         pathVersion: execAs(machine, 'happier --version 2>/dev/null | head -n 1 || true').stdout.trim(),
         status,
-        systemd: systemdState(machine, status),
+        systemd: systemdState(machine),
         probe: probe(machine, status),
       };
       const checks = evaluateFreshSetup(observed);
@@ -410,13 +435,15 @@ async function main() {
       const machine = 'desktop2';
       log(`upgrade: desktop2 from ${baseline.desktopTag} + ${baseline.cliTag}`);
       setStage('prev');
-      // 0.2.12's setup takes no relay parameter: it sets up whatever relay the CLI reports as
-      // current, so the relay reaches it the way that version read it — the CLI's env override.
-      // Its params are exactly what that released app sent (PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG).
-      const previousSetup = await hsetup(machine, 'prev', 'setup.thisComputer.v1', PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[baseline.desktopTag], { approvePairing, serviceConsent: 'decline' }, {
-        HAPPIER_SERVER_URL: RELAY_URL,
-        HAPPIER_WEBAPP_URL: RELAY_URL,
-        HAPPIER_PUBLIC_SERVER_URL: RELAY_URL,
+      // 0.2.12's setup takes no relay parameter; select the CLI's persisted current relay first.
+      // Its setup params remain exactly what that released app sent.
+      const previousSetup = await runPredecessorSetup({
+        relayUrl: RELAY_URL,
+        webappUrl: RELAY_URL,
+        setupParams: PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[baseline.desktopTag],
+        inspectionParams,
+        runHsetup: (kind, params, env) => hsetup(machine, 'prev', kind, params, { approvePairing, serviceConsent: 'decline' }, env),
+        runCli: (args) => execAs(machine, `"$HOME/.happier/bin/happier" ${args.map((arg) => `'${arg.replaceAll("'", "'\\''")}'`).join(' ')}`),
       });
       const previousStatus = daemonStatus(machine);
       const previousProbe = probe(machine, previousStatus);
@@ -439,7 +466,7 @@ async function main() {
         newSetup,
         update,
         finalStatus,
-        systemd: systemdState(machine, finalStatus),
+        systemd: systemdState(machine),
         finalProbe: probe(machine, finalStatus),
       };
       const checks = evaluateUpgrade(observed);

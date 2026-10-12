@@ -13,10 +13,8 @@
  * up with three dead links in the first place — the exact history its own
  * docblock records.
  *
- * The Android situation is deliberately not smoothed over. There is no public
- * Play listing; `ANDROID_PLAY_URL` 404s for everyone, and the manifest says in
- * as many words not to ship it. The APK is what Android users actually use, so
- * that is what this page leads with.
+ * Google Play is the primary Android listing; the direct APK remains available.
+ * Both destinations come from the same manifest the website consumes.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -37,13 +35,13 @@ export function parseDownloadManifest(source) {
 
   return {
     desktop: manifest.desktopPlatforms.map((platform) => ({
-      label: platform.sublabel ? `${platform.label} (${platform.sublabel.replace(' · .exe installer', '').replace(' · AppImage', '')})` : platform.label,
+      label: platform.sublabel ? `${platform.label} (${platform.sublabel.replace(' · .exe installer', '')})` : platform.label,
       href: asset(platform.file),
     })),
     desktopReleases: manifest.desktopReleasesPage,
     appStore: manifest.appStoreUrl,
     androidApk: manifest.androidApkUrl,
-    androidOptIn: manifest.androidPlayTestingOptInUrl,
+    androidPlay: manifest.androidPlayUrl,
     webApp: manifest.webAppUrl,
     installUnix: manifest.installCommandUnix,
     installWindows: manifest.installCommandWindows,
@@ -70,16 +68,12 @@ terminal prints a code for a browser or phone you are already signed in on.
 
 <Cards>
   <Card title="iPhone and iPad" href="${m.appStore}" description="Happier on the App Store." />
-  <Card title="Android (APK)" href="${m.androidApk}" description="Direct download. There is no public Play listing yet." />
+  <Card title="Android" href="${m.androidPlay}" description="Happier on Google Play." />
+  <Card title="Android (APK)" href="${m.androidApk}" description="Direct download for installation outside Google Play." />
 </Cards>
 
-Android is worth a sentence of explanation. There is no public Google Play
-listing today — the Play track is closed testing, so the store page returns
-"not found" unless your Google account is already on the tester list. The APK
-above is a direct download and is how most Android users are running Happier.
-If you would rather go through Play, you can [join the testing
-programme](${m.androidOptIn}) first; the store page starts working for your
-account once you have.
+Install Happier from Google Play, or use the APK above if you prefer to install
+it directly.
 
 ## In a browser
 
@@ -99,8 +93,26 @@ session is running somewhere else.
 ${desktopRows}
 
 These stable links always resolve to the current release. Every immutable build
-is listed on the [releases page](${m.desktopReleases}) if you need an older one
-or a different architecture.
+is listed on the [releases page](${m.desktopReleases}), together with checksums
+and minisign signatures. Linux desktop downloads are currently x64.
+
+### Linux AppImage prerequisites
+
+Make the downloaded AppImage executable, then run it from your graphical desktop
+session. The AppImage still needs the host's EGL and OpenGL ES libraries, and
+FUSE 2 to mount itself. On Debian 13 or Ubuntu 24.04, install them with:
+
+\`\`\`bash
+sudo apt install libegl1 libgles2 libfuse2t64
+chmod +x happier-ui-desktop-linux-x86_64.AppImage
+./happier-ui-desktop-linux-x86_64.AppImage
+\`\`\`
+
+If startup reports missing \`libEGL.so.1\` or \`libGLESv2.so.2\`, the relevant
+packages are \`libegl1\` and \`libgles2\`. Debian 12 and Ubuntu 22.04 call the
+FUSE 2 library package \`libfuse2\`; keep your existing FUSE 3 installation.
+See the [AppImage FUSE guide](https://docs.appimage.org/user-guide/troubleshooting/fuse.html)
+for other distributions and systems where mounting is unavailable.
 
 Homebrew is coming for macOS, but is not published yet: once the \`happier\` cask is accepted into
 Homebrew, \`brew install --cask happier\` will install the same notarized DMG. The app keeps

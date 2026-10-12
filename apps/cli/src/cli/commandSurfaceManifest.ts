@@ -49,7 +49,7 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   {
     command: 'opencode',
     rootHelpLabel: 'happier opencode',
-    rootHelpDescription: 'Start OpenCode mode (ACP)',
+    rootHelpDescription: 'Start OpenCode mode (server-native by default)',
     allowTmux: true,
   },
   {
@@ -118,6 +118,8 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   },
   {
     command: 'attach',
+    rootHelpLabel: 'happier attach <session-id>',
+    rootHelpDescription: 'Attach a terminal to a running session',
     allowTmux: false,
   },
   {
@@ -133,6 +135,7 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
     rootHelpLabel: 'happier session',
     rootHelpDescription: 'Manage sessions and execution runs',
+    rootHelpDetail: 'create scripted sessions with happier session create --help',
   },
   {
     command: 'resume',

@@ -60,6 +60,26 @@ function makeJsonl(lines: unknown[]): string {
 }
 
 describe('ClaudeRemoteSubagentFileCollector', () => {
+  it('settles a nested native task in its owning sidechain without leaking copied XML', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-task-sidechain-'));
+    const file = join(dir, 'agent-parent.jsonl');
+    const notification = { type: 'attachment', uuid: 'nested-completion', isSidechain: true, agentId: 'parent',
+      attachment: { type: 'queued_command', commandMode: 'task-notification',
+        prompt: '<task-notification><task-id>nested</task-id><tool-use-id>nested-tool</tool-use-id><status>stopped</status><result>cancelled by user</result></task-notification>' } };
+    await writeFile(file, makeJsonl([notification, { ...notification, uuid: 'foreign', agentId: 'another-parent' }]));
+    const imported: RawJSONLines[] = [];
+    const collector = new ClaudeRemoteSubagentFileCollector({ emitImported: body => { imported.push(body); }, watchFile: () => () => {} });
+    try {
+      await collector.registerSidechainFile({ sidechainId: 'parent-tool', agentId: 'parent', filePath: file, source: 'task-tool' });
+      await collector.syncAll();
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ type: 'user', uuid: 'nested-completion', isSidechain: true, sidechainId: 'parent-tool',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'nested-tool', is_error: true }] }, toolUseResult: { status: 'cancelled' } });
+      await collector.syncAll();
+      expect(imported).toHaveLength(1);
+    } finally { collector.cleanup(); await rm(dir, { recursive: true, force: true }); }
+  });
+
   it('imports a delivered peer attachment into its owning Task sidechain instead of dropping it as a prompt root', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-peer-sidechain-'));
     const file = join(dir, 'agent-recipient.jsonl');

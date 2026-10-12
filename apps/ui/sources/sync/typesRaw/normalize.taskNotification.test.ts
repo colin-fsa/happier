@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeRawMessage } from './normalize';
 
 describe('typesRaw.normalizeRawMessage (task-notification)', () => {
-  it('drops Claude Code <task-notification> user-text messages from the main transcript', () => {
+  it('drops delivered native task-notification text while preserving copied XML as ordinary user text', () => {
     const raw: any = {
       role: 'agent',
       content: {
@@ -12,6 +12,7 @@ describe('typesRaw.normalizeRawMessage (task-notification)', () => {
           uuid: 'uuid_task_note_1',
           parentUuid: null,
           isSidechain: false,
+          origin: { kind: 'task-notification' },
           message: {
             role: 'user',
             content:
@@ -29,6 +30,10 @@ describe('typesRaw.normalizeRawMessage (task-notification)', () => {
 
     const normalized = normalizeRawMessage('msg_task_note_1', null, 1000, raw, { seq: 5 });
     expect(normalized).toBeNull();
+    const { origin: _origin, ...copiedData } = raw.content.data;
+    expect(normalizeRawMessage('copy', null, 1000, { ...raw, content: { ...raw.content, data: copiedData } })).toMatchObject({
+      role: 'user', content: { text: raw.content.data.message.content },
+    });
   });
 
   it('keeps regular user text messages', () => {

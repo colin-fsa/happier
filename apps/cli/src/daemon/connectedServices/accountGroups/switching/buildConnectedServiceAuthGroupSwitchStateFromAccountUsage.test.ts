@@ -112,6 +112,18 @@ function createMultiLimitSnapshot(profileId: string): ProviderAccountUsageSnapsh
 }
 
 describe('buildConnectedServiceAuthGroupSwitchStateFromAccountUsage', () => {
+  it.each(['usage_limit', 'manual'])('selects recovered priority quota from the persisted %s selection provenance', (lastSwitchReason) => {
+    const group = createGroup();
+    group.activeProfileId = 'fresh';
+    group.state = { lastSwitchReason, lastSwitchAt: 400 };
+    group.policy = { ...group.policy, strategy: 'priority', autoRestorePrimaryWhenReset: true, softSwitchRemainingPercent: 0 };
+    const { state } = buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
+      group, accountUsageStore: { resolveBySource: (source) => createSnapshot(source.profileId, source.profileId === 'exhausted' ? 37 : 9) },
+    });
+    expect(selectConnectedServiceAuthGroupCandidate({ ...state, nowMs: 1_000, quotaFreshnessMs: 300_000,
+      allowCurrentProfileRetry: true }).selected?.profileId).toBe(lastSwitchReason === 'usage_limit' ? 'exhausted' : 'fresh');
+  });
+
   it.each([
     { name: 'earlier weekly reset despite less headroom', left: 40, reset: 10_000, expected: 'early' },
     { name: 'headroom before urgency below the soft threshold', left: 14, reset: 10_000, expected: 'fresh' },

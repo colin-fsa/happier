@@ -1,4 +1,4 @@
-import { AGENTS_CORE, type AgentId } from '@happier-dev/agents';
+import { AGENTS_CORE, hasBuiltInAcpConfig, type AgentId } from '@happier-dev/agents';
 
 import type { ProviderScenario, ProviderUnderTest } from '../types';
 
@@ -64,6 +64,13 @@ function relaxAuggieResumeScenario(provider: ProviderUnderTest, scenario: Provid
 }
 
 export function tuneResumeScenarioForProvider(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
+  if (
+    scenario.id === 'acp_resume_fresh_session_imports_history'
+    && isAgentId(provider.id)
+    && hasBuiltInAcpConfig(provider.id)
+  ) {
+    throw new Error(`Provider ${provider.id} uses ordinary resume without native history import; this scenario requires an explicit history-import entrypoint`);
+  }
   const auggieRelaxed = relaxAuggieResumeScenario(provider, scenario);
   if (provider.id !== 'codex') return auggieRelaxed;
   return {

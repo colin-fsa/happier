@@ -316,6 +316,7 @@ describe('deriveSetupStageModel (INV3 — milestone-quantised)', () => {
     it('maps every executor failure code the setup corridor can raise', () => {
         const mapped: Readonly<Record<string, string>> = {
             service_install_blocked: 'setupSurface.blockedServiceConflictStatus',
+            service_manager_unavailable: 'setupSurface.blockedServiceManagerUnavailableStatus',
             service_consent_declined: 'setupSurface.blockedConsentDeclinedStatus',
             account_consent_declined: 'setupSurface.blockedAccountKeptStatus',
             account_changed_during_setup: 'setupSurface.blockedAccountChangedStatus',

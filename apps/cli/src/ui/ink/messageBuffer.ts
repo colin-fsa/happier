@@ -28,7 +28,7 @@ export class MessageBuffer {
      * Update the last message of a specific type by appending content to it
      * Useful for streaming responses where deltas should accumulate in one message
      */
-    updateLastMessage(contentDelta: string, type: BufferedMessage['type'] = 'assistant'): void {
+    updateLastMessage(contentDelta: string, type: BufferedMessage['type'] = 'assistant', options?: { replace?: boolean }): void {
         // Find the last message of the specified type
         for (let i = this.messages.length - 1; i >= 0; i--) {
             if (this.messages[i].type === type) {
@@ -36,7 +36,7 @@ export class MessageBuffer {
                 const oldMessage = this.messages[i];
                 const updatedMessage: BufferedMessage = {
                     ...oldMessage,
-                    content: oldMessage.content + contentDelta
+                    content: options?.replace ? contentDelta : oldMessage.content + contentDelta
                 };
                 // Replace the old message with the new one
                 this.messages[i] = updatedMessage;

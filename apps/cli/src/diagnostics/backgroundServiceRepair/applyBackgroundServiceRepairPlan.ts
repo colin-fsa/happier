@@ -1,4 +1,6 @@
 import { installDaemonService, readDaemonServicePreservedInstallOptions, uninstallDaemonService } from '@/daemon/service/installer';
+import { assertDaemonServiceCommandsAvailable } from '@/daemon/service/apply';
+import { planDaemonServiceLifecycle, planDaemonServiceUninstall } from '@/daemon/service/plan';
 
 import type {
   BackgroundServiceRepairAction,
@@ -33,6 +35,23 @@ export async function applyBackgroundServiceRepairPlan(
   const executedActions: string[] = [];
   const removedServices: BackgroundServiceRepairRemovedService[] = [];
   const attemptedDefaultInstalls: AttemptedDefaultInstall[] = [];
+
+  for (const action of plan.actions) {
+    const serviceParams = {
+      platform: runtime.platform,
+      mode: action.kind === 'remove-service' ? action.service.mode : action.mode,
+      channel: action.kind === 'remove-service' ? action.service.releaseChannel : action.releaseChannel,
+      targetMode: action.kind === 'remove-service' ? action.service.targetMode : 'default-following',
+      instanceId: action.kind === 'remove-service' ? action.service.instanceId : 'default',
+      userHomeDir: runtime.userHomeDir,
+      happierHomeDir: runtime.happierHomeDir,
+      uid: runtime.uid ?? undefined,
+    } as const;
+    const commands = action.kind === 'remove-service'
+      ? planDaemonServiceUninstall({ ...serviceParams, installedPath: action.service.installedPath }).commands
+      : planDaemonServiceLifecycle({ ...serviceParams, action: 'restart' }).commands;
+    assertDaemonServiceCommandsAvailable(commands);
+  }
 
   try {
     for (const action of plan.actions) {

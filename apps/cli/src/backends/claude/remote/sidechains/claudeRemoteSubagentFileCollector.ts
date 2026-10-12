@@ -3,6 +3,8 @@ import type { RawJSONLines } from '@/backends/claude/types';
 import { configuration } from '@/configuration';
 import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
 import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
+import { createClaudeTaskNotificationToolResultProjector, readClaudeTaskLifecycleEnvelope } from '../../taskNotifications/claudeTaskLifecycleEnvelope';
+import { isClaudeInternalTranscriptMessage } from '../../utils/isClaudeInternalTranscriptMessage';
 import type { JsonlFollowerMetricEvent } from '@/agent/localControl/jsonlFollowMetrics';
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 
@@ -70,6 +72,7 @@ type Entry = {
   createdAtMs: number;
   lastTouchedAtMs: number;
   didEmitTerminalSourceActivity: boolean;
+  taskNotificationProjector: ReturnType<typeof createClaudeTaskNotificationToolResultProjector>;
 };
 
 type PendingRegistration = {
@@ -394,6 +397,7 @@ export class ClaudeRemoteSubagentFileCollector {
         }, value, { replaySuppressor }),
       }),
       didEmitTerminalSourceActivity: false,
+      taskNotificationProjector: createClaudeTaskNotificationToolResultProjector({ sidechainId, agentId }),
     };
 
     this.entriesBySidechainId.set(params.sidechainId, entry);
@@ -481,7 +485,7 @@ export class ClaudeRemoteSubagentFileCollector {
   ): void {
     if (opts?.replaySuppressor?.shouldSuppress(value)) return;
 
-    const parsed = parseRawJsonLinesObject(value);
+    let parsed = parseRawJsonLinesObject(value);
     if (!parsed) return;
 
     const entry = this.entriesBySidechainId.get(params.sidechainId);
@@ -505,6 +509,11 @@ export class ClaudeRemoteSubagentFileCollector {
       });
       if (isDuplicate) return;
     }
+
+    const projected = entry?.taskNotificationProjector.project(parsed);
+    if (projected) parsed = projected;
+    else if (readClaudeTaskLifecycleEnvelope(parsed)?.subtype === 'task_notification'
+      || isClaudeInternalTranscriptMessage(parsed)) return;
 
     markRecordAsSidechain(parsed, params.sidechainId);
 

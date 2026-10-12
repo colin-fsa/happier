@@ -1262,6 +1262,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
         },
         quota: {
+            refreshing: '正在重新整理用量…',
             loading: '載入中…',
             error: ({ message }: { message: string }) => `錯誤：${message}`,
             lastUpdated: ({ time }: { time: string }) => `最後更新：${time}`,
@@ -3746,6 +3747,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "在 Claude Code 中顯示工作階段",
+                        subtitle: "將新的 Claude 工作階段標記為 Happier 來源，包括 Agent SDK 工作階段。關閉時保留執行環境預設值。"
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "強制啟用 Agent Teams",
                         subtitle: "在所有由 Happier 啟動的 Claude 工作階段中啟用 Claude Code 的實驗性 Agent Teams（代理群）功能。"
@@ -5675,6 +5680,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             accessibilityLabel: '顯示隱藏的使用量詳細資訊',
         },
         permissionMode: {
+            nativeModeOverrides: ({ mode }: { mode: string }) => `代理程式模式 ${mode} 優先於此權限設定。清除模式覆寫後即可使用權限設定。`,
+            usePermissionSetting: '使用權限設定',
             title: '權限模式',
             default: '預設',
             acceptEdits: '接受編輯',
@@ -8416,6 +8423,7 @@ settingsSession: {
         blockedTitle: '設定已停止',
         blockedStatusFallback: '設定未能完成。你的帳號與工作階段沒有受到影響。',
         blockedServiceConflictStatus: '需要先處理這台電腦上的另一個背景服務。它維持原狀——打開「詳細資料」可以看到是哪一個。',
+        blockedServiceManagerUnavailableStatus: 'Happier 無法在這台電腦上設定背景服務。打開「詳細資料」查看協助，或繼續使用其他機器。',
         blockedConsentDeclinedStatus: '設定已停止。這台電腦上原有的背景服務維持原狀。',
         blockedAccountKeptStatus: '設定已停止。這台電腦仍連線到它目前登入的帳號。',
         blockedAccountChangedStatus: '設定期間這台電腦登入了另一個帳號，因此設定在配對前已停止。請再試一次。',

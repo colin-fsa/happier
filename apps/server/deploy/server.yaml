@@ -1,0 +1,89 @@
+# See the Kubernetes recipe in the published Docker guide before applying.
+# Pin the SAME validated image digest here and in migrate.yaml before deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: happier-server
+spec:
+  replicas: 1
+  # No Redis fanout: avoid overlapping independent Socket.IO servers.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: happier-server
+  template:
+    metadata:
+      labels:
+        app: happier-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: server
+          image: happierdev/relay-server:preview
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef:
+                name: happier-server-config
+            - secretRef:
+                name: happier-server-env
+          ports:
+            - name: http
+              containerPort: 3005
+            - name: metrics
+              containerPort: 9090
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data
+          # Example startup allowance; tune to observed application startup.
+          # Database migrations run separately, outside this probe's lifetime.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            # Allow the server's default 15-second database readiness check.
+            timeoutSeconds: 20
+      volumes:
+        - name: runtime-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: happier-server
+spec:
+  type: ClusterIP
+  selector:
+    app: happier-server
+  ports:
+    - name: http
+      port: 3005
+      targetPort: http

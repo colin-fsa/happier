@@ -25,7 +25,7 @@ function isPidPlaceholderSessionId(value: string): boolean {
   return /^PID-\d+$/.test(value);
 }
 
-function adoptReportedHappySessionId(tracked: TrackedSession, reportedSessionId: string): string {
+export function adoptReportedHappySessionId(tracked: TrackedSession, reportedSessionId: string): string {
   const currentSessionId = normalizeNonEmptyString(tracked.happySessionId);
   if (
     tracked.startedBy === 'daemon'
@@ -42,6 +42,16 @@ function adoptReportedHappySessionId(tracked: TrackedSession, reportedSessionId:
   }
   tracked.happySessionId = reportedSessionId;
   return reportedSessionId;
+}
+
+/** Record the runner role without changing launcher custody or webhook readiness. */
+export function adoptReportedSessionRunnerIdentity(
+  tracked: TrackedSession,
+  reportedPid: number,
+  processInstanceFingerprint?: string,
+): void {
+  if (tracked.pid !== reportedPid) tracked.sessionRunnerPid = reportedPid;
+  if (processInstanceFingerprint) tracked.processInstanceFingerprint = processInstanceFingerprint;
 }
 
 function resolveParentPidLookupTimeoutMs(): number {
@@ -108,7 +118,7 @@ function findPendingWindowsTerminalTrackedSession(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
   webhookPid: number;
-  metadata: Metadata;
+  metadata: Pick<Metadata, 'startedBy' | 'terminal'>;
 }>): TrackedSession | null {
   if (params.metadata.startedBy !== 'daemon') return null;
 
@@ -132,6 +142,29 @@ function findPendingWindowsTerminalTrackedSession(params: Readonly<{
   return matches.length === 1 ? matches[0] : null;
 }
 
+/** Correlate session identity without publishing webhook readiness or promoting custody. */
+export function correlateTrackedSessionReport(params: Readonly<{
+  pidToTrackedSession: Map<number, TrackedSession>;
+  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
+  pid: number;
+  metadata: Pick<Metadata, 'startedBy' | 'terminal'>;
+  getParentPidFn?: (pid: number) => number | null;
+}>): TrackedSession | null {
+  const { pidToTrackedSession, pidToAwaiter, pid, metadata } = params;
+  const direct = pidToTrackedSession.get(pid);
+  if (direct) return direct;
+  const recordedRunner = findTrackedSessionByRunnerPid(pidToTrackedSession, pid);
+  if (recordedRunner) return recordedRunner;
+  // Only pending daemon launches perform bounded parent or hosted-tab matching.
+  if (pidToAwaiter.size === 0) return null;
+  const ppid = (params.getParentPidFn ?? getParentPid)(pid);
+  const parent = typeof ppid === 'number' ? pidToTrackedSession.get(ppid) : undefined;
+  if (parent?.startedBy === 'daemon' && (pidToAwaiter.has(parent.pid) || parent.childProcess?.pid === parent.pid)) {
+    return parent;
+  }
+  return findPendingWindowsTerminalTrackedSession({ pidToTrackedSession, pidToAwaiter, webhookPid: pid, metadata });
+}
+
 export function createOnHappySessionWebhook(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -153,21 +186,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
     onTrackedSessionReported,
   } = params;
 
-  const correlateTrackedReport = (pid: number, metadata: Metadata): TrackedSession | null => {
-    const direct = pidToTrackedSession.get(pid);
-    if (direct) return direct;
-    const recordedRunner = findTrackedSessionByRunnerPid(pidToTrackedSession, pid);
-    if (recordedRunner) return recordedRunner;
-    // Preserve the existing bounded wrapper/Windows matching policy: only
-    // pending daemon launches perform OS parent lookup or hosted-tab matching.
-    if (pidToAwaiter.size === 0) return null;
-    const ppid = getParentPidFn(pid);
-    const parent = typeof ppid === 'number' ? pidToTrackedSession.get(ppid) : undefined;
-    if (parent?.startedBy === 'daemon' && (pidToAwaiter.has(parent.pid) || parent.childProcess?.pid === parent.pid)) {
-      return parent;
-    }
-    return findPendingWindowsTerminalTrackedSession({ pidToTrackedSession, pidToAwaiter, webhookPid: pid, metadata });
-  };
+  const correlateTrackedReport = (pid: number, metadata: Metadata): TrackedSession | null =>
+    correlateTrackedSessionReport({ pidToTrackedSession, pidToAwaiter, pid, metadata, getParentPidFn });
 
   return async (sessionId: string, sessionMetadata: Metadata) => {
     const normalizedPath = expandHomeDirPath(sessionMetadata.path, process.env);
@@ -221,7 +241,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
     }
     if (trackedForPid) {
-      if (trackedForPid.pid !== pid) trackedForPid.sessionRunnerPid = pid;
+      adoptReportedSessionRunnerIdentity(trackedForPid, pid);
       adoptReportedHappySessionId(trackedForPid, sessionId);
       trackedForPid.happySessionMetadataFromLocalWebhook = normalizedMetadata;
       if (trackedForPid.startedBy !== 'daemon' && trackedForPid.reattachedFromDiskMarker) {
@@ -295,7 +315,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
       if (trackedForPid && processInstanceFingerprint) {
-        trackedForPid.processInstanceFingerprint = processInstanceFingerprint;
+        adoptReportedSessionRunnerIdentity(trackedForPid, pid, processInstanceFingerprint);
       }
 
       const storedCredentials =

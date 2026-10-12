@@ -143,6 +143,23 @@ Checklist ids are treated as stable API between daemon and app:
 - `machine-details`
 - `resume.<agentId>`
 
+### Native resume identity publication (development source)
+
+A newly allocated native id is not necessarily a resumable session. Claude's
+`SessionStart` can precede its transcript, and Codex's `thread/start` can precede
+native rollout materialization. The CLI's shared
+`session/metadata/sessionIdentityPublication.ts` rule preserves explicit existing
+resumes but publishes fresh identities only with Agent-native resume evidence:
+a matching Claude transcript, or an accepted Codex turn/native attachment
+materialization. Observed ids remain available inside the live runner for hook
+and transcript correlation while provisional.
+
+This changes publication timing, not the recorded identity format or resume
+failure policy. Established identities are retained; unavailable native state
+still fails closed without starting a replacement conversation or consuming the
+queued prompt. These are development-source contracts, not loaded-runtime or
+release validation claims.
+
 ### ACP resume (static policy, runtime negotiation)
 
 We do **not** launch an ACP subprocess merely to probe `loadSession` support in normal UI/CLI flows.
@@ -408,6 +425,7 @@ Instead:
 - let `apps/cli/src/agent/acp/catalog/**` instantiate it generically
 - when provider-owned ACP behavior needs the live Happier session, expose it through the catalog entry's `getAcpRuntimeBackendOptionsResolver`; the generic catalog runner is the single place that resolves and passes those backend options. Do not branch on the agent id in the generic runner or create a second session-notification path.
 - keep static ACP differences on the built-in ACP definition: model config-option application, permission-intent-to-agent-mode mapping, and whether Happier MCP descriptors are passed through the standard ACP request. A `null` permission mapping is an intentional no-op, not a fallback mode. When an agent ignores the standard ACP MCP field but has a native MCP config model, keep that wire fact as `drop` and use one provider-owned, process-scoped config adapter rather than disabling Happier tools or mutating the user's files.
+- For catalog ACP agents with permission-mode mappings, the backend owns applying that mapping on start, load, replay-load, and explicit mode-override clear. The runtime applies an explicit session-mode override after the initial mapping; permission-triggered restarts preserve that precedence. Clearing uses the latest permission intent through the same mapping function, with failures handled by the existing override synchronizer. A null mapping retains provider policy. The UI reuses negotiated mode metadata to describe the reported native policy separately from selected permission intent and pending overrides.
 
 Configured user-defined ACP backends/presets do not become `AgentId`s.
 They live in:

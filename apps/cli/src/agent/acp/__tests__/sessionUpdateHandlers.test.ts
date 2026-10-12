@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { AgentMessage } from '@/agent/core';
+import { normalizeToolCallV2 } from '@/agent/tools/normalization';
+
 import type { HandlerContext, SessionUpdate } from '../sessionUpdateHandlers';
 import { handleToolCall, handleToolCallUpdate, markToolCallRunningAfterPermission } from '../sessionUpdateHandlers';
 import { DefaultTransport, defaultTransport } from '../../transport';
@@ -135,6 +138,43 @@ describe('sessionUpdateHandlers tool call tracking', () => {
       _acp: { kind: 'execute' },
     });
   });
+
+  it.each([undefined, null, ''])(
+    'does not promote a user-owned deferred wrapper title when the ACP title is %s',
+    (title) => {
+      const ctx = createCtx();
+      const rawInput = {
+        toolName: 'Bash',
+        params: { command: 'echo user-owned-data' },
+        _acp: { title: 'DeferExecuteTool' },
+      };
+
+      handleToolCall({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'call_user_owned_title',
+        status: 'completed',
+        kind: 'other',
+        title,
+        rawInput,
+      }, ctx);
+
+      const toolCall: AgentMessage | undefined = ctx.emitted.find((message) => message.type === 'tool-call');
+      if (toolCall?.type !== 'tool-call') throw new Error('expected tool-call');
+      const normalized = normalizeToolCallV2({
+        protocol: 'acp',
+        provider: 'codebuddy',
+        toolName: toolCall.toolName,
+        rawInput: toolCall.args,
+      });
+
+      expect(normalized.canonicalToolName).toBe('other');
+      expect(normalized.input).toMatchObject({
+        toolName: 'Bash',
+        params: rawInput.params,
+        _acp: { kind: 'other', rawInput },
+      });
+    },
+  );
 
   it('includes _acp metadata on successful tool results even when output is a primitive', () => {
     const ctx = createCtx();

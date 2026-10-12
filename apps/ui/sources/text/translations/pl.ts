@@ -2646,6 +2646,7 @@ export const pl: TranslationStructure = {
       },
     },
     quota: {
+      refreshing: "Odświeżanie użycia…",
       loading: "Ładowanie…",
       error: ({ message }: { message: string }) => `Błąd: ${message}`,
       lastUpdated: ({ time }: { time: string }) => `Ostatnia aktualizacja: ${time}`,
@@ -4135,6 +4136,10 @@ export const pl: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Pokaż sesje w Claude Code",
+                        subtitle: "Używaj identyfikacji Happier dla nowych sesji Claude, także z Agent SDK. Wyłączenie zachowuje domyślne ustawienia środowiska."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Wymuś włączenie Agent Teams",
                         subtitle: "Włącza eksperymentalne Agent Teams w Claude Code (rój agentów) we wszystkich sesjach Claude uruchamianych przez Happier."
@@ -4323,6 +4328,7 @@ export const pl: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6565,7 +6571,9 @@ export const pl: TranslationStructure = {
     fxSessionId: "ID sesji FX",
     fxSessionIdCopied: "ID sesji FX skopiowane do schowka",
     droidSessionId: "ID sesji Factory Droid",
+    codebuddySessionId: "ID sesji CodeBuddy",
     droidSessionIdCopied: "ID sesji Factory Droid skopiowane do schowka",
+    codebuddySessionIdCopied: "ID sesji CodeBuddy skopiowane do schowka",
     customAcpSessionId: "ID sesji niestandardowego ACP",
     grokSessionId: "ID sesji Grok",
     grokSessionIdCopied: "ID sesji Grok skopiowane do schowka",
@@ -6784,6 +6792,8 @@ export const pl: TranslationStructure = {
     permissionMode: {
       title: "TRYB UPRAWNIEŃ",
       effectiveLabel: ({ label }: { label: string }) => `Obowiązuje: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `Tryb agenta ${mode} ma pierwszeństwo przed tym ustawieniem uprawnień. Usuń wybór trybu, aby użyć ustawienia uprawnień.`,
+            usePermissionSetting: 'Użyj ustawienia uprawnień',
       default: "Domyślny",
       readOnly: "Tylko do odczytu",
       acceptEdits: "Akceptuj edycje",
@@ -6814,6 +6824,7 @@ export const pl: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "Custom ACP",
       pi: "Pi",
       copilot: "Copilot",
@@ -10394,6 +10405,7 @@ settingsSession: {
     blockedTitle: 'Konfiguracja zatrzymana',
     blockedStatusFallback: 'Konfiguracja nie mogła się zakończyć. Twoje konto i sesje pozostają nienaruszone.',
     blockedServiceConflictStatus: 'Najpierw trzeba rozwiązać sprawę innej usługi w tle na tym komputerze. Została bez zmian — otwórz Szczegóły, aby zobaczyć którą.',
+    blockedServiceManagerUnavailableStatus: 'Happier nie może skonfigurować usługi w tle na tym komputerze. Otwórz Szczegóły, aby uzyskać pomoc, lub korzystaj dalej z innych maszyn.',
     blockedConsentDeclinedStatus: 'Konfiguracja została zatrzymana. Usługa w tle, która już tu była, została dokładnie taka, jaka była.',
     blockedAccountKeptStatus: 'Konfiguracja została zatrzymana. Ten komputer pozostaje połączony z kontem, na którym jest zalogowany.',
     blockedAccountChangedStatus: 'Podczas konfiguracji ten komputer zalogował się na inne konto, więc konfiguracja zatrzymała się przed parowaniem. Spróbuj ponownie.',
@@ -11265,6 +11277,7 @@ settingsSession: {
       agySubtitleExperimental: "Antigravity CLI (eksperymentalne)",
       fxSubtitleExperimental: "FX CLI (eksperymentalne)",
       droidSubtitleExperimental: "Factory Droid CLI (eksperymentalne)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (eksperymentalne)",
       customAcpSubtitleExperimental: "Niestandardowy ACP CLI (eksperymentalne)",
       grokSubtitleExperimental: "Grok Build CLI (eksperymentalne)",
       piSubtitleExperimental: "Pi CLI (eksperymentalne)",

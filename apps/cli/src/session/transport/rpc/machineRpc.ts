@@ -20,7 +20,7 @@ import { markRpcRequestDisposition } from './rpcRequestDisposition';
  * Calls exactly one account-scoped machine RPC against exactly the machine id it
  * is given. The caller owns retry policy; this boundary has no timeout redrive.
  */
-async function callExactMachineRpc(params: Readonly<{
+export async function callExactMachineRpc(params: Readonly<{
   credentials: Credentials;
   machineId: string;
   method: string;

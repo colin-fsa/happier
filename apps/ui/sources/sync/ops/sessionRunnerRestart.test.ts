@@ -50,6 +50,7 @@ describe('sessionRunnerRestart', () => {
                 kind: 'session.write',
                 sessionId: 's1',
             },
+            timeoutMs: expect.any(Number),
         });
     });
 
@@ -87,6 +88,7 @@ describe('sessionRunnerRestart', () => {
                 kind: 'session.write',
                 sessionId: 's1',
             },
+            timeoutMs: expect.any(Number),
         });
     });
 
@@ -121,6 +123,12 @@ describe('sessionRunnerRestart', () => {
             status: 'not_tracked',
             sessionId: 's1',
         }, 's1')).toEqual({ ok: false, status: 'ineligible', sessionId: 's1' });
+
+        expect(normalizeRestartSessionRunnerResult({
+            ok: false,
+            status: 'not_found',
+            sessionId: 's1',
+        }, 's1')).toEqual({ ok: false, status: 'ineligible', sessionId: 's1', error: 'not_found' });
 
         expect(normalizeRestartSessionRunnerResult({
             ok: false,
@@ -373,6 +381,36 @@ describe('restartStaleSessionRunnerWithObserve', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
         });
+    });
+
+    it.each([
+        { label: 'runner_identity_changed', result: { ok: false as const, status: 'runner_identity_changed' as const, sessionId: 's1' } },
+        { label: 'not_found', result: { ok: false as const, status: 'ineligible' as const, sessionId: 's1', error: 'not_found' } },
+    ])('observes a replayed restart answered with $label after the original restart already landed', async ({ result }) => {
+        const { restartStaleSessionRunnerWithObserve } = await import('./sessionRunnerRestart');
+        const restart = vi.fn(async () => result);
+        const getStatus = vi.fn(async () => makeRuntimeState({ versionState: 'current', pid: 456 }));
+
+        await expect(restartStaleSessionRunnerWithObserve(baseRequest, {
+            restart,
+            getStatus,
+            sleep: async () => {},
+            observeAttempts: 2,
+            observeIntervalMs: 0,
+        })).resolves.toEqual({ ok: true, status: 'restarted', sessionId: 's1' });
+    });
+
+    it('does not observe ineligible results other than a missing runner', async () => {
+        const { restartStaleSessionRunnerWithObserve } = await import('./sessionRunnerRestart');
+        const ineligible = { ok: false as const, status: 'ineligible' as const, sessionId: 's1' };
+        const getStatus = vi.fn(async () => null);
+
+        await expect(restartStaleSessionRunnerWithObserve(baseRequest, {
+            restart: async () => ineligible,
+            getStatus,
+            sleep: async () => {},
+        })).resolves.toEqual(ineligible);
+        expect(getStatus).not.toHaveBeenCalled();
     });
 
     it('preserves the failure when the runner never restarts within the observe window', async () => {

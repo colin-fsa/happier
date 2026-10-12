@@ -12,6 +12,7 @@ import {
     CONNECTED_SERVICE_POOL_QUOTA_LIMIT_SELECTION_QUERY_KEY,
     CONNECTED_SERVICE_POOL_EXPIRY_FIRST_QUERY_KEY,
     CONNECTED_SERVICE_AUTH_GROUP_READER_CAPABILITY_QUERY_VALUE,
+    CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER,
     type ConnectedServiceAuthGroupV1,
     type ConnectedServiceAuthGroupReaderCapabilitiesQueryV1,
     readConnectedServiceManualActiveProfileRuntimeBlocker,
@@ -54,6 +55,7 @@ import {
     createAuthGroupMemberAndBumpGenerationInTx,
     deleteAuthGroupMemberAndBumpGenerationInTx,
     encodePolicyForStorage,
+    encodeAuthGroupStateForActiveProfile,
     findAuthGroupForAccount,
     findAuthGroupWithStoredActiveProfileForAccount,
     hasConnectedServiceProfile,
@@ -453,11 +455,20 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
             })
             : null;
         const changesActiveProfile = activeProfileMutation?.changesActiveProfile === true;
+        const nextActiveStateJson = activeProfileMutation === null ? null : encodeAuthGroupStateForActiveProfile({
+            currentStateJson: stringifyAuthGroupState(existing.state),
+            previousActiveProfileId: existingRecord.storedActiveProfileId,
+            nextActiveProfileId: activeProfileMutation.nextActiveProfileId,
+            switchReason: "manual",
+        });
+        const changesSwitchProvenance = nextActiveStateJson !== null
+            && activeProfileMutation?.nextActiveProfileId !== null
+            && existing.state.lastSwitchReason !== "manual";
         const existingPolicyJson = encodePolicyForStorage(existing.policy);
         const nextPolicyJson = encodePolicyForStorage(policy);
         const changesPolicy = request.body.policy !== undefined
             && existingPolicyJson !== nextPolicyJson;
-        const changesGeneration = changesActiveProfile || changesPolicy;
+        const changesGeneration = changesActiveProfile || changesPolicy || changesSwitchProvenance;
         if (
             generationSensitivePatch
             && request.body.expectedGeneration !== existing.generation
@@ -469,6 +480,7 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 ...(request.body.displayName !== undefined ? { displayName: request.body.displayName } : {}),
                 ...(request.body.policy !== undefined ? { policyJson: nextPolicyJson } : {}),
                 ...(changesActiveProfile && activeProfileMutation !== null ? { activeProfileId: activeProfileMutation.nextActiveProfileId } : {}),
+                ...((changesActiveProfile || changesSwitchProvenance) && nextActiveStateJson !== null ? { stateJson: nextActiveStateJson } : {}),
                 ...(changesGeneration ? { generation: { increment: 1 } } : {}),
             };
             if (changesGeneration) {
@@ -573,8 +585,12 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
             const changedMemberStates = memberStates.filter((member) => (
                 hasMemberRuntimeStateChanged(memberStateJsonByProfileId.get(member.profileId) ?? null, member.state)
             ));
-            const groupStateChanged = request.body.state !== undefined
-                && hasGroupRuntimeStateChanged(group.stateJson, request.body.state);
+            const nextGroupStateJson = request.body.state === undefined ? null : encodeAuthGroupStateForActiveProfile({
+                currentStateJson: group.stateJson, nextState: request.body.state,
+                previousActiveProfileId: null, nextActiveProfileId: null,
+            });
+            const groupStateChanged = nextGroupStateJson !== null
+                && hasGroupRuntimeStateChanged(group.stateJson, JSON.parse(nextGroupStateJson));
             const runtimeStateChanged = groupStateChanged || changedMemberStates.length > 0;
             if (runtimeStateChanged && request.body.expectedGeneration === undefined) {
                 return { type: "generation-required" as const };
@@ -602,8 +618,8 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                     data: {
                         updatedAt: new Date(),
                         runtimeStateRevision: { increment: 1 },
-                        ...(groupStateChanged && request.body.state !== undefined
-                            ? { stateJson: stringifyAuthGroupState(request.body.state) }
+                        ...(groupStateChanged && nextGroupStateJson !== null
+                            ? { stateJson: nextGroupStateJson }
                             : {}),
                     },
                 });
@@ -827,7 +843,7 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
         const result = await inTx(async (tx) => {
             const group = await tx.connectedServiceAuthGroup.findUnique({
                 where: { accountId_vendor_groupId: { accountId: request.userId, vendor: serviceId, groupId } },
-                select: { id: true, activeProfileId: true, generation: true },
+                select: { id: true, activeProfileId: true, generation: true, stateJson: true },
             });
             if (!group) return { type: "not-found" as const };
             const member = await tx.connectedServiceAuthGroupMember.findUnique({
@@ -849,13 +865,23 @@ export function registerConnectedServiceAuthGroupRoutesV3(app: Fastify): void {
                 storedActiveProfileId: group.activeProfileId,
                 requestedActiveProfileId: request.body.profileId,
             });
-            if (!activeProfileMutation.changesActiveProfile) {
+            const requestedReason = request.headers[CONNECTED_SERVICE_AUTH_GROUP_SWITCH_REASON_HEADER];
+            const switchReason = typeof requestedReason === "string"
+                && ["usage_limit", "rate_limit", "capacity", "temporary_throttle", "soft_threshold", "same_provider_account_exhausted", "auth_expired", "account_changed", "refresh_failed"].includes(requestedReason)
+                ? requestedReason : "manual";
+            const nextStateJson = encodeAuthGroupStateForActiveProfile({
+                currentStateJson: group.stateJson,
+                previousActiveProfileId: group.activeProfileId,
+                nextActiveProfileId: activeProfileMutation.nextActiveProfileId,
+                switchReason,
+            });
+            if (!activeProfileMutation.changesActiveProfile && group.stateJson === nextStateJson) {
                 return { type: "success" as const };
             }
 
             const update = await tx.connectedServiceAuthGroup.updateMany({
                 where: { id: group.id, generation: expectedGeneration },
-                data: { activeProfileId: activeProfileMutation.nextActiveProfileId, generation: { increment: 1 } },
+                data: { activeProfileId: activeProfileMutation.nextActiveProfileId, stateJson: nextStateJson, generation: { increment: 1 } },
             });
             if (update.count !== 1) {
                 const current = await tx.connectedServiceAuthGroup.findUnique({

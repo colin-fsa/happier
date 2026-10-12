@@ -79,7 +79,7 @@ All three hosts work. **Auto** takes `tmux` when it is installed and falls back 
 All three hosts are attachable: `happier attach <session-id>` drops you into the same tmux window, zellij pane, or Herdr pane the app is driving.
 
 <Callout type="info">
-  Herdr support and same-pane Claude unified execution are available in current development builds; they are not yet a released contract.
+  Herdr support and same-pane Claude unified execution are available in Happier CLI 0.2.16 and later, including stable releases.
 </Callout>
 
 With Herdr selected, an app-created unified session puts the Happier runner and its Claude child in one Herdr pane. If `happier claude` starts inside an existing Herdr pane, Happier reuses that pane too instead of creating another provider pane. The Happier wrapper owns the Claude child process; a user-owned Herdr pane remains intact when the session stops.

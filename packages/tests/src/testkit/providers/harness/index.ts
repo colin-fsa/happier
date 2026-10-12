@@ -1092,7 +1092,16 @@ async function runOneScenario(params: {
 	          }
 
           if (
-            scenarioSatisfiedByTrace(relevant as any, satisfactionScenario) &&
+            scenarioSatisfiedByTrace(relevant as any, satisfactionScenario,
+              params.phase === 'phase1' && scenario.resume && scenario.permissionAutoDecision !== 'abort'
+                ? {
+                    providerProtocol: provider.protocol,
+                    allowInFlightSteer: steps[stepIndex]?.allowInFlightSteer,
+                    decodedMessagesSeen,
+                    taskCompleteCountAtStepSatisfaction: taskCompleteCountAtCurrentStepStart,
+                  }
+                : undefined,
+            ) &&
             scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfactionScenario)
           ) {
             const postSatisfy = scenario.postSatisfy;

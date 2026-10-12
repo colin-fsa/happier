@@ -5,7 +5,7 @@ import {
 } from '@happier-dev/protocol';
 import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
 import { logger } from '@/ui/logger';
-import { parseClaudeTaskNotificationXml } from '../taskNotifications/claudeTaskNotificationXml';
+import { readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 
 import {
   normalizeResultPreview,
@@ -716,17 +716,16 @@ function parseSubagentToolResult(
 }
 
 /**
- * Parse the `<task-notification>` XML Claude Code persists when a backgrounded Workflow/Task
- * completes. Real persisted rows can arrive as `user` text, `queue-operation.content`, or a
- * `queued_command` attachment prompt. It routes to the run through `<tool-use-id>`.
+ * Read delivered native task notifications through the shared transcript envelope owner.
  */
 function parseTaskNotificationMessage(message: Record<string, unknown>): TaskLifecycleFact | null {
-  const parsed = parseClaudeTaskNotificationXml(message);
-  if (!parsed) return null;
+  if (message.type === 'system') return null;
+  const parsed = readClaudeTaskLifecycleEnvelope(message);
+  if (parsed?.subtype !== 'task_notification') return null;
   // Without a tool-use-id there is no correlation hook; do not synthesize a run.
   if (!parsed.toolUseId) return null;
 
-  const status = normalizeClaudeActivityStatusSignal(parsed.status, 'task_notification');
+  const status = parsed.status;
   const summary = normalizeSummary(parsed.summary);
   const resultPreview = normalizeResultPreview(parsed.result ?? parsed.summary);
 

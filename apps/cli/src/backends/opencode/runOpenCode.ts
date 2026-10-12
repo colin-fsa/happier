@@ -1,7 +1,7 @@
 /**
  * OpenCode CLI Entry Point
  *
- * Runs the OpenCode agent through Happier CLI using ACP.
+ * Runs the OpenCode agent through Happier CLI using the selected server-native or ACP backend.
  */
 
 import type { PermissionMode } from '@/api/types';

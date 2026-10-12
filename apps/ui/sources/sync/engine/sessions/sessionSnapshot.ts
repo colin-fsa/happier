@@ -1267,7 +1267,10 @@ export async function fetchAndApplySessions(params: {
     request?: (path: string, init: RequestInit) => Promise<Response>;
     applySessions: (sessions: HydratedSession[]) => void;
     onSnapshotFetched?: (sessionIds: string[]) => void;
-    applySessionListRenderables?: (sessions: SessionListRenderableSession[], options?: { replace?: boolean }) => void;
+    applySessionListRenderables?: (
+        sessions: SessionListRenderableSession[],
+        options?: { replace?: boolean; coversWholeList?: boolean },
+    ) => void;
     cachedSessionListEntries?: Record<string, SessionListCacheEntryV1>;
     getCurrentSessionListRenderable?: CurrentSessionListRenderableLookup;
     applySessionListRenderablePatches?: (patches: readonly SessionListRenderablePatch[]) => void;
@@ -1328,10 +1331,16 @@ export async function fetchAndApplySessions(params: {
     };
 
     let cursor: string | null = params.sessionListCursor ?? null;
+    const startedFromListHead = cursor === null;
     const seenCursors = new Set<string>();
     let fetchedPages = 0;
     let nextCursorForMore: string | null = cursor;
     let hasNextForMore = false;
+    // Whether the server explicitly reported the end of the last fetched page. Missing or
+    // malformed pagination metadata proves no coverage. Whole-list coverage also requires starting at the list
+    // head and a v2 source: the `/v1/sessions` fallback is capped server-side yet reports no
+    // further page. Anything unproven fails closed and retains omitted rows.
+    let serverReportedListEnd = false;
     let source: 'v2' | 'v1' = 'v2';
     const buildFetchResult = (): SessionListFetchResult => ({
         sessionIds: sessions.map((session) => session.id),
@@ -1403,6 +1412,7 @@ export async function fetchAndApplySessions(params: {
                 nextCursor = page.nextCursor;
                 nextCursorForMore = page.nextCursor;
                 hasNextForMore = page.hasNext === true && typeof page.nextCursor === 'string' && page.source === 'v2';
+                serverReportedListEnd = page.hasNext === false;
             },
         );
 
@@ -1519,7 +1529,10 @@ export async function fetchAndApplySessions(params: {
                 requiredRows: requiredSnapshotRows,
                 backgroundRows: countBackgroundRows(renderables.length, requiredSnapshotRows),
             },
-            () => params.applySessionListRenderables!(renderables, { replace: true }),
+            () => params.applySessionListRenderables!(renderables, {
+                replace: true,
+                coversWholeList: startedFromListHead && source === 'v2' && serverReportedListEnd,
+            }),
         );
         recordFirstUsableListTelemetry({
             snapshotStartedAtMs,

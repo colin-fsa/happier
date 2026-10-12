@@ -1,32 +1,31 @@
 # Deployment
 
-This document describes how to deploy the Happier backend (`apps/server`) and the infrastructure it expects.
+This document records the server implementation behind deployment. Operator recipes and configuration are owned by the published [self-hosting guide](../apps/docs/content/docs/self-hosting/index.mdx), including [Docker and Kubernetes](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes).
 
 ## Runtime overview
-- **App server:** Node.js running `tsx ./sources/main.ts` (Fastify + Socket.IO).
-- **Database:** Postgres via Prisma.
-- **Cache:** Redis (currently used for connectivity and future expansion).
-- **Object storage:** S3-compatible storage for user-uploaded assets (MinIO works).
+- **App server:** Fastify + Socket.IO. Published `relay-server` images run the packaged server binary and embed the web UI; source-based `server` images use the repository start script.
+- **Database:** selected independently by `HAPPIER_DB_PROVIDER`; prebuilt images include SQLite and Postgres.
+- **Socket fanout:** in-memory by default; optional Redis Streams for multiple API replicas and split workers.
+- **Files:** S3-compatible storage or local disk, selected by `HAPPIER_FILES_BACKEND`.
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
-## Required services
+## Services for the full Postgres/S3 recipe
 1. **Postgres**
-   - Required for all persisted data.
+   - Owns persisted data in this recipe; light SQLite deployments use persistent local storage instead.
    - Configure via `DATABASE_URL`.
 
 2. **Redis**
-   - Required by startup (`redis.ping()` is called).
-   - Configure via `REDIS_URL`.
+   - Optional for one `SERVER_ROLE=all` process. Startup pings Redis only when the Redis socket adapter is enabled.
+   - Multi-replica API and split-worker deployments need `REDIS_URL` and `HAPPIER_SOCKET_ADAPTER=redis-streams`, plus load-balancer affinity for HTTP polling.
 
 3. **S3-compatible storage**
    - Used for avatars and other uploaded assets.
    - Configure via `S3_HOST`, `S3_PORT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_PUBLIC_URL`, `S3_USE_SSL`.
 
 ## Environment variables
-**Required**
+**Required for the full Postgres/S3 recipe**
 - `DATABASE_URL`: Postgres connection string.
 - `HANDY_MASTER_SECRET`: master key for auth tokens and server-side encryption.
-- `REDIS_URL`: Redis connection string.
 - `S3_HOST`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_PUBLIC_URL`: object storage config.
 
 **Common**
@@ -90,19 +89,19 @@ Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
 - The server entrypoint (`apps/server/scripts/run-server.sh`) runs `prisma migrate deploy` on startup by default (set `RUN_MIGRATIONS=0` to disable). On Postgres, it retries on advisory-lock contention.
-- Health-managed and multi-replica deployments should run `run-server --migrate-only` as a single pre-deploy operation, then start API and worker replicas with `RUN_MIGRATIONS=0`. The migration command exits before server startup and explicitly overrides `RUN_MIGRATIONS=0`.
+- Health-managed and multi-replica deployments should run `/opt/happier/server/happier-server-migrate` from the prebuilt image as a single pre-deploy operation, then start API and worker replicas with `RUN_MIGRATIONS=0`. For source-based `server` images, use `run-server --migrate-only`. Both operations exit before server startup.
 - PostgreSQL advisory locks serialize concurrent migrators but cannot preserve a migration when the owning container is terminated. The pre-deploy operation's lifetime and timeout must be independent from application startup health checks.
 - If the platform cannot block application rollout on a pre-deploy operation, use exactly one API migration owner (`RUN_MIGRATIONS=1`), disable migrations on all workers and other replicas, and configure start-first rollout, rollback on failure, and a health startup grace long enough for the largest expected migration. Separate auto-deploy webhooks are not an ordering mechanism.
 
 ## Kubernetes manifests
-Example manifests live in `apps/server/deploy`:
-- `handy.yaml`: Deployment + Service + ExternalSecrets for the server.
-- `happy-redis.yaml`: Redis StatefulSet + Service + ConfigMap.
+The canonical [Kubernetes recipe](../apps/docs/content/docs/self-hosting/docker.mdx#kubernetes) explains the examples in `apps/server/deploy`:
 
-The deployment config expects:
-- Prometheus scraping annotations on port `9090`.
-- A secret named `handy-secrets` populated by ExternalSecrets.
-- A service mapping port `3000` to container port `3005`.
+- `config.yaml`: explicit full/Postgres/S3, memory-adapter, single-process configuration.
+- `migrate.yaml`: one pre-deploy Job using the packaged migrator; create and await it before rollout.
+- `server.yaml`: one `Recreate` Deployment and a Service on `3005`; numeric UID/GID 1000, startup/liveness `/health`, database readiness `/ready`.
+- `happy-redis.yaml`: optional private-network Redis example for multi-replica deployments; not a default dependency.
+
+Both migrator and server consume `happier-server-config` and `happier-server-env`; no External Secrets CRD is required. Pin the same validated image digest in both manifests. The metrics listener on `9090` supplies worker probes but is not exposed through the API Service. Database and S3 data are external; the pod's `/data` is temporary in this recipe and must be replaced by retained storage for SQLite or local files.
 
 ## Local dev helpers
 The server package includes scripts for local infrastructure:

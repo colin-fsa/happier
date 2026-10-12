@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join } from 'node:path';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
-import { createExecutableShim } from '@/testkit/fs/executableShim';
+import { createExecutableShim, writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 const envKeys = ['PATH', 'HAPPIER_OPENCODE_PATH', 'HAPPIER_OPENCODE_CLI_GENERATION', 'HAPPIER_HOME_DIR'] as const;
@@ -76,6 +76,28 @@ describe('opencodeDaemonSpawnHooks.validateSpawn', () => {
     const { opencodeDaemonSpawnHooks } = await import('./spawnHooks');
     const res = await opencodeDaemonSpawnHooks.validateSpawn!({});
     expect(res.ok).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('finds a user-local installation when the daemon PATH omits it', async () => {
+    const homeDir = await createTempDir('happier-opencode-spawnhooks-home-');
+    tempDirs.add(homeDir);
+    const binPath = await writeExecutableShim({
+      dir: join(homeDir, '.local', 'bin'),
+      fileName: 'opencode',
+      contents: '#!/bin/sh\necho ok\n',
+    });
+    const environmentVariables = {
+      HOME: homeDir,
+      PATH: '',
+      HAPPIER_HOME_DIR: homeDir,
+    };
+
+    const { opencodeDaemonSpawnHooks } = await import('./spawnHooks');
+    const res = await opencodeDaemonSpawnHooks.validateSpawn!({ environmentVariables });
+    expect(res.ok).toBe(true);
+
+    const { resolveOpenCodeCliLaunchSpec } = await import('../utils/resolveOpenCodeCliCommand');
+    expect(resolveOpenCodeCliLaunchSpec(environmentVariables).command).toBe(binPath);
   });
 
   it('allows the released opencode command when V2 is selected', async () => {

@@ -1,0 +1,38 @@
+# Create one Job for each deployment; do not apply this with the API Deployment.
+# Use the same pinned image and environment as server.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: happier-server-migrate-
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: happierdev/relay-server:preview
+          command: [/opt/happier/server/happier-server-migrate]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef:
+                name: happier-server-config
+            - secretRef:
+                name: happier-server-env
+          volumeMounts:
+            - name: runtime-data
+              mountPath: /data
+      volumes:
+        - name: runtime-data
+          emptyDir: {}

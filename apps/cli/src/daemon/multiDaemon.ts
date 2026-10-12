@@ -11,6 +11,7 @@ import {
   DaemonLocallyPersistedStateSchema,
   readSettings,
   resolveDaemonStateCandidatePathsForCurrentLifecycle,
+  reclaimDeadDaemonPublication,
 } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { DaemonStopIncompleteError, inspectDaemonLockStartupProgress, inspectPublishedDaemonPresence, observePublishedDaemonOwner } from './controlClient';
@@ -403,11 +404,16 @@ export async function stopAllDaemonsBestEffort(opts: StopDaemonOptions = {}): Pr
             reason: startup.status === 'starting' ? 'startup_in_progress' : 'process_identity_unverified',
             pid: startup.pid,
           });
+        } else {
+          await reclaimDeadDaemonPublication({ stateFile: statePath });
         }
         continue;
       }
       const observation = observePublishedDaemonOwner(state, `${statePath}.lock`);
-      if (!await observation.isPresent()) continue;
+      if (!await observation.isPresent()) {
+        await observation.reclaimIfDead();
+        continue;
+      }
       if (!await stopDaemonViaHttpBestEffort(state, opts)) {
         incomplete ??= new DaemonStopIncompleteError({ reason: 'control_client_failure', pid: state.pid });
         continue;
@@ -417,6 +423,7 @@ export async function stopAllDaemonsBestEffort(opts: StopDaemonOptions = {}): Pr
         incomplete ??= new DaemonStopIncompleteError({ reason: 'graceful_stop_unconfirmed', pid: state.pid });
         continue;
       }
+      await observation.reclaimIfDead();
       stoppedCount += 1;
       if (observation.hasHiddenPid()) hiddenPublicationPaths.add(statePath);
     }

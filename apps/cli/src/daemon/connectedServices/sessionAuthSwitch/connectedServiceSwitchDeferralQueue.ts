@@ -29,7 +29,7 @@ type ConnectedServiceSwitchRequest = Readonly<{
   policy: ConnectedServiceSwitchDeferralPolicy;
   source: ConnectedServiceSwitchSource;
   target: ConnectedServiceSwitchTarget;
-  runSwitch: () => Promise<void>;
+  runSwitch: () => Promise<unknown>;
 }>;
 
 type ConnectedServiceSwitchDeferralQueueParams = Readonly<{
@@ -40,7 +40,7 @@ type ConnectedServiceSwitchDeferralQueueParams = Readonly<{
 }>;
 
 type DeferredRequest = Readonly<{
-  resolve: () => void;
+  resolve: (result: unknown) => void;
   reject: (error: unknown) => void;
 }>;
 
@@ -49,7 +49,7 @@ type PendingSwitch = {
   policy: ConnectedServiceSwitchDeferralPolicy;
   source: ConnectedServiceSwitchSource;
   target: ConnectedServiceSwitchTarget;
-  runSwitch: () => Promise<void>;
+  runSwitch: () => Promise<unknown>;
   requestedAtMs: number;
   timer: ReturnType<typeof setTimeout> | null;
   requests: DeferredRequest[];
@@ -96,7 +96,9 @@ function normalizeTarget(target: ConnectedServiceSwitchTarget): ConnectedService
   };
 }
 
-function isSameTarget(a: ConnectedServiceSwitchTarget, b: ConnectedServiceSwitchTarget): boolean {
+export function isSameConnectedServiceSwitchTarget(a: ConnectedServiceSwitchTarget, b: ConnectedServiceSwitchTarget): boolean {
+  a = normalizeTarget(a);
+  b = normalizeTarget(b);
   return a.serviceId === b.serviceId
     && a.profileId === b.profileId
     && a.groupId === b.groupId
@@ -123,26 +125,26 @@ function shouldReplacePending(input: Readonly<{
 }
 
 function createDeferredPromise(): Readonly<{
-  promise: Promise<void>;
+  promise: Promise<unknown>;
   request: DeferredRequest;
 }> {
-  let resolve: (() => void) | null = null;
+  let resolve: ((result: unknown) => void) | null = null;
   let reject: ((error: unknown) => void) | null = null;
-  const promise = new Promise<void>((promiseResolve, promiseReject) => {
+  const promise = new Promise<unknown>((promiseResolve, promiseReject) => {
     resolve = promiseResolve;
     reject = promiseReject;
   });
   return {
     promise,
     request: {
-      resolve: () => resolve?.(),
+      resolve: (result) => resolve?.(result),
       reject: (error) => reject?.(error),
     },
   };
 }
 
 export type ConnectedServiceSwitchDeferralQueue = Readonly<{
-  requestSwitch: (input: ConnectedServiceSwitchRequest) => Promise<void>;
+  requestSwitch: (input: ConnectedServiceSwitchRequest) => Promise<unknown>;
   recordTurnLifecycleEvent: (input: Readonly<{ sessionId: string; event: ConnectedServiceTurnLifecycleEvent }>) => void;
   isTurnInFlight: (sessionId: string) => boolean;
   getTurnLifecycleState: (sessionId: string) => Readonly<{
@@ -186,7 +188,7 @@ export function createConnectedServiceSwitchDeferralQueue(
     pending.timer = null;
   };
 
-  const settlePending = (pending: PendingSwitch, action: 'resolve' | 'reject', error?: unknown): void => {
+  const settlePending = (pending: PendingSwitch, action: 'resolve' | 'reject', result?: unknown): void => {
     if (pending.settled) return;
     pending.settled = true;
     clearPendingTimer(pending);
@@ -195,9 +197,9 @@ export function createConnectedServiceSwitchDeferralQueue(
     pending.requests.length = 0;
     for (const request of requests) {
       if (action === 'resolve') {
-        request.resolve();
+        request.resolve(result);
       } else {
-        request.reject(error);
+        request.reject(result);
       }
     }
   };
@@ -230,14 +232,14 @@ export function createConnectedServiceSwitchDeferralQueue(
       }));
     }, timeoutMs);
     try {
-      await pending.runSwitch();
+      const result = await pending.runSwitch();
       if (pending.settled) return;
       emit(pending.sessionId, {
         type: 'connected_service_account_switch_deferral_completed',
         policy: pending.policy,
         reason,
       });
-      settlePending(pending, 'resolve');
+      settlePending(pending, 'resolve', result);
     } catch (error) {
       if (pending.settled) return;
       settlePending(pending, 'reject', error);
@@ -308,13 +310,12 @@ export function createConnectedServiceSwitchDeferralQueue(
     return state.inFlight !== true;
   };
 
-  const requestSwitch = async (input: ConnectedServiceSwitchRequest): Promise<void> => {
+  const requestSwitch = async (input: ConnectedServiceSwitchRequest): Promise<unknown> => {
     const sessionId = String(input.sessionId ?? '').trim();
     if (!sessionId) return;
     const target = normalizeTarget(input.target);
     if (shouldRunImmediately(input)) {
-      await input.runSwitch();
-      return;
+      return await input.runSwitch();
     }
 
     const deferred = createDeferredPromise();
@@ -343,7 +344,7 @@ export function createConnectedServiceSwitchDeferralQueue(
       return await deferred.promise;
     }
 
-    if (isSameTarget(pending.target, target)) {
+    if (isSameConnectedServiceSwitchTarget(pending.target, target)) {
       pending.requests.push(deferred.request);
       return await deferred.promise;
     }
@@ -459,6 +460,9 @@ export function createConnectedServiceSwitchDeferralQueue(
       // "terminated"/cancelled completion event — the session continues under the restart (otherwise
       // the UI shows a misleading "Account switch cancelled" right as the session restarts; see the
       // exit-143 crash RCA).
+      // An executing switch already owns retirement. Let its callback return the selected
+      // outcome to every coalesced caller instead of replacing that outcome with void on exit.
+      if (pending.executing) return;
       settlePending(pending, 'resolve');
       return;
     }

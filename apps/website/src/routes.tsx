@@ -124,7 +124,7 @@ const HOME: Route = {
         'Claude Code, Codex, OpenCode, Cursor and 9 more — in one end-to-end encrypted app, on every device, on your own subscriptions. Open-source and self-hostable.',
     ogImage: '/images/og.png',
     ogImageAlt:
-        'The Happier wordmark over the words: One client for every AI coding agent. Claude Code, Codex, OpenCode, Cursor, Gemini, Copilot and 7 more.',
+        'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/', 'webpage', 'Happier — open-source app for Claude Code, Codex & 11 more', {
             primaryImageOfPage: `${SITE}/images/og.png`,
@@ -142,7 +142,7 @@ const AGENTS_INDEX: Route = {
     ogDescription:
         'Thirteen command-line coding agents, one app on your phone, browser and desktop. Each runs on your own computer, under your own subscription or API key.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/agents', 'webpage', 'Every AI coding agent Happier runs'),
         {
@@ -175,7 +175,7 @@ const AGENT_ROUTES: Route[] = AGENTS.map((agent) => {
         ogTitle: agent.h1,
         ogDescription: agent.standfirst,
         ogImage: '/images/og.png',
-        ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+        ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
         // One WebPage node and nothing else. The capability ItemList that used
         // to be here was generated from the nine-column matrix and went with it.
         //
@@ -227,7 +227,7 @@ const VS_REMOTE_CONTROL: Route = {
     ogDescription:
         'What Anthropic’s own remote does well, the five situations it turns itself off in, and what one client for thirteen agents does instead.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/vs/claude-code-remote-control', 'webpage', 'Claude Code Remote Control vs Happier'),
         {
@@ -285,7 +285,7 @@ const VS_CODEX_REMOTE: Route = {
     ogDescription:
         'What OpenAI’s own remote does well, the five conditions it runs under, and what one client for every coding agent does instead.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/vs/codex-remote', 'webpage', 'Codex Remote compared with Happier'),
         {
@@ -352,7 +352,7 @@ const USAGE_LIMITS: Route = {
     ogDescription:
         'The session holds its place through a usage limit, waits out the reset and picks the work back up — on one account, or across the accounts you pool.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/features/usage-limits', 'webpage', 'Usage limits and account pooling in Happier'),
         {
@@ -385,7 +385,7 @@ const TERMINAL: Route = {
     ogDescription:
         'One session, two front ends: the provider’s own TUI in your shell and Happier on your phone. Same session id, same transcript, same queue on both sides of the switch.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/features/terminal', 'webpage', 'Terminal and TUI control in Happier'),
         {
@@ -422,7 +422,7 @@ const ENTERPRISE: Route = {
     ogDescription:
         'A relay you host, locked to your GitHub org or OIDC groups, with client certificates, offboarding re-checks and a storage policy you choose. MIT-licensed, all of it.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/enterprise', 'webpage', 'Self-hosting Happier for an organisation'),
         {
@@ -474,7 +474,7 @@ const SECURITY: Route = {
     ogDescription:
         'Your session is encrypted under a per-session key on the device that made it, and the relay is handed a sealed copy it has nothing to open. Here is what it can still see — named, not glossed.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     jsonLd: [
         webPage('/security', 'webpage', 'Encryption and the Happier relay'),
         {
@@ -531,7 +531,7 @@ const DOWNLOAD: Route = {
     ogDescription:
         'The desktop app for macOS, Windows and Linux, the mobile apps for iOS and Android, and the CLI that runs the agents on your own computer. One page, every build.',
     ogImage: '/images/og.png',
-    ogImageAlt: 'The Happier wordmark over the words: One client for every AI coding agent.',
+    ogImageAlt: 'Happier: Start coding anywhere. Continue everywhere. The Happier desktop app with three phones showing the same coding sessions.',
     i18n: ROUTE_META_I18N['/download'],
     jsonLd: [webPage('/download', 'webpage', 'Download Happier')],
     render: () => <DownloadPage />,

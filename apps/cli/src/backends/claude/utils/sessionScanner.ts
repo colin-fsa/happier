@@ -1,6 +1,6 @@
 import { InvalidateSync } from "@/utils/sync";
 import { RawJSONLines } from "../types";
-import { parseClaudeTaskNotificationXml } from '../taskNotifications/claudeTaskNotificationXml';
+import { createClaudeTaskNotificationToolResultProjector, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 import { dirname, join } from "node:path";
 import { watch, type FSWatcher } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -166,7 +166,7 @@ export async function createSessionScanner(opts: {
     let projectDirWatcher: FSWatcher | null = null;
     let watchedProjectDir: string | null = null;
     let processedMessageKeys = new Set<string>(opts.initialProcessedMessageKeys ?? []);
-    const taskToolUseIdByAgentId = new Map<string, string>();
+    const taskNotificationProjector = createClaudeTaskNotificationToolResultProjector();
     let invalidate: (() => void) | null = null;
     const discoveredSessions = new Set<string>();
     const resetReplaySuppressorBySession = new Map<string, ClaudeJsonlResetReplaySuppressor>();
@@ -392,88 +392,13 @@ export async function createSessionScanner(opts: {
         },
     });
 
-    function isTaskNotificationUserText(message: RawJSONLines): boolean {
-        if (message.type !== 'user') return false;
-        if ((message as any).isSidechain === true) return false;
-        const content = (message as any)?.message?.content;
-        if (typeof content !== 'string') return false;
-        return /^\s*<task-notification>/i.test(content);
-    }
-
-    function extractTaskNotification(payload: string): Readonly<{
-        taskId: string;
-        toolUseId: string | null;
-        status: string | null;
-        result: string;
-    }> | null {
-        const parsed = parseClaudeTaskNotificationXml(payload);
-        if (!parsed?.taskId || !parsed.result) return null;
-        return {
-            taskId: parsed.taskId,
-            toolUseId: parsed.toolUseId,
-            status: parsed.status,
-            result: parsed.result,
-        };
-    }
-
-    function observeTaskToolResultMapping(message: RawJSONLines): void {
-        if (message.type !== 'user') return;
-        const toolUseResult = (message as any).toolUseResult;
-        if (!toolUseResult || typeof toolUseResult !== 'object') return;
-        const agentId =
-            typeof (toolUseResult as any).agentId === 'string' ? String((toolUseResult as any).agentId).trim() : '';
-        if (!agentId) return;
-
-        const content = (message as any)?.message?.content;
-        if (!Array.isArray(content)) return;
-        for (const item of content) {
-            if (!item || typeof item !== 'object') continue;
-            if ((item as any).type !== 'tool_result') continue;
-            const toolUseId = readNonBlankOpaqueIdentifier((item as any).tool_use_id) ?? '';
-            if (!toolUseId) continue;
-            taskToolUseIdByAgentId.set(agentId, toolUseId);
-        }
-    }
-
     type TaskNotificationAction = { type: 'rewrite'; message: RawJSONLines } | { type: 'drop' };
 
     function rewriteTaskNotificationToToolResult(message: RawJSONLines): TaskNotificationAction | null {
-        if (!isTaskNotificationUserText(message)) return null;
-        const content = String((message as any).message.content ?? '');
-        const parsed = extractTaskNotification(content);
-        if (!parsed) return { type: 'drop' };
-
-        const toolUseId = parsed.toolUseId ?? taskToolUseIdByAgentId.get(parsed.taskId) ?? null;
-        if (!toolUseId) {
-            // If we can't map the task-id to a Task tool_use, drop it to avoid transcript spam.
-            return { type: 'drop' };
-        }
-
-        return { type: 'rewrite', message: {
-            ...(message as any),
-            isMeta: true,
-            origin: {
-                ...((message as any).origin && typeof (message as any).origin === 'object'
-                    ? (message as any).origin
-                    : {}),
-                kind: 'task-notification',
-                taskId: parsed.taskId,
-                toolUseId,
-                ...(parsed.status ? { status: parsed.status } : {}),
-            },
-            type: 'user',
-            message: {
-                role: 'user',
-                content: [
-                    {
-                        type: 'tool_result',
-                        tool_use_id: toolUseId,
-                        content: [{ type: 'text', text: parsed.result }],
-                        is_error: false,
-                    },
-                ],
-            },
-        } as any };
+        if (message.isSidechain === true) return null;
+        const fact = readClaudeTaskLifecycleEnvelope(message);
+        const projected = taskNotificationProjector.project(message);
+        return projected ? { type: 'rewrite', message: projected } : fact?.subtype === 'task_notification' ? { type: 'drop' } : null;
     }
 
     // If the caller already knows the transcript path for the initial session,
@@ -503,7 +428,7 @@ export async function createSessionScanner(opts: {
         for (let m of messages) {
             // Observe history for sidechain import + task-notification mapping, even when we do not replay history.
             try {
-                observeTaskToolResultMapping(m);
+                if (!opts.replayInitialMessages) taskNotificationProjector.project(m);
                 subagentCollector.observe(m as any);
                 teamInboxCollector.observe(m as any);
             } catch (err) {
@@ -539,7 +464,8 @@ export async function createSessionScanner(opts: {
     function parseClaudeJsonlValue(value: unknown): RawJSONLines | null {
         const parsed = parseRawJsonLinesObject(value);
         const type = parsed?.type ?? (typeof (value as any)?.type === 'string' ? String((value as any).type) : '');
-        if (providers.claude.isClaudeInternalEventType(type)) return null;
+        if (providers.claude.isClaudeInternalEventType(type)
+            && readClaudeTaskLifecycleEnvelope(value)?.subtype !== 'task_notification') return null;
         return parsed ? normalizeClaudeToolUseNamesInRawJsonLines(parsed) : null;
     }
 
@@ -568,13 +494,13 @@ export async function createSessionScanner(opts: {
             return false;
         }
         try {
-            observeTaskToolResultMapping(file);
             subagentCollector.observe(file as any);
             teamInboxCollector.observe(file as any);
         } catch (err) {
             logger.debug('[SESSION_SCANNER] Failed observing message:', err);
         }
-        if (isClaudeInternalTranscriptMessage(file)) {
+        if (isClaudeInternalTranscriptMessage(file)
+            && (file.isSidechain === true || readClaudeTaskLifecycleEnvelope(file)?.subtype !== 'task_notification')) {
             return false;
         }
         const key = messageKey(file);

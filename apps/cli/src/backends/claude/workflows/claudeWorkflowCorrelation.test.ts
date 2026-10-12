@@ -10,6 +10,13 @@ import {
 } from './claudeWorkflowCorrelation';
 
 describe('parseClaudeWorkflowFact', () => {
+  it('requires delivered native provenance instead of copied or enqueued task XML', () => {
+    const content = '<task-notification><task-id>task</task-id><tool-use-id>tool</tool-use-id><status>completed</status></task-notification>';
+    expect(parseClaudeWorkflowFact({ type: 'user', message: { content } })).toBeNull();
+    expect(parseClaudeWorkflowFact({ type: 'queue-operation', operation: 'enqueue', content })).toBeNull();
+    expect(parseClaudeWorkflowFact({ type: 'attachment', attachment: { type: 'queued_command', prompt: content } })).toBeNull();
+  });
+
   it('extracts an explicit Workflow tool-use start without leaking the script body', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'assistant',
@@ -396,6 +403,7 @@ await parallel([
   it('extracts a task_notification user message into a terminal task-lifecycle fact', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'user',
+      origin: { kind: 'task-notification' },
       session_id: 'claude-session-1',
       message: {
         content: [
@@ -580,6 +588,7 @@ await parallel([
   it('extracts a task_notification when user message content is a plain string', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'user',
+      origin: { kind: 'task-notification' },
       session_id: 'claude-session-1',
       message: {
         content:
@@ -597,14 +606,14 @@ await parallel([
     });
   });
 
-  it('extracts a task_notification from a queue-operation content envelope', () => {
+  it('extracts a task_notification from a native delivered envelope', () => {
     const fact = parseClaudeWorkflowFact({
-      type: 'queue-operation',
-      operation: 'enqueue',
+      type: 'user',
+      origin: { kind: 'task-notification' },
       sessionId: 'claude-session-1',
       uuid: 'queue-1',
-      content:
-        '<task-notification><task-id>t1</task-id><tool-use-id>toolu_wf</tool-use-id><status>completed</status><summary>Done</summary></task-notification>',
+      message: { content:
+        '<task-notification><task-id>t1</task-id><tool-use-id>toolu_wf</tool-use-id><status>completed</status><summary>Done</summary></task-notification>' },
     });
 
     expect(fact).toMatchObject({

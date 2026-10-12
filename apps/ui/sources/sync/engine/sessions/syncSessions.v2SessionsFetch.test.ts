@@ -377,7 +377,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 runtimeActivityObservedAt: 1_000,
                 runtimeActivityRevision: 1,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
     });
 
     it('hydrates a required changed session when only its runtime activity tuple advanced', async () => {
@@ -1481,7 +1481,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 lastViewedSessionSeq: 5,
                 hasUnreadMessages: false,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
     });
 
     it('preserves existing ready metadata when v2 list rows have no readable seq projection', async () => {
@@ -1534,7 +1534,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 latestReadyEventAt: 2_000,
                 hasUnreadMessages: true,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
     });
 
     it('uses server row attention projection fields when building first-usable renderables and hydrated sessions', async () => {
@@ -1598,7 +1598,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 hasPendingPermissionRequests: true,
                 hasUnreadMessages: true,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({
                 id: 's_row_projection',
@@ -1755,7 +1755,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 }),
                 hasPendingUserActionRequests: true,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
     });
 
     it('hydrates matching warm cache rows when the canonical sessions map is empty', async () => {
@@ -1827,7 +1827,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     path: '/home/u/repo',
                 }),
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         await expect.poll(() => decryptMetadata.mock.calls.length).toBe(1);
         expect(decryptAgentState).toHaveBeenCalledTimes(1);
         await expect.poll(() => applySessions.mock.calls.length).toBe(1);
@@ -1993,7 +1993,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     hiddenSystemSession: false,
                 }),
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         const firstUsableEvent = syncPerformanceTelemetry.snapshot().events.find((event) =>
             event.name === 'sync.sessions.snapshot.firstUsableList',
         );
@@ -2078,7 +2078,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                     flavor: 'codex',
                 }),
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(decryptMetadata).toHaveBeenCalledWith(7, 'encrypted-meta');
         expect(decryptAgentState).toHaveBeenCalledWith(9, 'encrypted-state');
         expect(applySessions).toHaveBeenCalledWith([
@@ -2140,7 +2140,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 metadataVersion: 0,
                 metadata: null,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(decryptMetadata).toHaveBeenCalledWith(0, 'encrypted-zero-meta');
         expect(applySessions).toHaveBeenCalledWith([
             expect.objectContaining({
@@ -2262,7 +2262,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 id: 's_missing_data_key',
                 metadata: null,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(getSessionEncryption).toHaveBeenCalledWith('s_missing_data_key');
         expect(decryptMetadata).not.toHaveBeenCalled();
         expect(applySessions).not.toHaveBeenCalled();
@@ -2927,7 +2927,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 hasPendingPermissionRequests: false,
                 hasPendingUserActionRequests: true,
             }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(applySessions).not.toHaveBeenCalled();
 
         await expect.poll(() => typeof resolveDataKeys).toBe('function');
@@ -3039,7 +3039,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         expect(applySessionListRenderables).toHaveBeenCalledWith([
             expect.objectContaining({ id: 's_first', metadata: null }),
             expect.objectContaining({ id: 's_second', metadata: null }),
-        ], { replace: true });
+        ], { replace: true, coversWholeList: true });
         expect(decryptMetadata).not.toHaveBeenCalled();
         expect(sessionListBackgroundHydrationYield).toHaveBeenCalledTimes(1);
 

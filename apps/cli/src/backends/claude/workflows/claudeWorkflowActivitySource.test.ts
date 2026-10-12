@@ -178,6 +178,7 @@ function agentTaskNotification(params: Readonly<{
     type: 'user',
     session_id: params.sessionId ?? 'claude-session-1',
     uuid: `uuid-notification-${params.toolUseId}`,
+    origin: { kind: 'task-notification' },
     message: {
       content: [
         '<task-notification>',

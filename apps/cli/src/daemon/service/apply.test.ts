@@ -1,8 +1,9 @@
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTempDir, removeTempDir, withTempDir } from '@/testkit/fs/tempDir';
 
 const spawnSyncMock = vi.fn();
 
@@ -10,14 +11,60 @@ vi.mock('node:child_process', () => ({
   spawnSync: spawnSyncMock,
 }));
 
-vi.mock('./commandExistsInPath', () => ({
-  commandExistsInPath: vi.fn(() => true),
-}));
-
 describe('runDaemonServiceCommands', () => {
-  afterEach(() => {
+  let commandsDir: string;
+  beforeEach(async () => {
+    commandsDir = await createTempDir('happier-service-commands-');
+    for (const command of ['systemctl', 'launchctl', 'sleep']) {
+      const path = join(commandsDir, process.platform === 'win32' ? `${command}.exe` : command);
+      writeFileSync(path, 'fixture');
+      chmodSync(path, 0o755);
+    }
+    vi.stubEnv('PATH', commandsDir);
+  });
+
+  afterEach(async () => {
     spawnSyncMock.mockReset();
+    vi.unstubAllEnvs();
     delete process.env.HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS;
+    await removeTempDir(commandsDir);
+  });
+
+  it('does not create or overwrite definitions when a strict install requires a missing manager', async () => {
+    await withTempDir('happier-service-missing-manager-', async (dir) => {
+      const { applyDaemonServiceInstallPlan } = await import('./apply');
+      vi.stubEnv('PATH', dir);
+      const existing = join(dir, 'existing.service');
+      const fresh = join(dir, 'fresh.service');
+      writeFileSync(existing, 'user definition', 'utf8');
+
+      const error = await applyDaemonServiceInstallPlan({
+        platform: 'linux',
+        files: [
+          { path: existing, content: 'replacement', mode: 0o644 },
+          { path: fresh, content: 'new definition', mode: 0o644 },
+        ],
+        commands: [{ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }],
+      }, { commandFailureMode: 'strict' }).then(() => null, (error: unknown) => error);
+
+      expect(readFileSync(existing, 'utf8')).toBe('user definition');
+      expect(existsSync(fresh)).toBe(false);
+      expect(error).toMatchObject({ code: 'service_manager_unavailable' });
+    });
+  });
+
+  it('still writes definitions for an explicitly command-free install', async () => {
+    await withTempDir('happier-service-no-commands-', async (dir) => {
+      const { applyDaemonServiceInstallPlan } = await import('./apply');
+      vi.stubEnv('PATH', dir);
+      const definition = join(dir, 'fresh.service');
+      await applyDaemonServiceInstallPlan({
+        platform: 'linux',
+        files: [{ path: definition, content: 'new definition', mode: 0o644 }],
+        commands: [{ cmd: 'systemctl', args: ['--user', 'daemon-reload'] }],
+      }, { commandFailureMode: 'strict', runCommands: false });
+      expect(readFileSync(definition, 'utf8')).toBe('new definition');
+    });
   });
 
   it('ignores missing launchctl bootout cleanup failures in strict mode', async () => {

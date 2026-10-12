@@ -25,8 +25,21 @@
             "label": "Linux",
             "sublabel": "x64 · AppImage",
             "file": "happier-ui-desktop-linux-x86_64.AppImage"
+        },
+        {
+            "id": "linux-x86_64-deb",
+            "label": "Linux",
+            "sublabel": "x64 · DEB",
+            "file": "happier-ui-desktop-linux-x86_64.deb"
+        },
+        {
+            "id": "linux-x86_64-rpm",
+            "label": "Linux",
+            "sublabel": "x64 · RPM",
+            "file": "happier-ui-desktop-linux-x86_64.rpm"
         }
     ],
+    "linuxAppimageRequirementsUrl": "https://docs.happier.dev/getting-started/get-the-apps#linux-appimage-prerequisites",
     "appStoreUrl": "https://apps.apple.com/app/happier-claude-codex-opencode/id6758554297",
     "androidApkUrl": "https://github.com/happier-dev/happier/releases/download/ui-mobile-stable/happier-android.apk",
     "androidPlayTestingOptInUrl": "https://play.google.com/apps/testing/dev.happier.app",

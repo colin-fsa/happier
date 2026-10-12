@@ -90,7 +90,6 @@ function resolveConnectedServiceBindingGroupMetadata(input: Readonly<{
 }
 
 export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonly<{
-  restartRequestedPids: Set<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
   resolveLifecycleDescriptor: (agentId: CatalogAgentId) => Promise<ConnectedServiceCredentialLifecycleDescriptor>;
   /**
@@ -122,9 +121,8 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
     /**
      * Reports whether a restart signal was ACTUALLY emitted. The gated restart dependency can
      * resolve successfully WITHOUT signalling (e.g. the deferred restart was superseded by a newer
-     * switch — `switch_cancelled`). The handler reserves the pid in `restartRequestedPids` only when
-     * `signaled` is true, so an un-signalled restart never leaks a reservation that would suppress
-     * later refresh restarts for the same process.
+     * switch — `switch_cancelled`). Admission, PID reservation, and completion belong to the
+     * canonical planned restart owner; this handler only schedules eligible credential targets.
      */
   }>) => Promise<Readonly<{ signaled: boolean }>>;
   stopSessionForCredentialDeletion?: (input: Readonly<{
@@ -222,8 +220,6 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
         }) ?? false;
         if (brokered) continue;
       }
-      if (params.restartRequestedPids.has(target.pid)) continue;
-
       if (!tracked) {
         emitBlocked(target, null, null, 'tracked_session_missing');
         continue;
@@ -245,9 +241,6 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
       // The gated restart owner may intentionally remain pending until a safe turn boundary.
       // Scheduling that existing owner is sufficient; refresh/reconnect distribution must not
       // retain credential-rotation custody while waiting for future conversational activity.
-      // Reserve while the canonical request itself is pending so a later refresh cannot schedule a
-      // duplicate restart. A resolved no-signal/cancelled request releases the reservation below.
-      params.restartRequestedPids.add(target.pid);
       let restartRequest: Promise<Readonly<{ signaled: boolean }>>;
       try {
         // K5:gated_restart credential refresh inherits canonical deferral and reachability checks.
@@ -277,21 +270,14 @@ export function createConnectedServicesAuthUpdatedRestartHandler(params: Readonl
           recordRestartDiagnostic: params.recordRestartDiagnostic,
           nowMs: params.nowMs,
           onSignalFailure: (error) => {
-            params.restartRequestedPids.delete(target.pid);
             params.onRestartSignalFailure?.(error, target);
           },
         });
       } catch (error) {
-        params.restartRequestedPids.delete(target.pid);
         params.onRestartSignalFailure?.(error, target);
         continue;
       }
-      void restartRequest.then(({ signaled }) => {
-        // A gated restart that resolves without signalling (e.g. superseded by a newer switch /
-        // switch_cancelled) must not leave a reservation behind.
-        if (!signaled) params.restartRequestedPids.delete(target.pid);
-      }).catch((error) => {
-        params.restartRequestedPids.delete(target.pid);
+      void restartRequest.catch((error) => {
         params.onRestartSignalFailure?.(error, target);
       });
     }

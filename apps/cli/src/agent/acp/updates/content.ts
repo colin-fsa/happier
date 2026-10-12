@@ -127,7 +127,10 @@ export function attachAcpMetadataToArgs(
 
   // Always attach ACP metadata so downstream consumers (tooltrace, forks, debugging)
   // have a stable opaque `_acp` envelope even when providers omit rawInput/title/etc.
-  args._acp = { ...(getAcpMetaFromArgs(args) ?? {}), ...acp };
+  const envelope = { ...(getAcpMetaFromArgs(args) ?? {}), ...acp };
+  // Provider title/absence owns identity; user arguments remain in rawInput.
+  if (!('title' in acp)) delete envelope.title;
+  args._acp = envelope;
 }
 
 /**

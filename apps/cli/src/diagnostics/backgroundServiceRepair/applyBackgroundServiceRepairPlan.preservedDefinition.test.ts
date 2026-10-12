@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
@@ -92,6 +92,15 @@ function settings(platform: 'darwin' | 'linux' | 'win32', path: string) {
 }
 
 function runtime(platform: 'darwin' | 'linux' | 'win32', homeDir: string) {
+  const commandDir = join(homeDir, 'commands');
+  mkdirSync(commandDir, { recursive: true });
+  for (const command of ['systemctl', 'launchctl', 'powershell.exe', 'schtasks']) {
+    writeFileSync(join(commandDir, command), 'OS command fixture');
+    if (process.platform === 'win32' && !command.endsWith('.exe')) {
+      writeFileSync(join(commandDir, `${command}.exe`), 'OS command fixture');
+    }
+  }
+  vi.stubEnv('PATH', commandDir);
   vi.stubEnv('HAPPIER_HOME_DIR', `${homeDir}/.happier`);
   reloadConfiguration();
   return { platform, systemUser: '', uid: 501, userHomeDir: homeDir, happierHomeDir: `${homeDir}/.happier` };

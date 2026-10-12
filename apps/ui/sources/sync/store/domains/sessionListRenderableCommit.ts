@@ -186,13 +186,22 @@ export function buildSessionListViewDataForRenderableState(
 export function planSessionListRenderableReplacementCommit(input: Readonly<{
     state: SessionListRenderableCommitState;
     incomingRenderables: ReadonlyArray<SessionListRenderableSession>;
+    coversWholeList?: boolean;
 }>): SessionListRenderableStoreUpdatePlan {
+    // An empty partial response covers no ordered range. Reuse the merge planner so
+    // retained rows survive; only proven whole-list coverage can evict every row.
+    if (input.coversWholeList !== true && input.incomingRenderables.length === 0) {
+        return planSessionListRenderableMergeCommit(input);
+    }
     return planSessionListRenderableReplacement({
         previousRenderables: input.state.sessionListRenderables ?? {},
         incomingRenderables: input.incomingRenderables,
         // A replacement response replaces the range it covers, not the whole store: rows
-        // the user paged in below that range survive the refresh.
-        removalWindow: resolveSessionListRenderableRemovalWindow(input.incomingRenderables),
+        // the user paged in below that range survive the refresh. A response with no further
+        // page covers the whole list, so every row it omits is gone (archived or deleted).
+        removalWindow: input.coversWholeList
+            ? null
+            : resolveSessionListRenderableRemovalWindow(input.incomingRenderables),
         isSessionListViewDataUninitialized: input.state.sessionListViewData === null,
         rebuildOnAttentionPromotionFieldsChange:
             shouldRebuildOnSessionPlacementFieldsChange(input.state.settings),

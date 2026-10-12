@@ -188,8 +188,8 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
       i += 1;
       continue;
     }
-    if (arg === '--permission-mode') {
-      const value = readRequiredValue(
+    if (arg === '--permission-mode' || arg === '--auto') {
+      const value = arg === '--auto' ? 'auto' : readRequiredValue(
         args,
         i,
         `--permission-mode. Valid values: ${SESSION_PERMISSION_INTENT_INPUTS.join(', ')}. Examples: ${PERMISSION_MODE_EXAMPLES.join(' | ')}`,
@@ -201,7 +201,7 @@ export function partitionProviderSessionArgs(options: ProviderSessionArgPartitio
         );
       }
       permissionMode = parsed;
-      i += 1;
+      if (arg !== '--auto') i += 1;
       continue;
     }
     if (arg.startsWith('--permission-mode=')) {

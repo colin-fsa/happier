@@ -277,7 +277,7 @@ function parseCompatSessionListResponseValue(raw: unknown): V2SessionListRespons
     return {
         sessions: sessions as V2SessionRecord[],
         nextCursor: typeof raw.nextCursor === 'string' ? raw.nextCursor : null,
-        hasNext: raw.hasNext === true,
+        hasNext: typeof raw.hasNext === 'boolean' ? raw.hasNext : undefined,
     };
 }
 
@@ -376,7 +376,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
 }>): Promise<{
     sessions: V2SessionListResponse['sessions'];
     nextCursor: string | null;
-    hasNext: boolean;
+    hasNext: boolean | undefined;
     source: 'v2' | 'v1';
     includedActiveRows: boolean;
 }> {
@@ -416,7 +416,7 @@ export async function fetchSessionListPageCompat(params: Readonly<{
             return {
                 sessions: parsed.sessions,
                 nextCursor: typeof parsed.nextCursor === 'string' ? parsed.nextCursor : null,
-                hasNext: parsed.hasNext === true,
+                hasNext: parsed.hasNext,
                 source: 'v2',
                 includedActiveRows: parsed.includedActive === true,
             };

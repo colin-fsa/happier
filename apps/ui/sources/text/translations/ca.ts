@@ -2575,6 +2575,7 @@ export const ca: TranslationStructure = {
             },
         },
         quota: {
+            refreshing: 'Actualitzant l’ús…',
             loading: 'Carregant…',
             error: ({ message }: { message: string }) => `Error: ${message}`,
             lastUpdated: ({ time }: { time: string }) => `Última actualització: ${time}`,
@@ -3902,6 +3903,10 @@ export const ca: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Mostra les sessions al Claude Code",
+                        subtitle: "Utilitza l’atribució de Happier per a les sessions noves de Claude, incloses les de l’Agent SDK. Desactivat conserva els valors predeterminats."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Força l’activació d’Agent Teams",
                         subtitle: "Activa Agent Teams experimental de Claude Code (eixam d’agents) a totes les sessions de Claude iniciades per Happier."
@@ -4090,6 +4095,7 @@ export const ca: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6186,7 +6192,9 @@ deps: {
         fxSessionId: "ID de la sessió de FX",
         fxSessionIdCopied: "ID de la sessió de FX copiat al porta-retalls",
         droidSessionId: "ID de la sessió de Factory Droid",
+        codebuddySessionId: "ID de la sessió de CodeBuddy",
         droidSessionIdCopied: "ID de la sessió de Factory Droid copiat al porta-retalls",
+        codebuddySessionIdCopied: "ID de la sessió de CodeBuddy copiat al porta-retalls",
         customAcpSessionId: 'ID de la sessió d’ACP personalitzat',
         grokSessionId: "ID de la sessió de Grok",
         grokSessionIdCopied: "ID de la sessió de Grok copiat al porta-retalls",
@@ -6380,6 +6388,8 @@ deps: {
         permissionMode: {
             title: 'MODE DE PERMISOS',
             effectiveLabel: ({ label }: { label: string }) => `Efectiu: ${label}`,
+            nativeModeOverrides: ({ mode }: { mode: string }) => `El mode de l’agent ${mode} té prioritat sobre aquest permís. Esborra la selecció de Mode per utilitzar el permís.`,
+            usePermissionSetting: 'Utilitza la configuració de permisos',
             default: 'Per defecte',
             readOnly: 'Només lectura',
             acceptEdits: 'Accepta edicions',
@@ -6410,6 +6420,7 @@ deps: {
             agy: 'Antigravity',
             fx: "FX",
             droid: "Factory Droid",
+            codebuddy: "CodeBuddy",
         customAcp: 'ACP personalitzat',
             pi: 'Pi',
             copilot: 'Copilot',
@@ -9691,6 +9702,7 @@ settingsSession: {
         blockedTitle: 'Configuració aturada',
         blockedStatusFallback: 'La configuració no ha pogut acabar. El teu compte i les teves sessions són intactes.',
         blockedServiceConflictStatus: 'Primer cal resoldre un altre servei en segon pla d’aquest ordinador. S’ha deixat tal com estava: obre Detalls per veure quin és.',
+        blockedServiceManagerUnavailableStatus: 'Happier no pot configurar el servei en segon pla en aquest ordinador. Obre Detalls per obtenir ajuda o continua amb les altres màquines.',
         blockedConsentDeclinedStatus: 'La configuració s’ha aturat. El servei en segon pla que ja hi havia en aquest ordinador s’ha deixat tal com estava.',
         blockedAccountKeptStatus: 'La configuració s’ha aturat. Aquest ordinador continua connectat al compte amb què té la sessió iniciada.',
         blockedAccountChangedStatus: 'Aquest ordinador ha iniciat sessió amb un altre compte mentre es configurava, i la configuració s’ha aturat abans de vincular-lo. Torna-ho a provar.',
@@ -10425,6 +10437,7 @@ settingsSession: {
             agySubtitleExperimental: "CLI d'Antigravity (experimental)",
             fxSubtitleExperimental: "CLI de FX (experimental)",
             droidSubtitleExperimental: "CLI de Factory Droid (experimental)",
+            codebuddySubtitleExperimental: "CLI de CodeBuddy Code (experimental)",
             customAcpSubtitleExperimental: 'CLI d’ACP personalitzat (experimental)',
             grokSubtitleExperimental: "CLI de Grok Build (experimental)",
             piSubtitleExperimental: 'CLI de Pi (experimental)',

@@ -10,6 +10,12 @@ import {
 } from './claudeRemote.js';
 
 describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
+  it('keeps native session history attribution opt-in and carries only explicit booleans', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({}).claudeCodeIncludeInNativeHistory).toBe(false);
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: true }).claudeCodeIncludeInNativeHistory).toBe(true);
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: 'true' }).claudeCodeIncludeInNativeHistory).toBe(false);
+  });
+
   it('exports the canonical unified terminal host values used by the provider schema', () => {
     expect(CLAUDE_UNIFIED_TERMINAL_HOSTS).toEqual(['auto', 'tmux', 'zellij', 'herdr']);
     expect(CLAUDE_REMOTE_PROVIDER_FIELDS.claudeUnifiedTerminalHost.schema.options).toEqual(

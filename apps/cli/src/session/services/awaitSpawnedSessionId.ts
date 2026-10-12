@@ -1,12 +1,13 @@
 import {
   isSpawnSessionErrorDetail,
   settleSpawnSessionNonce,
+  SPAWN_SESSION_ERROR_CODES,
   type SpawnSessionErrorDetail,
+  type SpawnSessionErrorCode,
   type SpawnSessionNonceResolution,
 } from '@happier-dev/protocol';
 
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
 
@@ -25,6 +26,32 @@ export type SpawnSessionNonceResolver = (
   spawnNonce: string,
   remainingTimeoutMs?: number,
 ) => Promise<SpawnSessionNonceResolution>;
+
+/** Normalize nonce replies once for local-control and machine-RPC settlement. */
+export function readSpawnSessionNonceResolution(value: unknown): SpawnSessionNonceResolution {
+  if (!value || typeof value !== 'object') return { status: 'unsupported' };
+  const record = value as Record<string, unknown>;
+  if (record.status === 'success') {
+    const sessionId = typeof record.sessionId === 'string' ? record.sessionId.trim() : '';
+    return sessionId ? { status: 'success', sessionId } : { status: 'pending' };
+  }
+  if (record.status === 'pending' || record.status === 'not_found' || record.status === 'unsupported') {
+    return { status: record.status };
+  }
+  if (record.status === 'error') {
+    const errorCode = typeof record.errorCode === 'string' ? record.errorCode.trim() : '';
+    const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
+    if (errorCode && errorMessage && (Object.values(SPAWN_SESSION_ERROR_CODES) as string[]).includes(errorCode)) {
+      return {
+        status: 'error',
+        errorCode: errorCode as SpawnSessionErrorCode,
+        errorMessage,
+        ...(isSpawnSessionErrorDetail(record.errorDetail) ? { errorDetail: record.errorDetail } : {}),
+      };
+    }
+  }
+  return { status: 'unsupported' };
+}
 
 export type AwaitSpawnedSessionIdResult =
   | { type: 'success'; sessionId: string }

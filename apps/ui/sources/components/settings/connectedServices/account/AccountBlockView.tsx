@@ -421,8 +421,14 @@ export const AccountBlockView = React.memo<AccountBlockViewProps>((props) => {
     // The calm meta line (collapsed only): muted resets + pools counts. Per-limit
     // usage now reads from the avatar's concentric capacity rings.
     const poolsCount = poolLabels.length;
+    const refreshStatus = quota?.isRefreshing ? (
+        <Text testID={`${testID}:refresh-status`} style={styles.metaCountText} accessibilityLiveRegion="polite">
+            {t('connectedServices.quota.refreshing')}
+        </Text>
+    ) : null;
     const renderMetaLine = () => (
         <View style={styles.metaRow}>
+            {refreshStatus}
             {quota && quota.resetAvailableCount > 0 ? (
                 <View testID={`${testID}:resets`} style={styles.metaCount}>
                     <Icon name="arrow-clockwise" size={11} color={theme.colors.text.tertiary} />
@@ -615,7 +621,7 @@ export const AccountBlockView = React.memo<AccountBlockViewProps>((props) => {
                 accessibilityLabel={props.title}
                 title={titleNode}
                 subtitle={identitySubtitle}
-                subtitleAccessory={!state.expanded ? renderMetaLine() : undefined}
+                subtitleAccessory={state.expanded ? refreshStatus : renderMetaLine()}
                 subtitleLines={1}
                 leftElement={leadingIcon}
                 iconBoxSize={CONNECTED_SERVICE_GAUGE_BOX}

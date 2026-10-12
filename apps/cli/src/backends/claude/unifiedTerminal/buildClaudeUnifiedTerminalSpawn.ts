@@ -16,7 +16,7 @@ import {
   resolveClaudeStatuslineOriginalCommand,
   type ClaudeStatuslineOverlaySettings,
 } from '../statusline/buildClaudeStatuslineOverlay';
-import { stripNestedSessionDetectionEnv } from '@/utils/processEnv/stripNestedSessionDetectionEnv';
+import { resolveClaudeSessionEnvOverlay } from '../spawn/resolveClaudeSessionEnvOverlay';
 import { buildMissingJavaScriptRuntimeMessage } from '@/runtime/js/buildMissingJavaScriptRuntimeMessage';
 import { resolveJavaScriptRuntimeExecutable } from '@/runtime/js/resolveJavaScriptRuntimeExecutable';
 import { isBun } from '@/utils/runtime';
@@ -301,7 +301,7 @@ function readMaterializedEnvKeySet(env: Pick<NodeJS.ProcessEnv, string>): Set<st
 }
 
 function buildClaudeEnv(envOverlay: Readonly<Record<string, string>> | undefined): Record<string, string> {
-  const env = stripNestedSessionDetectionEnv(buildClaudeSubprocessEnv({
+  const env = buildClaudeSubprocessEnv({
     envOverlay: {
       DISABLE_AUTOUPDATER: '1',
       // Do not force IS_DEMO: Claude then hides workspace trust while still suppressing plugin hooks.
@@ -311,7 +311,7 @@ function buildClaudeEnv(envOverlay: Readonly<Record<string, string>> | undefined
       // placeholder at the process boundary instead of weakening draft detection.
       CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: 'false',
     },
-  }));
+  });
   return Object.fromEntries(
     Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
@@ -414,7 +414,10 @@ export async function buildClaudeUnifiedTerminalSpawn<Mode extends EnhancedMode 
   // Env first: the statusline overlay resolves the user's original statusline command from the
   // EFFECTIVE config root of the spawned process (CLAUDE_CONFIG_DIR / HOME in the child env).
   const happierSessionId = normalizeCurrentHappierSessionId(input.happySessionId);
-  const env = withCurrentHappierSessionId(buildClaudeEnv(input.envOverlay), happierSessionId ?? '');
+  const env = withCurrentHappierSessionId(buildClaudeEnv({
+    ...input.envOverlay,
+    ...resolveClaudeSessionEnvOverlay({ claudeCodeIncludeInNativeHistory: input.first.mode.claudeCodeIncludeInNativeHistory }),
+  }), happierSessionId ?? '');
   const statuslineSettings = resolveStatuslineOverlaySettings({ input, deps, env });
   const materializedMcpConfig = await materializeClaudeMcpConfigArgsForSpawn(
     buildClaudeArgs(input, statuslineSettings),

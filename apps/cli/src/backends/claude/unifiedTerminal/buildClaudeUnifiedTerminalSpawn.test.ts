@@ -81,6 +81,26 @@ async function readLaunchSpecFromSpawn(spawn: ClaudeUnifiedTerminalSpawn): Promi
 }
 
 describe('buildClaudeUnifiedTerminalSpawn', () => {
+  it.each([false, true])('applies configured Happier attribution at the native terminal launch boundary (%s)', async (enabled) => {
+    await withPatchedEnv({ CLAUDE_CODE_ENTRYPOINT: 'sdk-ts', CLAUDECODE: '1' }, async () => {
+      const spawn = await buildClaudeUnifiedTerminalSpawn({
+        path: '/workspace/project',
+        first: { message: 'hello', mode: { permissionMode: 'default', claudeCodeIncludeInNativeHistory: enabled } },
+        deps: {
+          resolveClaudeCliPath: () => '/usr/local/bin/claude',
+          isClaudeCliJavaScriptFile: () => false,
+          ensureClaudeJsRuntimeExecutable: async () => '/managed/node',
+          claudeLocalLauncherPath: '/happier/scripts/claude_local_launcher.cjs',
+          terminalLaunchSpecRunnerPath: '/happier/scripts/terminal_launch_spec_runner.cjs',
+        },
+      });
+      const launch = await readLaunchSpecFromSpawn(spawn);
+      expect(spawn.spawnEnv.CLAUDE_CODE_ENTRYPOINT).toBe(enabled ? 'happier' : undefined);
+      expect(launch.env?.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+      expect(launch.env?.CLAUDECODE).toBeUndefined();
+    });
+  });
+
   afterEach(() => {
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);

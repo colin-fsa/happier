@@ -83,6 +83,32 @@ describe("authRoutes (terminal auth request) (integration)", () => {
         await harness.close();
     });
 
+    it("returns the persisted request deadline for a configured TTL without renewing repeated requests", async () => {
+        harness.resetEnv({ TERMINAL_AUTH_REQUEST_TTL_SECONDS: "240" });
+        const { publicKeyBase64 } = createTerminalKeypair();
+        const app = createTestApp();
+        authRoutes(app);
+        await app.ready();
+
+        // A released claimless CLI still sends only its public key.
+        const created = await app.inject({
+            method: "POST", url: "/v1/auth/request", payload: { publicKey: publicKeyBase64 },
+        });
+        expect(created.statusCode).toBe(200);
+        const row = await db.terminalAuthRequest.findUniqueOrThrow({
+            where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(publicKeyBase64)) },
+        });
+        expect(created.json()).toEqual({ state: "requested", expiresAt: row.createdAt.getTime() + 240_000 });
+
+        const originalCreatedAt = new Date(row.createdAt.getTime() - 30_000);
+        await db.terminalAuthRequest.update({ where: { id: row.id }, data: { createdAt: originalCreatedAt } });
+        const repeated = await app.inject({
+            method: "POST", url: "/v1/auth/request", payload: { publicKey: publicKeyBase64, supportsV2: true },
+        });
+        expect(repeated.statusCode).toBe(200);
+        expect(repeated.json()).toEqual({ state: "requested", expiresAt: originalCreatedAt.getTime() + 240_000 });
+    });
+
     it("returns 410 expired from /v1/auth/request when the request exceeded TTL and deletes it", async () => {
         const { publicKeyBase64 } = createTerminalKeypair();
 
@@ -96,7 +122,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             payload: { publicKey: publicKeyBase64, supportsV2: true },
         });
         expect(createRes.statusCode).toBe(200);
-        expect(createRes.json()).toEqual({ state: "requested" });
+        expect(createRes.json()).toEqual({ state: "requested", expiresAt: expect.any(Number) });
 
         const row = await db.terminalAuthRequest.findUnique({
             where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(publicKeyBase64)) },
@@ -265,7 +291,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             payload: { publicKey: publicKeyBase64, supportsV2: true, claimSecretHash },
         });
         expect(createRes.statusCode).toBe(200);
-        expect(createRes.json()).toEqual({ state: "requested" });
+        expect(createRes.json()).toEqual({ state: "requested", expiresAt: expect.any(Number) });
 
         const approveRes = await app.inject({
             method: "POST",
@@ -369,7 +395,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             payload: { publicKey: publicKeyBase64, supportsV2: true },
         });
         expect(first.statusCode).toBe(200);
-        expect(first.json()).toEqual({ state: "requested" });
+        expect(first.json()).toEqual({ state: "requested", expiresAt: expect.any(Number) });
 
         const claimSecret = new Uint8Array(randomBytes(32));
         const claimSecretHash = sha256Base64Url(claimSecret);
@@ -643,7 +669,7 @@ describe("authRoutes (terminal auth request) (integration)", () => {
             payload: { publicKey: publicKeyBase64, supportsV2: true },
         });
         expect(createRes.statusCode).toBe(200);
-        expect(createRes.json()).toEqual({ state: "requested" });
+        expect(createRes.json()).toEqual({ state: "requested", expiresAt: expect.any(Number) });
 
         const createdRow = await db.terminalAuthRequest.findUnique({
             where: { publicKey: privacyKit.encodeHex(privacyKit.decodeBase64(publicKeyBase64)) },

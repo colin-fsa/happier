@@ -43,6 +43,7 @@ type AuthGroupApi = Readonly<{
     activeProfileId: string;
     expectedGeneration: number;
     overrideRuntimeCooldown?: boolean;
+    switchReason?: string;
   }>): Promise<ConnectedServiceAuthGroupV1>;
   updateConnectedServiceAuthGroupRuntimeState?(input: Readonly<{
     serviceId: ConnectedServiceId;
@@ -347,6 +348,7 @@ export function createDaemonConnectedServiceAuthGroupSwitchCoordinator(params: R
         activeProfileId: input.toProfileId,
         expectedGeneration: input.expectedGeneration,
         overrideRuntimeCooldown: true,
+        switchReason: input.reason,
       });
       await params.onCommittedSwitch?.({
         serviceId,

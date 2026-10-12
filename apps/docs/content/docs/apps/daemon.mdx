@@ -150,7 +150,7 @@ happier daemon service restart
 Platform notes:
 
 - **macOS**: LaunchAgent
-- **Linux**: `systemd --user`
+- **Linux**: `systemd --user`, with `systemctl` available and a working systemd user session. Linux systems without systemd cannot use this automatic startup path.
 - **Windows**: Scheduled Task (user-level)
 
 ### Installed, but not started at login
@@ -216,3 +216,23 @@ This is especially useful for provisioning headless servers because you can appr
 - **Check status**: `happier daemon status`
 - **Find logs**: `happier daemon logs`
 - **Service paths**: `happier daemon service paths`
+
+### Linux without systemctl
+
+If `systemctl` is unavailable, automatic startup cannot be installed. After signing in, check
+`happier daemon status`. If no daemon is running for the selected relay, start one manually:
+
+```bash
+happier daemon start
+```
+
+This starts the daemon for the current machine session; it does not arrange startup after login
+or reboot. Missing `systemctl` in your shell does not prove systemd is stopped. Manual recovery
+does not disable an existing service: if its automatic startup resumes later, that service can
+take over a conflicting manually started daemon under the existing ownership rules.
+
+The development CLI checks for missing service commands before installation or doctor repair
+changes service definitions. It also lets manual startup proceed past readable leftover systemd
+units when `systemctl` is absent. Running daemon ownership and unreadable service state still
+protect against conflicting starts. This correction is not yet established as available in a
+published stable or preview release.

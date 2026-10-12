@@ -1508,6 +1508,7 @@ export const it: TranslationStructure = {
       agySubtitleExperimental: "CLI Antigravity (sperimentale)",
       fxSubtitleExperimental: "FX CLI (sperimentale)",
       droidSubtitleExperimental: "Factory Droid CLI (sperimentale)",
+      codebuddySubtitleExperimental: "CodeBuddy Code CLI (sperimentale)",
       customAcpSubtitleExperimental: "CLI ACP personalizzata (sperimentale)",
       grokSubtitleExperimental: "Grok Build CLI (sperimentale)",
       piSubtitleExperimental: "Pi CLI (sperimentale)",
@@ -3055,6 +3056,7 @@ export const it: TranslationStructure = {
       },
     },
     quota: {
+      refreshing: "Aggiornamento dell’utilizzo…",
       loading: "Caricamento…",
       error: ({ message }: { message: string }) => `Errore: ${message}`,
       lastUpdated: ({ time }: { time: string }) =>
@@ -4446,6 +4448,10 @@ export const it: TranslationStructure = {
                             }
                         }
                     },
+                    claudeCodeIncludeInNativeHistory: {
+                        title: "Mostra le sessioni in Claude Code",
+                        subtitle: "Usa l’attribuzione Happier per le nuove sessioni Claude, incluse quelle Agent SDK. Disattivato mantiene le impostazioni predefinite."
+                    },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Forza l’attivazione di Agent Teams",
                         subtitle: "Abilita Agent Teams sperimentale di Claude Code (sciame di agenti) in tutte le sessioni Claude avviate da Happier."
@@ -4634,6 +4640,7 @@ export const it: TranslationStructure = {
             agy: { title: 'Antigravity' },
             fx: { title: "FX" },
             droid: { title: "Factory Droid" },
+            codebuddy: { title: "CodeBuddy" },
             grok: {
                 title: "Grok Build"
             },
@@ -6890,7 +6897,9 @@ export const it: TranslationStructure = {
     fxSessionId: "ID sessione FX",
     fxSessionIdCopied: "ID sessione FX copiato negli appunti",
     droidSessionId: "ID sessione Factory Droid",
+    codebuddySessionId: "ID sessione CodeBuddy",
     droidSessionIdCopied: "ID sessione Factory Droid copiato negli appunti",
+    codebuddySessionIdCopied: "ID sessione CodeBuddy copiato negli appunti",
     customAcpSessionId: "ID sessione ACP personalizzata",
     grokSessionId: "ID sessione Grok",
     grokSessionIdCopied: "ID sessione Grok copiato negli appunti",
@@ -7106,6 +7115,8 @@ export const it: TranslationStructure = {
     permissionMode: {
       title: "MODALITÀ PERMESSI",
       effectiveLabel: ({ label }: { label: string }) => `Effettivo: ${label}`,
+      nativeModeOverrides: ({ mode }: { mode: string }) => `La modalità agente ${mode} ha priorità su questa impostazione dei permessi. Cancella la selezione di Modalità per usare i permessi.`,
+            usePermissionSetting: 'Usa l’impostazione dei permessi',
       default: "Predefinito",
       readOnly: "Sola lettura",
       acceptEdits: "Accetta modifiche",
@@ -7136,6 +7147,7 @@ export const it: TranslationStructure = {
       agy: 'Antigravity',
       fx: "FX",
       droid: "Factory Droid",
+      codebuddy: "CodeBuddy",
       customAcp: "ACP personalizzato",
       pi: "Pi",
       copilot: "Copilot",
@@ -10716,6 +10728,7 @@ settingsSession: {
     blockedTitle: 'Configurazione interrotta',
     blockedStatusFallback: 'La configurazione non è riuscita a completarsi. Il tuo account e le tue sessioni sono intatti.',
     blockedServiceConflictStatus: 'Prima bisogna risolvere un altro servizio in background su questo computer. È rimasto com’era: apri Dettagli per vedere quale.',
+    blockedServiceManagerUnavailableStatus: 'Happier non può configurare il servizio in background su questo computer. Apri Dettagli per ricevere aiuto o continua con le altre macchine.',
     blockedConsentDeclinedStatus: 'La configurazione si è fermata. Il servizio in background già presente è rimasto esattamente com’era.',
     blockedAccountKeptStatus: 'La configurazione si è interrotta. Questo computer resta collegato all’account con cui ha effettuato l’accesso.',
     blockedAccountChangedStatus: 'Questo computer ha effettuato l’accesso a un altro account durante la configurazione, che si è quindi interrotta prima dell’abbinamento. Riprova.',

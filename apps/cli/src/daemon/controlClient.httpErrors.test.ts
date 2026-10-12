@@ -109,6 +109,45 @@ describe('daemon control client (HTTP error responses)', () => {
     }
   });
 
+  it('rejects session listing when there is no daemon instead of returning an empty inventory', async () => {
+    tmpHomeDir = await createTempDir('happier-daemon-list-no-state-');
+    envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+    reloadConfiguration();
+
+    await expect(controlClient.listDaemonSessions()).rejects.toThrow('No daemon running');
+  });
+
+  it('rejects session listing when daemon control returns an HTTP failure', async () => {
+    const server = http.createServer((_req, res) => {
+      res.statusCode = 503;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: 'control unavailable' }));
+    });
+
+    try {
+      const { port } = await listen(server);
+      tmpHomeDir = await createTempDir('happier-daemon-list-http-error-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'test-token',
+      });
+
+      const { handleDaemonCliCommand } = await import('@/cli/commands/daemon');
+      await expect(handleDaemonCliCommand({
+        args: ['daemon', 'list'],
+        rawArgv: [],
+        terminalRuntime: null,
+      })).rejects.toThrow('HTTP 503');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('reports a running daemon from authenticated control when its PID is hidden from this pid namespace', async () => {
     const server = http.createServer((req, res) => {
       const authorized = req.headers['x-happier-daemon-token'] === 'test-token';

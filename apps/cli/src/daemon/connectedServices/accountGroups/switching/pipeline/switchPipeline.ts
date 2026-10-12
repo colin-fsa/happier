@@ -23,6 +23,8 @@ export type ConnectedServiceAuthGroupSwitchState = Readonly<{
   serviceId: string;
   groupId: string;
   activeProfileId: string | null;
+  lastSwitchReason?: string | null;
+  lastSwitchAt?: number | null;
   generation: number;
   runtimeStateRevision: number;
   /** Exact credential epoch for the active profile when the projection can resolve it. */

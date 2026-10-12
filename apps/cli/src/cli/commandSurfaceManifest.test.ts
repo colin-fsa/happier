@@ -23,6 +23,7 @@ describe('CLI command-surface manifest', () => {
       'daemon',
       'doctor',
       'herdr',
+      'attach',
       'session',
       'resume',
     ]);
