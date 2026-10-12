@@ -317,7 +317,7 @@ COPY --from=server-builder --chown=node:node /repo/packages/protocol /repo/packa
 COPY --from=server-builder --chown=node:node /repo/packages/release-runtime /repo/packages/release-runtime
 COPY --from=server-builder --chown=node:node /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
-RUN chmod +x /usr/local/bin/run-server
+RUN chmod 755 /usr/local/bin/run-server
 RUN mkdir -p /data && chown -R node:node /data
 USER node
 EXPOSE 3005
@@ -396,7 +396,7 @@ RUN useradd -m -s /bin/bash happier \
     && chown -R happier:happier /data /opt/happier
 COPY --from=relay-artifacts --chown=happier:happier /opt/happier/server /opt/happier/server
 COPY apps/server/scripts/run-server.sh /usr/local/bin/run-server
-RUN chmod +x /usr/local/bin/run-server
+RUN chmod 755 /usr/local/bin/run-server
 ARG SENTRY_RELEASE=""
 ENV SENTRY_RELEASE=$SENTRY_RELEASE
 ENV HAPPIER_RELEASE_SOURCE_SHA=$SENTRY_RELEASE
