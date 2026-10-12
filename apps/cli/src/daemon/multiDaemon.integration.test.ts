@@ -122,7 +122,8 @@ describe('multi-daemon helpers', () => {
       });
       try {
         await expect(stopAllDaemonsBestEffort()).rejects.toMatchObject({ code: 'daemon_stop_incomplete', reason: 'startup_in_progress', pid: successor.pid });
-        expect(existsSync(statePath)).toBe(true);
+        expect(await waitForProcessExit(predecessor.pid, { timeoutMs: 3_000 })).toBe(true);
+        expect(existsSync(statePath)).toBe(false);
         expect(existsSync(lockPath)).toBe(true);
         expect(process.kill(successor.pid, 0)).toBe(true);
       } finally {
@@ -322,7 +323,7 @@ describe('multi-daemon helpers', () => {
     );
   });
 
-  it('stops all running daemons best-effort via /stop without taking over publication cleanup', async () => {
+  it('stops all running daemons best-effort via /stop and reclaims confirmed-dead publications', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-stop-' }, async ({ homeDir }) => {
       await writeDaemonSettingsFixture(homeDir);
 
@@ -340,7 +341,7 @@ describe('multi-daemon helpers', () => {
         await stopAllDaemonsBestEffort();
 
         expect(await waitForProcessExit(daemon.pid, { timeoutMs: 3_000 })).toBe(true);
-        expect(existsSync(statePath)).toBe(true);
+        expect(existsSync(statePath)).toBe(false);
       } finally {
         await daemon.kill();
       }
@@ -388,7 +389,7 @@ describe('multi-daemon helpers', () => {
     });
   });
 
-  it('leaves stale daemon publication cleanup to the lifecycle lock owner', async () => {
+  it('reclaims stale daemon publications through the lifecycle owner', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-stale-state-' }, async ({ homeDir }) => {
       await writeDaemonSettingsFixture(homeDir);
       const exited = spawnSleepyDetachedProcess();
@@ -397,11 +398,11 @@ describe('multi-daemon helpers', () => {
         pid: exited.pid,
         httpPort: 47892,
       });
-      const stateRaw = readFileSync(statePath, 'utf-8');
+      expect(existsSync(statePath)).toBe(true);
 
       await stopAllDaemonsBestEffort();
 
-      expect(readFileSync(statePath, 'utf-8')).toBe(stateRaw);
+      expect(existsSync(statePath)).toBe(false);
     });
   });
 
@@ -435,7 +436,7 @@ describe('multi-daemon helpers', () => {
         expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({ stopSessions: true });
         expect(String((observed[0]?.headers ?? ({} as any))['x-happier-daemon-token'] ?? '')).toBe('test-token');
         expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
-        expect(existsSync(statePath)).toBe(true);
+        expect(existsSync(statePath)).toBe(false);
       } finally {
         fetchSpy.mockRestore();
         await sleepy.kill();
@@ -473,8 +474,8 @@ describe('multi-daemon helpers', () => {
         try {
           await stopAllDaemonsBestEffort();
 
-            expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
-          expect(existsSync(statePath)).toBe(true);
+          expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
+          expect(existsSync(statePath)).toBe(false);
         } finally {
           fetchSpy.mockRestore();
           await sleepy.kill();
