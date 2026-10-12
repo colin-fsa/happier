@@ -215,6 +215,33 @@ export function setPlatformOs(next: 'ios' | 'web') {
     platformOs = next;
 }
 
+// Model browser media APIs at the external boundary; keep recorder/STT logic real.
+export function installBrowserRecordingMock() {
+    class BrowserMediaRecorder extends EventTarget {
+        static isTypeSupported = (mimeType: string) => mimeType === 'audio/webm;codecs=opus';
+        readonly mimeType = 'audio/webm;codecs=opus';
+        state = 'inactive';
+        constructor(_stream: unknown, _options?: unknown) { super(); }
+        start() { this.state = 'recording'; }
+        stop() {
+            if (this.state === 'inactive') return;
+            this.state = 'inactive';
+            queueMicrotask(() => {
+                const event = new Event('dataavailable');
+                Object.defineProperty(event, 'data', {
+                    value: new Blob(['recorded audio'], { type: this.mimeType }),
+                });
+                this.dispatchEvent(event);
+                this.dispatchEvent(new Event('stop'));
+            });
+        }
+    }
+    vi.stubGlobal('navigator', {
+        mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop: vi.fn() }] }) },
+    });
+    vi.stubGlobal('MediaRecorder', BrowserMediaRecorder);
+}
+
 export function setNextRecorderPrepareError(next: Error | null) {
     nextRecorderPrepareError = next;
 }

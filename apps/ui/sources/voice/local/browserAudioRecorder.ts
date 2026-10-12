@@ -3,6 +3,7 @@ export type BrowserAudioRecorder = Readonly<{
   prepareToRecordAsync: () => Promise<void>;
   record: () => void;
   stop: () => Promise<void>;
+  dispose: () => void;
 }>;
 
 const PREFERRED_RECORDING_MIME_TYPES = [
@@ -81,18 +82,23 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
       }
 
       try {
+        const createBlob = () => new Blob(chunks, {
+          type: currentRecorder.mimeType || chunks[0]?.type || 'audio/webm',
+        });
         const blob = await new Promise<Blob>((resolve, reject) => {
+          // A failed start or an ended microphone may already be inactive.
+          // MediaRecorder.stop() then emits no event.
+          if (currentRecorder.state === 'inactive') {
+            resolve(createBlob());
+            return;
+          }
           const cleanup = () => {
             currentRecorder.removeEventListener('stop', onStop);
             currentRecorder.removeEventListener('error', onError);
           };
           const onStop = () => {
             cleanup();
-            resolve(
-              new Blob(chunks, {
-                type: currentRecorder.mimeType || chunks[0]?.type || 'audio/webm',
-              }),
-            );
+            resolve(createBlob());
           };
           const onError = (event: Event) => {
             cleanup();
@@ -105,12 +111,21 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
           currentRecorder.stop();
         });
 
-        uri = URL.createObjectURL(blob);
+        if (blob.size > 0) uri = URL.createObjectURL(blob);
       } finally {
         currentStream?.getTracks().forEach((track) => track.stop());
         mediaRecorder = null;
         mediaStream = null;
       }
+    },
+
+    dispose() {
+      if (uri) URL.revokeObjectURL(uri);
+      uri = null;
+      chunks = [];
+      mediaStream?.getTracks().forEach((track) => track.stop());
+      mediaRecorder = null;
+      mediaStream = null;
     },
   };
 }

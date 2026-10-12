@@ -45,6 +45,7 @@ type LocalAudioRecorder = {
   prepareToRecordAsync: () => Promise<void>;
   record: () => void;
   stop: () => Promise<void>;
+  dispose?: () => void;
 };
 
 type AudioRecorderConstructor = new (options: unknown) => LocalAudioRecorder;
@@ -136,6 +137,8 @@ async function startRecording(sessionId: string): Promise<void> {
       await nextRecorder.stop?.();
     } catch {
       // best-effort
+    } finally {
+      nextRecorder.dispose?.();
     }
     recorder = null;
     patchLocalVoiceState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
@@ -150,11 +153,13 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   }
 
   patchLocalVoiceState({ status: 'transcribing', error: null });
+  const currentRecorder = recorder;
   let uri: string | null = null;
   try {
-    await recorder.stop();
-    uri = recorder.uri;
+    await currentRecorder.stop();
+    uri = currentRecorder.uri;
   } catch {
+    currentRecorder.dispose?.();
     recorder = null;
     patchLocalVoiceState({ status: 'idle', sessionId, error: 'recording_stop_failed' });
     return;
@@ -162,6 +167,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   recorder = null;
 
   if (!uri) {
+    currentRecorder.dispose?.();
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
@@ -181,6 +187,8 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
     }
     patchLocalVoiceState({ status: 'idle', sessionId, error: 'stt_failed' });
     return;
+  } finally {
+    currentRecorder.dispose?.();
   }
 
   if (!text) {
@@ -508,10 +516,13 @@ export async function stopLocalVoiceSession(): Promise<void> {
 
   // Best-effort stop any recording (we intentionally do not send).
   if (recorder) {
+    const currentRecorder = recorder;
     try {
-      await recorder.stop();
+      await currentRecorder.stop();
     } catch {
       // ignore
+    } finally {
+      currentRecorder.dispose?.();
     }
     recorder = null;
   }
