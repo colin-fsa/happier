@@ -8,6 +8,7 @@ import {
     expoSpeechStop,
     emitSpeechRecEvent,
     getStorage,
+    installBrowserRecordingMock,
     registerLocalVoiceEngineHarnessHooks,
     submitMessage,
     speechRecStart,
@@ -601,10 +602,13 @@ describe('local voice engine TTS behavior', () => {
 
     it('revokes web TTS blob URLs when playback finishes', async () => {
         setPlatformOs('web');
+        installBrowserRecordingMock();
         const originalCreate = (URL as any).createObjectURL;
         const originalRevoke = (URL as any).revokeObjectURL;
 
-        (URL as any).createObjectURL = vi.fn(() => 'blob:tts-url');
+        (URL as any).createObjectURL = vi.fn()
+            .mockReturnValueOnce('blob:recording-url')
+            .mockReturnValueOnce('blob:tts-url');
         (URL as any).revokeObjectURL = vi.fn();
 
         try {
@@ -636,6 +640,7 @@ describe('local voice engine TTS behavior', () => {
             });
 
             (globalThis.fetch as any)
+                .mockResolvedValueOnce({ blob: async () => new Blob(['recorded audio'], { type: 'audio/webm' }) })
                 .mockResolvedValueOnce({
                     ok: true,
                     json: async () => ({ text: 'hello world' }),
@@ -661,13 +666,14 @@ describe('local voice engine TTS behavior', () => {
             const stopPromise = toggleLocalVoiceTurn('s1');
 
             await waitForAudioPlayer();
-            expect((URL as any).createObjectURL).toHaveBeenCalledTimes(1);
+            expect((URL as any).createObjectURL).toHaveBeenCalledTimes(2);
             expect(createdAudioPlayers.length).toBe(1);
 
             createdAudioPlayers[0].__emit('playbackStatusUpdate', { didJustFinish: true });
             await stopPromise;
             expect((URL as any).revokeObjectURL).toHaveBeenCalledWith('blob:tts-url');
         } finally {
+            vi.unstubAllGlobals();
             (URL as any).createObjectURL = originalCreate;
             (URL as any).revokeObjectURL = originalRevoke;
         }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 
 vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
@@ -13,6 +13,7 @@ vi.mock('@/voice/kokoro/runtime/synthesizeKokoroWav', () => ({
 import {
   createdAudioPlayers,
   getStorage,
+  installBrowserRecordingMock,
   registerLocalVoiceEngineHarnessHooks,
   setPlatformOs,
 } from './localVoiceEngine.testHarness';
@@ -27,6 +28,7 @@ async function waitForAudioPlayer() {
 
 describe('local voice engine agent behavior (kokoro)', () => {
   registerLocalVoiceEngineHarnessHooks();
+  afterEach(() => vi.unstubAllGlobals());
 
   beforeEach(async () => {
     localVoiceEngine = await import('./localVoiceEngine');
@@ -34,6 +36,7 @@ describe('local voice engine agent behavior (kokoro)', () => {
 
   it('agent mode auto-speaks via Kokoro provider when enabled', async () => {
     setPlatformOs('web');
+    installBrowserRecordingMock();
     const storage = await getStorage();
     storage.__setState({
       settings: {
@@ -83,6 +86,7 @@ describe('local voice engine agent behavior (kokoro)', () => {
     });
 
     (globalThis.fetch as any)
+      .mockResolvedValueOnce({ blob: async () => new Blob(['recorded audio'], { type: 'audio/webm' }) })
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ text: 'hello world' }),

@@ -11,7 +11,7 @@ import {
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();
 
-    it('records with browser MediaRecorder and posts the captured blob to OpenAI-compatible STT', async () => {
+    it.each(['success', 'transcription failure', 'cancel', 'failed startup retry'] as const)('releases browser recording resources after %s', async (outcome) => {
         setPlatformOs('web');
 
         const trackStop = vi.fn();
@@ -19,6 +19,7 @@ describe('local voice engine recording lifecycle', () => {
             getTracks: () => [{ stop: trackStop }],
         }));
         const mediaRecorderInstances: FakeMediaRecorder[] = [];
+        let failNextStart = outcome === 'failed startup retry';
 
         class FakeMediaRecorder {
             static isTypeSupported = vi.fn((mimeType: string) => mimeType === 'audio/webm;codecs=opus');
@@ -43,10 +44,15 @@ describe('local voice engine recording lifecycle', () => {
             }
 
             start() {
+                if (failNextStart) {
+                    failNextStart = false;
+                    throw new Error('unsupported track');
+                }
                 this.state = 'recording';
             }
 
             stop() {
+                if (this.state === 'inactive') return;
                 this.state = 'inactive';
                 const blob = new Blob([new Uint8Array([1, 2, 3, 4])], { type: this.mimeType });
                 for (const listener of this.listeners.get('dataavailable') ?? []) {
@@ -74,6 +80,7 @@ describe('local voice engine recording lifecycle', () => {
                 });
             }
             if (url === 'http://localhost:8000/v1/audio/transcriptions') {
+                if (outcome === 'transcription failure') throw new Error('STT offline');
                 transcriptionInit = init;
                 return new Response(JSON.stringify({ text: 'hello from the browser mic' }), {
                     status: 200,
@@ -86,14 +93,37 @@ describe('local voice engine recording lifecycle', () => {
         submitMessage.mockResolvedValue(undefined);
 
         try {
-            const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+            const { toggleLocalVoiceTurn, getLocalVoiceState, stopLocalVoiceSession } = await import('./localVoiceEngine');
 
+            if (outcome === 'failed startup retry') {
+                await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('unsupported track');
+                expect(trackStop).toHaveBeenCalledTimes(1);
+                expect(getLocalVoiceState().error).toBe('recording_start_failed');
+                expect(URL.createObjectURL).not.toHaveBeenCalled();
+            }
             await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
             expect(getLocalVoiceState().status).toBe('recording');
-            expect(mediaRecorderInstances).toHaveLength(1);
-            expect(mediaRecorderInstances[0]?.state).toBe('recording');
+            expect(mediaRecorderInstances).toHaveLength(outcome === 'failed startup retry' ? 2 : 1);
+            expect(mediaRecorderInstances.at(-1)?.state).toBe('recording');
+
+            if (outcome === 'cancel' || outcome === 'failed startup retry') {
+                await stopLocalVoiceSession();
+                expect(trackStop).toHaveBeenCalledTimes(outcome === 'failed startup retry' ? 2 : 1);
+                expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:happier-test');
+                expect(globalThis.fetch).not.toHaveBeenCalled();
+                expect(getLocalVoiceState().status).toBe('idle');
+                return;
+            }
 
             await expect(toggleLocalVoiceTurn('s1')).resolves.toBeUndefined();
+            expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:happier-test');
+            if (outcome === 'transcription failure') {
+                expect(trackStop).toHaveBeenCalledTimes(1);
+                expect(submitMessage).not.toHaveBeenCalled();
+                expect(getLocalVoiceState().status).toBe('idle');
+                expect(getLocalVoiceState().error).toBe('stt_failed');
+                return;
+            }
 
             expect(getUserMedia).toHaveBeenCalledTimes(1);
             expect(trackStop).toHaveBeenCalledTimes(1);
