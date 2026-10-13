@@ -14,6 +14,7 @@ const machineSpawnNewSession = vi.fn();
 const refreshSessions = vi.fn();
 const patchSessionMetadataWithRetry = vi.fn();
 const ensureSessionVisibleForMessageRoute = vi.fn();
+const isMachineOnline = vi.fn((_machine: any) => true);
 
 vi.mock('@/agents/registry/registryCore', () => ({
   isAgentId: (value: unknown) => typeof value === 'string' && value.trim().length > 0,
@@ -52,7 +53,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 vi.mock('@/utils/sessions/machineUtils', () => ({
-  isMachineOnline: () => true,
+  isMachineOnline: (machine: any) => isMachineOnline(machine),
 }));
 
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
@@ -71,6 +72,8 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     refreshSessions.mockReset();
     patchSessionMetadataWithRetry.mockReset();
     ensureSessionVisibleForMessageRoute.mockReset();
+    isMachineOnline.mockReset();
+    isMachineOnline.mockImplementation(() => true);
 
     state = {
       settings: {
@@ -179,6 +182,37 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       directory: '/Users/test/.happier/voice-agent',
       serverId: 'server-1',
     }));
+  });
+
+  it('skips an auto-selected daemon that still looks active but is no longer online', async () => {
+    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'stale-machine';
+    state.machines['stale-machine'] = {
+      id: 'stale-machine',
+      active: true,
+      metadata: {
+        happyHomeDir: '/Users/stale/.happier',
+      },
+    };
+    isMachineOnline.mockImplementation((machine: any) => machine.id === 'machine-1');
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine-1',
+      directory: '/Users/test/.happier/voice-agent',
+    }));
+  });
+
+  it('rejects a fixed offline daemon before spawning a voice-home conversation', async () => {
+    state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'fixed';
+    state.settings.voice.adapters.local_conversation.agent.machineTargetId = 'machine-1';
+    isMachineOnline.mockReturnValue(false);
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
+      code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
+    });
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
   });
 
   it('routes recent voice-home spawn targets through active machine replacements', async () => {
@@ -342,6 +376,8 @@ describe('ensureVoiceConversationSessionForSessionRoot', () => {
     refreshSessions.mockReset();
     patchSessionMetadataWithRetry.mockReset();
     ensureSessionVisibleForMessageRoute.mockReset();
+    isMachineOnline.mockReset();
+    isMachineOnline.mockImplementation(() => true);
 
     state = {
       settings: {
