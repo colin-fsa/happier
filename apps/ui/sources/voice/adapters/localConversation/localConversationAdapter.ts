@@ -67,11 +67,18 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
 
     const resolvedSessionId = mode === 'agent' ? VOICE_AGENT_GLOBAL_SESSION_ID : opts.sessionId;
     if (mode === 'agent') {
-      await voiceSessionBindingManager.ensureBound({
+      const binding = await voiceSessionBindingManager.ensureBound({
         adapterId: id,
         controlSessionId: resolvedSessionId,
         requestedTargetSessionId: startSessionId || null,
       });
+      // A null binding used to allow recording to start, only to fail with
+      // voice_session_binding_required after the user had already spoken.
+      if (!binding?.conversationSessionId || binding.controlSessionId !== resolvedSessionId) {
+        throw Object.assign(new Error('voice_session_binding_required'), {
+          code: 'VOICE_SESSION_BINDING_REQUIRED',
+        });
+      }
     }
     const snap = getSnapshot();
     if (snap.sessionId && snap.sessionId !== resolvedSessionId && snap.status !== 'disconnected') {
