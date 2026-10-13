@@ -18,7 +18,7 @@ import {
     sessionExecutionRunStart,
     sendSessionMessageWithServerScope,
     submitMessage,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import type { VoiceAgentClient } from '@/voice/agent/types';
 

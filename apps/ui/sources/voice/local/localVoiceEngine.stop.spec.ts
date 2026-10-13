@@ -7,7 +7,7 @@ import {
   submitMessage,
   speechRecStart,
   speechRecStop,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 describe('local voice engine stop', () => {
   registerLocalVoiceEngineHarnessHooks();

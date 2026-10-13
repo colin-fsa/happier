@@ -4,7 +4,7 @@ import {
   getStorage,
   registerLocalVoiceEngineHarnessHooks,
   sessionRpcWithServerScope,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 
 describe('runVoiceAgentTurnWithTools permission shortcuts', () => {

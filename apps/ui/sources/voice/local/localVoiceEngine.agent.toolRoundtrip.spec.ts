@@ -5,7 +5,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import {
   getStorage,
   registerLocalVoiceEngineHarnessHooks,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 describe('local voice engine agent tool roundtrip', () => {
   registerLocalVoiceEngineHarnessHooks();

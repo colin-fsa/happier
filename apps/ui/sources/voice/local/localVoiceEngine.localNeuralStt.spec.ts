@@ -10,7 +10,7 @@ import {
   sherpaStreamingFinish,
   sherpaStreamingPushFrame,
   submitMessage,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 describe('local voice engine local neural STT (streaming)', () => {
   registerLocalVoiceEngineHarnessHooks();

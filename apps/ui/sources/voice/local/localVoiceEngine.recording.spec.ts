@@ -11,7 +11,7 @@ import {
     emitSpeechRecEvent,
     speechRecStart,
     speechRecStop,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 describe('local voice engine recording lifecycle', () => {
     registerLocalVoiceEngineHarnessHooks();

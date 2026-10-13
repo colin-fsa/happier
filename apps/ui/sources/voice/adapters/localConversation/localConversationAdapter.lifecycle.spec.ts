@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createdAudioPlayers, getStorage, installBrowserRecordingMock, registerLocalVoiceEngineHarnessHooks, setPlatformOs } from '../../local/localVoiceEngine.testHarness';
+import { createdAudioPlayers, getStorage, installBrowserRecordingMock, registerLocalVoiceEngineHarnessHooks, setPlatformOs } from '../../local/localVoiceEngine.testHelpers';
 
 describe('local conversation adapter composed startup', () => {
   registerLocalVoiceEngineHarnessHooks();

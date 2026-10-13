@@ -4,7 +4,7 @@ import {
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     submitMessage,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 describe('local voice engine (turn-based) smoke', () => {
     registerLocalVoiceEngineHarnessHooks();

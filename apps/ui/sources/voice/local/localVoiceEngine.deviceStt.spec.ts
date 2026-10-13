@@ -10,7 +10,7 @@ import {
     speechRecStart,
     speechRecStop,
     speechRecRequestPermissionsAsync,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 type CallCountSpy = {
     mock: {

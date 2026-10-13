@@ -13,7 +13,7 @@ import {
     submitMessage,
     speechRecStart,
     setPlatformOs,
-} from './localVoiceEngine.testHarness';
+} from './localVoiceEngine.testHelpers';
 
 let localVoiceEngine: typeof import('./localVoiceEngine');
 

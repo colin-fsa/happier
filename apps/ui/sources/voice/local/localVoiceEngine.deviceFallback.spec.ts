@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { emitSpeechRecEvent, expoSpeechSpeak, getStorage, registerLocalVoiceEngineHarnessHooks, speechRecRequestPermissionsAsync, speechRecStart, speechRecStop, setPlatformOs } from './localVoiceEngine.testHarness';
+import { emitSpeechRecEvent, expoSpeechSpeak, getStorage, registerLocalVoiceEngineHarnessHooks, speechRecRequestPermissionsAsync, speechRecStart, speechRecStop, setPlatformOs } from './localVoiceEngine.testHelpers';
 
 async function configureFallback(enabled = true) {
     const storage = await getStorage();
