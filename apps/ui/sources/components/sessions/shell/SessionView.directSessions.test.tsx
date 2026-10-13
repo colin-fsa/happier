@@ -4307,37 +4307,10 @@ describe('SessionView (direct sessions)', () => {
     const lastChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
     expect(lastChatListProps?.directControlFooter ?? null).toBeNull();
     expect(lastChatListProps?.onRequestSwitchToRemote).toBeUndefined();
-    expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 
     await act(async () => {
       await screen.unmount();
     });
   });
 
-  it('suppresses the voice surface for retired hidden voice conversation sessions', async () => {
-    featureEnabledState.voice = true;
-    settingsState.current = {
-      voice: {
-        providerId: 'local_conversation',
-      },
-    };
-    settingByKeyState.current = {
-      voice: {
-        providerId: 'local_conversation',
-      },
-    };
-    const session = (await import('@/sync/domains/state/storage')).storage.getState().sessions.s1 as any;
-    session.metadata = {
-      ...session.metadata,
-      ...buildSystemSessionMetadataV1({ key: 'voice_conversation_retired', hidden: true }),
-    };
-
-    const screen = await renderSessionView();
-
-    expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
-
-    await act(async () => {
-      await screen.unmount();
-    });
-  });
 });

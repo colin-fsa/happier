@@ -36,6 +36,8 @@ import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Icon } from '@/components/ui/icons/Icon';
+import { useIsTablet } from '@/utils/platform/responsive';
+import { isVoiceConversationSystemSessionMetadata } from '@/voice/sessionBinding/voiceConversationSystemSessionLookup';
 
 
 export type VoiceSurfaceVariant = 'sidebar' | 'session';
@@ -52,6 +54,7 @@ function resolveSessionIdFromPathname(pathname: string | null | undefined): stri
 export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: any }>) {
   const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
+  const isTablet = useIsTablet();
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const snap = useVoiceSessionSnapshot();
@@ -76,7 +79,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   const primaryActionSessionKey = typeof primaryActionSessionId === 'string' ? primaryActionSessionId.trim() : '';
   const primaryActionSessionMetadata = useSessionMetadata(primaryActionSessionKey);
   const voiceScope = useVoiceTargetStore((s) => s.scope);
-  const routeSessionId = props.variant === 'sidebar' ? resolveSessionIdFromPathname(pathname) : null;
+  const routeSessionId = resolveSessionIdFromPathname(pathname);
   const startSessionId =
     props.variant === 'session'
       ? (typeof props.sessionId === 'string' ? props.sessionId : null)
@@ -199,13 +202,17 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     if (surfaceLocation === 'sidebar') return props.variant === 'sidebar';
     if (surfaceLocation === 'session') return props.variant === 'session';
     // auto
-    return scopeDefault === 'global' ? props.variant === 'sidebar' : props.variant === 'session';
+    return scopeDefault === 'global' && (isTablet || !routeSessionId) ? props.variant === 'sidebar' : props.variant === 'session';
   })();
+
+  const isBoundConversation =
+    sessionSurfaceSessionId === openConversationSessionId &&
+    isVoiceConversationSystemSessionMetadata(currentSessionMetadata);
 
   const showSurface =
     providerId !== 'off' &&
     locationAllowsVariant &&
-    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata }));
+    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata }) && !isBoundConversation);
   if (!showSurface) return null;
 
   const statusInfo = (() => {
@@ -320,16 +327,6 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             <Text style={[styles.statusText, { color: theme.colors.text.primary }]} numberOfLines={1}>
               {statusInfo.label}
             </Text>
-            {snap.deviceFallback?.stt ? (
-              <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
-                {t('voiceSurface.deviceSttFallback')}
-              </Text>
-            ) : null}
-            {snap.deviceFallback?.tts ? (
-              <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
-                {t('voiceSurface.deviceTtsFallback')}
-              </Text>
-            ) : null}
             {snap.status === 'error' && snap.errorMessage ? (
               <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} numberOfLines={2}>
                 {snap.errorMessage}
@@ -435,6 +432,21 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
           </PrimaryCircleIconButton>
         </View>
       </View>
+
+      {snap.deviceFallback?.stt || snap.deviceFallback?.tts ? (
+        <View style={styles.notices}>
+          {snap.deviceFallback.stt ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
+              {t('voiceSurface.deviceSttFallback')}
+            </Text>
+          ) : null}
+          {snap.deviceFallback.tts ? (
+            <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
+              {t('voiceSurface.deviceTtsFallback')}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
 
       {activityFeedEnabled ? (
         <View style={styles.feedContainer}>
@@ -553,6 +565,10 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
   statusTextCol: {
     flexShrink: 1,
     marginLeft: 10,
+  },
+  notices: {
+    paddingHorizontal: 12,
+    paddingBottom: 10,
   },
   statusText: {
     fontSize: 14,

@@ -6,6 +6,7 @@ import type { MachineDisplayRenderable } from '../../domains/machines/machineDis
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, purchasesDefaults, type Purchases } from '../../domains/purchases/purchases';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '../../domains/settings/settings';
+import { areAccountSettingsJsonValuesEqual } from '../../domains/settings/accountSettingsStructuralEquality';
 import { reconcileSettingsReferences } from '../../domains/settings/reconcileSettingsReferences';
 import {
     loadAccountSettings,
@@ -126,9 +127,28 @@ function loadParsedAccountSettings(scope: AccountSettingsScope): { settings: Set
     };
 }
 
-function shouldAcceptScopedSettings(scope: AccountSettingsScope, nextVersion: number): boolean {
-    const loaded = loadAccountSettings(scope);
-    return loaded.version == null || loaded.version < nextVersion;
+function applyIncomingSettingsProjection<S extends SettingsDomain & SettingsDomainDependencies>(
+    state: S,
+    incomingSettings: Settings,
+    nextVersion: number,
+    scope: AccountSettingsScope | null,
+): S {
+    const active = scope === null ? state.settingsScope === null : areAccountSettingsScopesEqual(state.settingsScope, scope);
+    const cached = scope ? loadAccountSettings(scope) : { settings: state.settings, version: state.settingsVersion };
+    if ((cached.version != null && cached.version > nextVersion)
+        || (active && state.settingsVersion != null && state.settingsVersion > nextVersion)) return state;
+
+    // A server version identifies the raw record, not the local schema projection. Rehydrate
+    // equal-version echoes after a newer client learns fields an older cached projection omitted.
+    // Callers already merge pending local settings before publishing this projection.
+    if (cached.version !== nextVersion || !areAccountSettingsJsonValuesEqual(cached.settings, incomingSettings)) {
+        if (scope) saveAccountSettings(scope, incomingSettings, nextVersion);
+        else saveSettings(incomingSettings, nextVersion);
+    }
+    if (!active) return state;
+    const reconciled = reconcileSettingsReferences(state.settings, incomingSettings);
+    if (state.settingsVersion === nextVersion && reconciled === state.settings) return state;
+    return buildSettingsProjectionState(state, reconciled, nextVersion, scope);
 }
 
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
@@ -161,20 +181,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 return buildSettingsProjectionState(state, newSettings, state.settingsVersion, state.settingsScope);
             }),
         applySettings: (nextSettings, nextVersion) =>
-            set((state) => {
-                if (state.settingsScope) {
-                    if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
-                        saveAccountSettings(state.settingsScope, nextSettings, nextVersion);
-                        return buildSettingsProjectionState(state, nextSettings, nextVersion, state.settingsScope);
-                    }
-                    return state;
-                }
-                if (state.settingsVersion == null || state.settingsVersion < nextVersion) {
-                    saveSettings(nextSettings, nextVersion);
-                    return buildSettingsProjectionState(state, nextSettings, nextVersion, null);
-                }
-                return state;
-            }),
+            set((state) => applyIncomingSettingsProjection(state, nextSettings, nextVersion, state.settingsScope)),
         replaceSettings: (nextSettings, nextVersion) =>
             set((state) => {
                 if (state.settingsScope) {
@@ -200,16 +207,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                 purchases: { ...purchasesDefaults },
             })),
         applySettingsForScope: (scope, nextSettings, nextVersion) =>
-            set((state) => {
-                if (!shouldAcceptScopedSettings(scope, nextVersion)) {
-                    return state;
-                }
-                saveAccountSettings(scope, nextSettings, nextVersion);
-                if (!areAccountSettingsScopesEqual(state.settingsScope, scope)) {
-                    return state;
-                }
-                return buildSettingsProjectionState(state, nextSettings, nextVersion, scope);
-            }),
+            set((state) => applyIncomingSettingsProjection(state, nextSettings, nextVersion, scope)),
         replaceSettingsForScope: (scope, nextSettings, nextVersion) =>
             set((state) => {
                 saveAccountSettings(scope, nextSettings, nextVersion);

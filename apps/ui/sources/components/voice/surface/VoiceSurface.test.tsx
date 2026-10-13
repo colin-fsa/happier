@@ -22,6 +22,8 @@ installVoiceSurfaceCommonModuleMocks({
             Text: 'Text',
             Pressable: createHostComponentMock('Pressable'),
             ScrollView: 'ScrollView',
+            useWindowDimensions: () => ({ width: viewportState.width, height: 900, scale: 1, fontScale: 1 }),
+            Dimensions: { get: () => ({ width: viewportState.width, height: 900, scale: 1, fontScale: 1 }) },
             Platform: {
                 OS: 'web',
                 select: (spec: any) => spec?.web ?? spec?.default,
@@ -93,6 +95,7 @@ vi.mock('@/voice/local/localVoiceEngine', () => ({
 
 const routerPushSpy = vi.fn();
 const pathnameState: { current: string } = { current: '/' };
+const viewportState = { width: 1280 };
 
 const hydrateSpy = vi.fn(async () => {});
 const featureEnabledState: Record<string, boolean> = { 'voice.agent': true };
@@ -138,6 +141,7 @@ vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
 
 describe('VoiceSurface', () => {
   beforeEach(() => {
+    viewportState.width = 1280;
     pathnameState.current = '/';
     storageState.current = { sessions: {}, sessionListViewDataByServerId: {} };
     allSessionsState.current = [];
@@ -996,6 +1000,68 @@ describe('VoiceSurface', () => {
     });
 
     expect(screen.tree.toJSON()).toBeNull();
+  });
+
+  it.each([
+    { width: 360, pathname: '/session/s1', location: 'auto', sidebar: false, session: true },
+    { width: 360, pathname: '/', location: 'auto', sidebar: true, session: false },
+    { width: 768, pathname: '/session/s1', location: 'auto', sidebar: true, session: false },
+    { width: 1280, pathname: '/session/s1', location: 'auto', sidebar: true, session: false },
+    { width: 360, pathname: '/session/s1', location: 'sidebar', sidebar: true, session: false },
+    { width: 1280, pathname: '/session/s1', location: 'session', sidebar: false, session: true },
+  ])('keeps global voice controls reachable at $width on $pathname with $location placement', async ({ width, pathname, location, sidebar: showSidebar, session: showSession }) => {
+    vi.resetModules();
+    viewportState.width = width;
+    pathnameState.current = pathname;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: location },
+      adapters: { local_conversation: { conversationMode: 'agent', agent: { backend: 'openai_compat' } } },
+    };
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, status: 'connected', mode: 'listening', canStop: true, deviceFallback: { stt: true, tts: true } });
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const sidebar = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+    const session = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 's1' }));
+    expect(sidebar.tree.toJSON() !== null).toBe(showSidebar);
+    expect(session.tree.toJSON() !== null).toBe(showSession);
+    const visible = showSession ? session : sidebar;
+    expect(visible.getTextContent()).toContain('voiceSurface.deviceSttFallback');
+    expect(visible.getTextContent()).toContain('voiceSurface.deviceTtsFallback');
+    expect(visible.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' })).toBeTruthy();
+  });
+
+  it.each([
+    { key: 'voice_conversation', bound: true, visible: true },
+    { key: 'voice_conversation_retired', bound: true, visible: false },
+    { key: 'voice_conversation', bound: false, visible: false },
+  ])('keeps hidden phone session eligibility scoped to the current voice conversation ($key, bound=$bound)', async ({ key, bound, visible }) => {
+    vi.resetModules();
+    viewportState.width = 360;
+    pathnameState.current = '/session/carrier-phone';
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: { local_conversation: { conversationMode: 'agent', agent: { backend: 'openai_compat' } } },
+    };
+    allSessionsState.current = [{ id: 'carrier-phone', metadata: { systemSessionV1: { v: 1, key, hidden: true } } }];
+    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+    if (bound) voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId: 'carrier-phone', transcriptMode: 'synthetic', targetSessionId: null, updatedAt: 1 });
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, status: 'connected', mode: 'listening', canStop: true, deviceFallback: { stt: true } });
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'session', sessionId: 'carrier-phone' }));
+    expect(screen.tree.toJSON() !== null).toBe(visible);
+    if (visible) {
+      expect(screen.getTextContent()).toContain('voiceSurface.deviceSttFallback');
+      expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.tapToEnd' })).toBeTruthy();
+      await act(async () => {
+        setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: null, status: 'disconnected', mode: 'idle', canStop: false });
+      });
+      expect(screen.tree.toJSON()).not.toBeNull();
+      expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' })).toBeTruthy();
+      expect(screen.getTextContent()).not.toContain('voiceSurface.deviceSttFallback');
+    }
   });
 
   it('auto-selects surface placement when ui.surfaceLocation is auto', async () => {

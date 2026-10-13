@@ -64,6 +64,8 @@ export type SyncSettingsParams = {
     encryption: Encryption;
     settingsScope?: AccountSettingsScope | null;
     pendingSettings: Partial<Settings>;
+    // Latest pending delta for this captured scope; undefined uses persisted pending storage.
+    getPendingSettings?: () => Partial<Settings> | undefined;
     clearPendingSettings: (nextPendingSettings: Partial<Settings>) => void;
     settingsSecretsKey?: Uint8Array | null;
     settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
@@ -128,6 +130,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     }
 
     function loadPendingSettingsForCapturedScope(): Partial<Settings> {
+        const currentPending = params.getPendingSettings?.();
+        if (currentPending) return currentPending;
         // Pre-auth/bootstrap calls may not have a captured account scope yet. Authenticated
         // sync paths always pass a scope and therefore use scoped pending settings.
         return settingsScope ? loadPendingAccountSettings(settingsScope) : loadPendingSettings();
@@ -646,8 +650,8 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
     // - Local writes apply immediately but do not bump `settingsVersion`.
     // - A concurrent sync tick can fetch/apply a newer server version (e.g. migrations/other clients)
     //   and accidentally clobber recent local edits before the pending POST flush runs.
-    // - Pending settings are persisted for crash safety; reload from disk so in-flight sync calls
-    //   don't miss deltas when the Sync instance replaces the pending object reference.
+    // - Read the current captured-scope pending delta so in-flight sync calls include edits
+    //   made before the persistence debounce flushes; bootstrap calls use persisted pending state.
     const pendingLatest = loadPendingSettingsForCapturedScope();
     const pendingLatestForServer = stripMigratedSessionOrganizationSettings(
         stripLocalOnlyAccountSettings(pendingLatest) as Record<string, unknown>,

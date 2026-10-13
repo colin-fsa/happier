@@ -7,8 +7,11 @@ import { recoverUnavailableGlobalVoiceAutoMachine } from '@/voice/agent/recoverU
 import { applyRecoveredGlobalVoiceMachineDecision } from '@/voice/agent/applyRecoveredGlobalVoiceMachineDecision';
 import { shouldRecoverUnavailableGlobalVoiceAutoMachine } from '@/voice/agent/shouldRecoverUnavailableGlobalVoiceAutoMachine';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { storage } from '@/sync/domains/state/storage';
 
 import type { VoiceConversationBindingResolution } from './voiceSessionBindingTypes';
+import { resolveVoiceSessionBindingByControlSessionId } from './resolveVoiceSessionBinding';
+import { isVoiceConversationSystemSessionMetadata } from './voiceConversationSystemSessionLookup';
 
 function resolveLocalConversationTranscriptMode(settings: any): 'native_session' | 'synthetic' | null {
   const config = settings?.voice?.adapters?.local_conversation ?? null;
@@ -51,7 +54,14 @@ export async function ensureVoiceConversationBindingResolution(params: Readonly<
   const controlSessionId = normalizeNonEmptyString(params.controlSessionId);
   if (!controlSessionId) return null;
 
-  const targetSessionId = normalizeNonEmptyString(params.requestedTargetSessionId);
+  const requestedTargetSessionId = normalizeNonEmptyString(params.requestedTargetSessionId);
+  const existingBinding = resolveVoiceSessionBindingByControlSessionId({ controlSessionId, adapterId: params.providerId });
+  const targetSessionId =
+    requestedTargetSessionId &&
+    requestedTargetSessionId === existingBinding?.conversationSessionId &&
+    isVoiceConversationSystemSessionMetadata(storage.getState().sessions?.[requestedTargetSessionId]?.metadata)
+      ? normalizeNonEmptyString(existingBinding.targetSessionId)
+      : requestedTargetSessionId;
   const rootSessionId =
     controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
       ? targetSessionId

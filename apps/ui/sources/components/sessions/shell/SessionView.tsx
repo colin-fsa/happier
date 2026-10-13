@@ -6222,7 +6222,7 @@ function SessionViewLoaded({
     });
     const input = shouldShowInput ? (
         <View>
-            {voiceEnabled && voiceProviderId !== 'off' && !isHiddenSystemSessionSession ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
+            {voiceEnabled && voiceProviderId !== 'off' ? <VoiceSurface variant="session" sessionId={sessionId} /> : null}
             {authSurfaceState && !authRecoveryBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <SessionAuthRecoveryBanner message={authSurfaceState.message} />

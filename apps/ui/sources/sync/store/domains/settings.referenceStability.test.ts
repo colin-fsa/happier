@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MMKV } from 'react-native-mmkv';
 
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
-import { clearPersistence } from '@/sync/domains/state/persistence';
+import { loadAccountSettings, saveAccountSettings, loadPendingAccountSettings, savePendingAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { clearPersistence, saveSettings } from '@/sync/domains/state/persistence';
 
 const store = vi.hoisted(() => new Map<string, string>());
 
@@ -187,4 +188,81 @@ describe('createSettingsDomain settings projection reference stability', () => {
         expect(getState().settings.favoriteDirectories).toEqual(['~/code/happier']);
         expect(getState().settings.favoriteDirectories).toBe(favoritesBeforeLocalWrite);
     });
+
+    it.each(['scoped', 'legacy'] as const)('rehydrates %s same-version voice consent from the server over cached projection', (mode) => {
+        const cached = buildServerEchoSettings();
+        const incoming = structuredClone(cached);
+        incoming.voice.adapters.local_conversation.stt.fallbackToDevice = true;
+        incoming.voice.adapters.local_conversation.tts.fallbackToDevice = true;
+        if (mode === 'scoped') saveAccountSettings(scope, cached, 317);
+        else saveSettings(cached, 317);
+        const { getState } = createTestStore();
+        if (mode === 'scoped') getState().activateSettingsScope(scope);
+        expect(getState().settings.voice.adapters.local_conversation.stt.fallbackToDevice).toBe(false);
+        if (mode === 'scoped') getState().applySettingsForScope(scope, incoming, 317);
+        else getState().applySettings(incoming, 317);
+        expect(getState().settings.voice.adapters.local_conversation.stt.fallbackToDevice).toBe(true);
+        expect(getState().settings.voice.adapters.local_conversation.tts.fallbackToDevice).toBe(true);
+        expect(getState().settingsVersion).toBe(317);
+    });
+
+
+    it('restores same-version socket voice settings while preserving a pending local edit', async () => {
+        const { Encryption } = await import('@/sync/encryption/encryption');
+        const { handleUpdateAccountSocketUpdate } = await import('@/sync/engine/account/syncAccount');
+        const { profileDefaults } = await import('@/sync/domains/profiles/profile');
+        const cached = buildServerEchoSettings({ analyticsOptOut: false });
+        saveAccountSettings(scope, cached, 317);
+        const { getState } = createTestStore();
+        getState().activateSettingsScope(scope);
+        getState().applySettingsLocal({ analyticsOptOut: true });
+        savePendingAccountSettings(scope, { analyticsOptOut: true });
+        const incoming = structuredClone(cached);
+        incoming.voice.adapters.local_conversation.stt.fallbackToDevice = true;
+        incoming.voice.adapters.local_conversation.tts.fallbackToDevice = true;
+        await handleUpdateAccountSocketUpdate({
+            accountUpdate: { settingsV2: { content: { t: 'plain', v: incoming }, version: 317 } },
+            updateCreatedAt: 1,
+            currentProfile: profileDefaults,
+            encryption: await Encryption.create(new Uint8Array(32).fill(7)),
+            settingsScope: scope,
+            applyProfile: () => {},
+            applySettings: getState().applySettings,
+            applySettingsForScope: getState().applySettingsForScope,
+            getLocalSettings: () => getState().settings,
+            getPendingSettings: () => loadPendingAccountSettings(scope),
+            log: { log: () => {} },
+        });
+        expect(getState().settings.voice.adapters.local_conversation.stt.fallbackToDevice).toBe(true);
+        expect(getState().settings.voice.adapters.local_conversation.tts.fallbackToDevice).toBe(true);
+        expect(getState().settings.analyticsOptOut).toBe(true);
+        expect(loadPendingAccountSettings(scope)).toMatchObject({ analyticsOptOut: true });
+    });
+
+
+    it('keeps an identical same-version echo reference-stable without rewriting cached bytes', () => {
+        const { getState } = createTestStore();
+        getState().activateSettingsScope(scope);
+        getState().applySettingsForScope(scope, buildServerEchoSettings(), 317);
+        const stateBefore = getState();
+        const write = vi.spyOn(MMKV.prototype, 'set');
+        getState().applySettingsForScope(scope, buildServerEchoSettings(), 317);
+        expect(getState().settings).toBe(stateBefore.settings);
+        expect(getState().settings.voice).toBe(stateBefore.settings.voice);
+        expect(write).not.toHaveBeenCalled();
+        write.mockRestore();
+    });
+
+    it('hydrates the active projection even when shared cached bytes already contain the same-version update', () => {
+        const cached = buildServerEchoSettings();
+        saveAccountSettings(scope, cached, 317);
+        const { getState } = createTestStore();
+        getState().activateSettingsScope(scope);
+        const incoming = structuredClone(cached);
+        incoming.voice.adapters.local_conversation.stt.fallbackToDevice = true;
+        saveAccountSettings(scope, incoming, 317);
+        getState().applySettingsForScope(scope, incoming, 317);
+        expect(getState().settings.voice.adapters.local_conversation.stt.fallbackToDevice).toBe(true);
+    });
+
 });

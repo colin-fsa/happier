@@ -5181,6 +5181,11 @@ class Sync {
             encryption: this.encryption,
             settingsScope,
             pendingSettings,
+            getPendingSettings: () => {
+                if ((!settingsScope && !this.pendingSettingsScope)
+                    || areAccountSettingsScopesEqual(this.pendingSettingsScope, settingsScope)) return this.pendingSettings;
+                return undefined;
+            },
             settingsSecretsKey: this.settingsSecretsKey,
             settingsSecretsReadKeys: this.settingsSecretsReadKeys,
             clearPendingSettings: (nextPendingSettings) => {

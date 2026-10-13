@@ -105,6 +105,47 @@ describe('voiceConversationSession', () => {
     };
   });
 
+  it.each([
+    { targetSessionId: null, requestedSessionId: 'sys_voice', expectedConversationId: 'sys_voice', expectedTarget: null },
+    { targetSessionId: 's_user', requestedSessionId: 'sys_voice', expectedConversationId: 'sys_voice', expectedTarget: 's_user' },
+    { targetSessionId: 's_user', requestedSessionId: 's_other', expectedConversationId: 'sys_other', expectedTarget: 's_other' },
+  ])('preserves the bound target when starting from the voice conversation ($targetSessionId, request=$requestedSessionId)', async ({ targetSessionId, requestedSessionId, expectedConversationId, expectedTarget }) => {
+    state.settings.voice.adapters.local_conversation.conversationMode = 'agent';
+    state.settings.voice.adapters.local_conversation.agent.backend = 'openai_compat';
+    const voiceHome = '/tmp/.happier/voice-agent';
+    state.sessions = {
+      s_user: { id: 's_user', active: true, metadata: { path: '/tmp/repo', machineId: 'm1' } },
+      s_other: { id: 's_other', active: true, metadata: { path: '/tmp/other', machineId: 'm1' } },
+      sys_voice: {
+        id: 'sys_voice', active: true, updatedAt: 10,
+        metadata: {
+          path: targetSessionId ? '/tmp/repo' : voiceHome, machineId: 'm1',
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+          voiceConversationScopeV1: targetSessionId ? { v: 1, kind: 'session_root', sessionRootId: targetSessionId } : { v: 1, kind: 'voice_home' },
+        },
+      },
+      sys_other: {
+        id: 'sys_other', active: true, updatedAt: 5,
+        metadata: {
+          path: '/tmp/other', machineId: 'm1',
+          systemSessionV1: { v: 1, key: 'voice_conversation', hidden: true },
+          voiceConversationScopeV1: { v: 1, kind: 'session_root', sessionRootId: 's_other' },
+        },
+      },
+    };
+    patchSessionMetadataWithRetry.mockImplementation(async (sessionId: string, updater: (metadata: unknown) => unknown) => {
+      state.sessions[sessionId].metadata = updater(state.sessions[sessionId].metadata);
+    });
+    spawnSession.mockResolvedValue({ type: 'error', errorCode: 'unexpected_spawn', errorMessage: 'Existing voice conversation should be reused' });
+    const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+    voiceSessionBindingStore.getState().bind({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__', conversationSessionId: 'sys_voice', transcriptMode: 'synthetic', targetSessionId, updatedAt: 10 });
+    const { ensureVoiceConversationBindingResolution } = await import('@/voice/sessionBinding/resolveVoiceConversationSessionId');
+    const { createVoiceSessionBindingManager } = await import('@/voice/sessionBinding/voiceSessionBindingManager');
+    const manager = createVoiceSessionBindingManager({ resolveBinding: ({ adapterId, ...params }) => ensureVoiceConversationBindingResolution({ ...params, providerId: adapterId, settings: state.settings }) });
+    await expect(manager.ensureBound({ adapterId: 'local_conversation', controlSessionId: '__voice_agent__', requestedTargetSessionId: requestedSessionId })).resolves.toMatchObject({ conversationSessionId: expectedConversationId, targetSessionId: expectedTarget });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('findVoiceConversationSessionId picks the newest hidden system voice conversation session', async () => {
     const { findVoiceConversationSessionId } = await import('@/voice/sessionBinding/voiceConversationSession');
 
