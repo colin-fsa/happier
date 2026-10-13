@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import type { VoiceAdapterId, VoiceSessionMode, VoiceSessionSnapshot } from '@/voice/session/types';
 
-export type LocalVoiceStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
+export type LocalVoiceStatus = 'connecting' | 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
 
 export type LocalVoiceState = {
   status: LocalVoiceStatus;
@@ -16,6 +17,35 @@ const useLocalVoiceStore = create<LocalVoiceState>(() => ({
 
 export function getLocalVoiceState(): LocalVoiceState {
   return useLocalVoiceStore.getState();
+}
+
+const SESSION_MODES = {
+  idle: 'idle',
+  connecting: 'idle',
+  recording: 'listening',
+  transcribing: 'transcribing',
+  sending: 'thinking',
+  speaking: 'speaking',
+  error: 'idle',
+} satisfies Record<LocalVoiceStatus, VoiceSessionMode>;
+
+export function getLocalVoiceSessionSnapshot(adapterId: VoiceAdapterId): VoiceSessionSnapshot {
+  const local = getLocalVoiceState();
+  const status = local.error
+    ? 'error'
+    : local.status === 'connecting'
+    ? 'connecting'
+    : local.status === 'error'
+      ? 'error'
+      : local.status === 'idle' && !local.sessionId ? 'disconnected' : 'connected';
+  return {
+    adapterId,
+    sessionId: local.sessionId,
+    status,
+    mode: SESSION_MODES[local.status],
+    canStop: local.sessionId !== null && status !== 'disconnected',
+    ...(local.error ? { errorCode: local.error, errorMessage: local.error } : {}),
+  };
 }
 
 export const useLocalVoiceStatus = () => useLocalVoiceStore((state) => state.status);

@@ -135,6 +135,7 @@ export async function persistVoiceAgentRunMetadata(
         backendId: string;
         backendTarget: BackendTargetRefV1;
         resumeHandle: VoiceAgentStartParams['resumeHandle'];
+        shouldContinue?: () => boolean;
     }>,
 ): Promise<void> {
     if (!metadataSessionId) return;
@@ -145,17 +146,22 @@ export async function persistVoiceAgentRunMetadata(
         backendTarget: params.backendTarget,
         resumeHandle: params.resumeHandle ?? null,
         updatedAtMs: Date.now(),
+        shouldContinue: params.shouldContinue,
     });
 }
 
-export async function clearVoiceAgentRunMetadata(metadataSessionId: string | null): Promise<void> {
+export async function clearVoiceAgentRunMetadata(
+    metadataSessionId: string | null,
+    options?: Readonly<{ shouldContinue?: () => boolean; expectedRunId?: string | null }>,
+): Promise<void> {
     if (!metadataSessionId) return;
-    await clearVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId });
+    await clearVoiceAgentRunMetadataFromSession({ sessionId: metadataSessionId, ...options });
 }
 
 export async function clearStaleDaemonRunState(
     sessionId: string,
     handle: VoiceAgentHandle | null,
+    shouldContinue?: () => boolean,
 ): Promise<void> {
     const metadataSessionId = resolveVoiceRunMetadataSessionId(sessionId, 'daemon', handle?.rpcSessionId);
     const persistedRunMeta = metadataSessionId
@@ -168,8 +174,9 @@ export async function clearStaleDaemonRunState(
         ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? resolvePersistedDaemonConversationSessionId() : sessionId)
         ?? sessionId;
 
+    if (shouldContinue?.() === false) return;
     if (staleRunId) {
         await sessionExecutionRunStop(staleRpcSessionId, { runId: staleRunId }).catch(() => {});
     }
-    await clearVoiceAgentRunMetadata(metadataSessionId).catch(() => {});
+    await clearVoiceAgentRunMetadata(metadataSessionId, { shouldContinue, expectedRunId: staleRunId }).catch(() => {});
 }

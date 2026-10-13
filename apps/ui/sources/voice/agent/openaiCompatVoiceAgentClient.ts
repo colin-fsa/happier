@@ -12,6 +12,7 @@ import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDis
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUiMemoryRecallGuidanceEnabled } from '@/sync/domains/memory/resolveUiMemoryRecallGuidanceEnabled';
 import { resolveUiVoicePromptStackBlocks } from '@/voice/agent/resolveUiVoicePromptStackBlocks';
+import { createTurnAbortError } from './voiceAgentAbort';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentTurnStreamEvent } from './types';
 
@@ -103,10 +104,12 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
       userText: string;
       displayUserText?: string;
       userTranscript?: ExecutionRunUserTranscriptDirective;
+      signal?: AbortSignal;
     }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }> {
     const state = this.voiceAgents.get(params.voiceAgentId);
     if (!state || state.sessionId !== params.sessionId) throw new Error('VOICE_AGENT_NOT_FOUND');
+    if (params.signal?.aborted) throw createTurnAbortError();
     const timeoutMs = resolveVoiceNetworkTimeoutMs(
       (storage.getState().settings as any)?.voice?.adapters?.local_conversation?.networkTimeoutMs,
       15_000,
@@ -122,9 +125,11 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
       maxTokens: state.maxTokens,
     });
 
-    const res = await fetchWithTimeout(req.url, req.init, timeoutMs, 'chat_timeout');
+    const res = await fetchWithTimeout(req.url, { ...req.init, signal: params.signal }, timeoutMs, 'chat_timeout');
+    if (params.signal?.aborted) throw createTurnAbortError();
     if (!res.ok) throw new Error('chat_failed');
     const assistantTextRaw = await parseOpenAiChatCompletionAssistantText(res);
+    if (params.signal?.aborted) throw createTurnAbortError();
     const extracted = extractVoiceActionsFromAssistantText(assistantTextRaw);
     const assistantText = extracted.assistantText;
     state.messages.push(userMessage);

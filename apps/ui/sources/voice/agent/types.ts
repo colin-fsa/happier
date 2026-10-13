@@ -102,6 +102,7 @@ export interface VoiceAgentClient {
       userText: string;
       displayUserText?: string;
       userTranscript?: ExecutionRunUserTranscriptDirective;
+      signal?: AbortSignal;
     }>,
   ): Promise<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
   commitUserTranscript(

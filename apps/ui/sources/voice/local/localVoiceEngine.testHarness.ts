@@ -248,6 +248,19 @@ export function setNextRecorderPrepareError(next: Error | null) {
 
 export async function getStorage() {
     const { storage } = await import('@/sync/domains/state/storage');
+    Object.assign(storage, {
+        __setState: (patch: Partial<ReturnType<typeof storage.getState>>) => storage.setState(patch),
+        __notify: () => storage.setState((state) => ({ ...state })),
+        // Retain the unchanged legacy polling-failure case's explicit injection only;
+        // normal fixtures use the real store and its subscriptions.
+        __throwGetStateOnce: (error: unknown) => {
+            const getter = vi.spyOn(storage, 'getState');
+            getter.mockImplementationOnce(() => {
+                getter.mockRestore();
+                throw error;
+            });
+        },
+    });
     return storage as any;
 }
 
@@ -257,8 +270,11 @@ export async function flushMicrotasks(turns: number = 1) {
     }
 }
 
-vi.mock('@/sync/sync', () => ({
+vi.mock('@/sync/sync', async () => {
+    const { decryptSecretValue } = await import('@/sync/encryption/secretSettings');
+    return ({
     sync: {
+        decryptSecretValue: (input: Parameters<typeof decryptSecretValue>[0]) => decryptSecretValue(input, null),
         submitMessage,
         enqueuePendingMessage,
         ensureSessionVisibleForMessageRoute: vi.fn(async () => {}),
@@ -284,24 +300,7 @@ vi.mock('@/sync/sync', () => ({
             getSessionEncryption: vi.fn(() => ({})),
         },
     },
-}));
-
-vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', async (importOriginal) => {
-    const original = await importOriginal<typeof import('@/voice/sessionBinding/resolveVoiceSessionBinding')>();
-    return {
-        ...original,
-        resolveVoiceSessionBindingByControlSessionId: ({ controlSessionId }: { controlSessionId: string }) => ({
-            adapterId: 'local_conversation',
-            controlSessionId,
-            conversationSessionId: controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID
-                ? 'voice-test-conversation'
-                : controlSessionId,
-            transcriptMode: 'synthetic',
-            targetSessionId: controlSessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : controlSessionId,
-            updatedAt: 1,
-        }),
-        resolveVoiceSessionBindingByConversationSessionId: () => null,
-    };
+    });
 });
 
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -500,39 +499,6 @@ vi.mock('@happier-dev/sherpa-native', () => ({
     }),
 }));
 
-vi.mock('@/sync/domains/state/storage', () => {
-    const subscribers = new Set<() => void>();
-    let throwNextGetState: unknown = null;
-    const state: any = {
-        settings: {
-            ...BASE_SETTINGS,
-        },
-        sessions: {},
-        sessionMessages: {},
-    };
-
-    const storage = {
-        getState: () => {
-            if (throwNextGetState) {
-                const error = throwNextGetState;
-                throwNextGetState = null;
-                throw error;
-            }
-            return state;
-        },
-        subscribe: (fn: () => void) => {
-            subscribers.add(fn);
-            return () => subscribers.delete(fn);
-        },
-        __setState: (patch: any) => Object.assign(state, patch),
-        __notify: () => subscribers.forEach((fn) => fn()),
-        __throwGetStateOnce: (err: unknown) => {
-            throwNextGetState = err;
-        },
-    };
-
-    return { storage };
-});
 
 export function registerLocalVoiceEngineHarnessHooks() {
     const originalFetch = globalThis.fetch;
@@ -668,9 +634,21 @@ export function registerLocalVoiceEngineHarnessHooks() {
 
         const storage = await getStorage();
         storage.__setState({
-            settings: { ...BASE_SETTINGS },
+            settings: { ...storage.getState().settings, ...BASE_SETTINGS },
             sessions: {},
             sessionMessages: {},
+        });
+        const { voiceSessionBindingStore } = await import('@/voice/sessionBinding/voiceSessionBindingStore');
+        voiceSessionBindingStore.setState({ bindingsByConversationSessionId: {} });
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: 's1',
+            conversationSessionId: 'voice-test-session-conversation', transcriptMode: 'synthetic',
+            targetSessionId: 's1', updatedAt: 1,
+        });
+        voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            conversationSessionId: 'voice-test-conversation', transcriptMode: 'synthetic',
+            targetSessionId: null, updatedAt: 1,
         });
     });
 

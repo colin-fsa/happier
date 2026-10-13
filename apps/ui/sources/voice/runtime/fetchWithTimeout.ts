@@ -16,6 +16,10 @@ export async function fetchWithTimeout(
   timeoutErrorCode: string,
 ): Promise<Response> {
   const controller = new AbortController();
+  const callerSignal = init?.signal;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await runtimeFetch(input, {
@@ -24,10 +28,12 @@ export async function fetchWithTimeout(
     });
   } catch (error) {
     if (isAbortError(error)) {
+      if (callerSignal?.aborted) throw error;
       throw new Error(timeoutErrorCode);
     }
     throw error;
   } finally {
     clearTimeout(timeout);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 }

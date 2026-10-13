@@ -43,3 +43,8 @@ export function isVoiceBargeInEnabled(settings: any): boolean {
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   return config?.tts?.bargeInEnabled === true;
 }
+
+export function supportsLocalVoiceHandsFree(settings: unknown, platformOs: string): boolean {
+  const provider = resolveLocalSttProvider(settings);
+  return provider === 'device' || (platformOs === 'web' && (provider === 'openai_compat' || provider === 'google_gemini'));
+}

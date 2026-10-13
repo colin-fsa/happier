@@ -42,6 +42,7 @@ function guessMimeType(uri: string): string {
 export async function transcribeRecordedAudioWithProvider(params: {
   uri: string;
   settings: any;
+  signal?: AbortSignal;
   decryptSecretValue?: (value: unknown) => string | null;
 }): Promise<string | null> {
   const decryptSecretValue = params.decryptSecretValue ?? ((value: unknown) => sync.decryptSecretValue(value as any));
@@ -55,7 +56,7 @@ export async function transcribeRecordedAudioWithProvider(params: {
   }
 
   if (provider === 'openai_compat') {
-    return await transcribeRecordedAudioWithHttpStt({ uri: params.uri, settings: params.settings });
+    return await transcribeRecordedAudioWithHttpStt({ uri: params.uri, settings: params.settings, signal: params.signal });
   }
 
   if (provider === 'google_gemini') {
@@ -78,13 +79,14 @@ export async function transcribeRecordedAudioWithProvider(params: {
 	    const uri = params.uri;
 	
 	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-	      const blob = await (await runtimeFetch(uri)).blob();
+	      const blob = await (await runtimeFetch(uri, { signal: params.signal })).blob();
 	      const text = await transcribeWithGoogleGeminiStt({
 	        apiKey,
 	        model,
 	        audio: { kind: 'web', blob, mimeType: blob.type || 'audio/webm' },
 	        language,
 	        timeoutMs,
+        signal: params.signal,
 	      });
       return text ? text.trim() || null : null;
     }
@@ -95,6 +97,7 @@ export async function transcribeRecordedAudioWithProvider(params: {
       audio: { kind: 'native', uri, mimeType: guessMimeType(uri) },
       language,
       timeoutMs,
+      signal: params.signal,
     });
     return text ? text.trim() || null : null;
   }

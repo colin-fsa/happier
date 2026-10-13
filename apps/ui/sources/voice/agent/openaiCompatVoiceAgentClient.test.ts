@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installVoiceAgentCommonModuleMocks } from './voiceAgentTestHelpers';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 const settingsState: any = {
   voice: {
@@ -350,6 +351,56 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     const second = bodies[1];
     expect(second?.messages?.some((m: any) => m?.role === 'user' && m?.content === 'first failed turn')).toBe(false);
     expect(second?.messages?.some((m: any) => m?.role === 'user' && m?.content === 'second turn')).toBe(true);
+  });
+
+  it.each(['before request', 'during request', 'during response body'] as const)('cancels a turn %s without retaining its history', async (phase) => {
+    const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+    const entered = createDeferred<void>();
+    const released = createDeferred<void>();
+    let requestWasAborted = false;
+    let firstRequest = true;
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      // The fixture mirrors the real JSON HTTP request and response boundary.
+      requests.push(JSON.parse(String(init?.body)));
+      if (firstRequest && requests.at(-1)?.messages.at(-1)?.content === 'obsolete user turn') {
+        firstRequest = false;
+        init?.signal?.addEventListener('abort', () => { requestWasAborted = true; }, { once: true });
+        const payload = { choices: [{ message: { content: 'obsolete assistant reply' } }] };
+        const response = Response.json(payload);
+        if (phase === 'during request') {
+          entered.resolve();
+          await released.promise;
+        } else if (phase === 'during response body') {
+          vi.spyOn(response, 'json').mockImplementation(async () => {
+            entered.resolve();
+            await released.promise;
+            return payload;
+          });
+        }
+        return response;
+      }
+      return Response.json({ choices: [{ message: { content: 'current assistant reply' } }] });
+    });
+    const { OpenAiCompatVoiceAgentClient } = await import('./openaiCompatVoiceAgentClient');
+    const client = new OpenAiCompatVoiceAgentClient();
+    const { voiceAgentId } = await client.start({ sessionId: 's1', chatModelId: 'fast-model', commitModelId: 'commit-model', permissionPolicy: 'read_only', idleTtlSeconds: 300, initialContext: 'Initial context' });
+    const controller = new AbortController();
+    if (phase === 'before request') controller.abort();
+    const oldTurn = client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'obsolete user turn', signal: controller.signal }).then(
+      (result) => ({ result }), (error: unknown) => ({ error }),
+    );
+    if (phase !== 'before request') {
+      await entered.promise;
+      controller.abort();
+      released.resolve();
+    }
+    expect(await oldTurn).toMatchObject({ error: { name: 'AbortError' } });
+    if (phase === 'before request') expect(requests).toHaveLength(0);
+    if (phase === 'during request') expect(requestWasAborted).toBe(true);
+    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'current user turn' })).resolves.toEqual({ assistantText: 'current assistant reply' });
+    const nextRequest = requests.at(-1);
+    expect(nextRequest?.messages).toContainEqual({ role: 'user', content: 'current user turn' });
+    expect(nextRequest?.messages.some((message) => message.content === 'obsolete user turn' || message.content === 'obsolete assistant reply')).toBe(false);
   });
 
   it('throws commit_failed when commit HTTP request is not ok', async () => {

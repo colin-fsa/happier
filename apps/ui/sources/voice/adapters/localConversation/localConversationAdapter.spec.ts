@@ -1,17 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
+import { getLocalVoiceState, patchLocalVoiceState, subscribeLocalVoiceState } from '@/voice/local/localVoiceState';
+import type { VoiceSessionSnapshot } from '@/voice/session/types';
 
 const toggleLocalVoiceTurn = vi.fn(async () => {});
 const stopLocalVoiceSession = vi.fn(async () => {});
 const abortLocalVoiceTurn = vi.fn(async (_sessionId: string) => {});
 const appendLocalVoiceAgentContextUpdate = vi.fn();
 const sendVoiceTextTurn = vi.fn(async () => {});
-const getLocalVoiceState = vi.fn(() => ({
-  status: 'idle' as const,
-  sessionId: null as string | null,
-  error: null as Error | null,
-}));
 
 const ensureBound = vi.fn(async (params: any): Promise<VoiceSessionBinding | null> => ({
   adapterId: 'local_conversation',
@@ -55,6 +52,7 @@ vi.mock('@/voice/local/localVoiceEngine', () => ({
   abortLocalVoiceTurn,
   appendLocalVoiceAgentContextUpdate,
   getLocalVoiceState,
+  subscribeLocalVoiceState,
 }));
 vi.mock('@/voice/local/sendVoiceTextTurn', () => ({
   sendVoiceTextTurn,
@@ -70,10 +68,9 @@ vi.mock('@/voice/sessionBinding/voiceSessionBindingRuntime', () => ({
 
 describe('local conversation voice adapter', () => {
   beforeEach(() => {
-    vi.resetModules();
     vi.clearAllMocks();
     resetMockVoiceSettings();
-    getLocalVoiceState.mockReturnValue({
+    patchLocalVoiceState({
       status: 'idle',
       sessionId: null,
       error: null,
@@ -127,7 +124,7 @@ describe('local conversation voice adapter', () => {
   });
 
   it('treats idle local voice state with a sessionId as connected (ready)', async () => {
-    getLocalVoiceState.mockReturnValueOnce({ status: 'idle', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, error: null });
+    patchLocalVoiceState({ status: 'idle', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, error: null });
     const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
     const adapter = createLocalConversationVoiceAdapter();
 
@@ -233,6 +230,43 @@ describe('local conversation voice adapter', () => {
     await adapter.toggle({ sessionId: 's1' });
     expect(ensureBound).not.toHaveBeenCalled();
     expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+  });
+
+  it('does not start the microphone after stop cancels a pending binding', async () => {
+    let finishBinding!: (binding: VoiceSessionBinding | null) => void;
+    ensureBound.mockImplementationOnce(() => new Promise((resolve) => { finishBinding = resolve; }));
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    const startup = adapter.toggle({ sessionId: 's1' });
+    await adapter.stop({ sessionId: '' });
+    finishBinding({
+      adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      conversationSessionId: 'sys_voice', transcriptMode: 'native_session', targetSessionId: 's1', updatedAt: 1,
+    });
+    await startup;
+    expect(toggleLocalVoiceTurn).not.toHaveBeenCalled();
+
+    await adapter.toggle({ sessionId: 's1' });
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledOnce();
+  });
+
+  it('publishes pending binding and failure through the adapter snapshot', async () => {
+    let failBinding!: (error: Error) => void;
+    ensureBound.mockImplementationOnce(() => new Promise((_resolve, reject) => { failBinding = reject; }));
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    const observed: VoiceSessionSnapshot[] = [];
+    const unsubscribe = adapter.subscribe?.(() => { observed.push(adapter.getSnapshot()); });
+    const startup = adapter.toggle({ sessionId: 's1' });
+    const result = startup.catch(() => {});
+    expect(adapter.getSnapshot()).toMatchObject({ status: 'connecting', canStop: true });
+    failBinding(new Error('Target machine daemon is offline'));
+    await result;
+    expect(adapter.getSnapshot()).toMatchObject({ status: 'error', canStop: false, errorMessage: 'Target machine daemon is offline' });
+    expect(observed.at(-1)).toMatchObject({ status: 'error', canStop: false, errorMessage: 'Target machine daemon is offline' });
+    unsubscribe?.();
   });
 
 });

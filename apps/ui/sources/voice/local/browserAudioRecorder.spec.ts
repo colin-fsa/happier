@@ -92,3 +92,65 @@ describe('browser recording resources', () => {
     recorder.dispose();
   });
 });
+
+
+describe('browser hands-free endpointing', () => {
+  it.each([120, 1000])('retains speech and honors silence/minimum elapsed duration (%ims), then stops monitoring', async (minSpeechMs) => {
+    installBrowserCapture();
+    let level = 0;
+    let nextFrame: FrameRequestCallback | undefined;
+    const close = vi.fn(async () => {});
+    const disconnect = vi.fn();
+    class CaptureContext {
+      state = 'running';
+      resume = async () => {};
+      createMediaStreamSource() { return { connect: vi.fn(), disconnect: vi.fn() }; }
+      createAnalyser() {
+        return { fftSize: 2048, getFloatTimeDomainData: (samples: Float32Array) => samples.fill(level), disconnect };
+      }
+      close = close;
+    }
+    vi.stubGlobal('AudioContext', CaptureContext);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { nextFrame = callback; return 1; });
+    vi.stubGlobal('cancelAnimationFrame', () => { nextFrame = undefined; });
+    const ended = vi.fn();
+    const recorder = createBrowserAudioRecorder({ audioContext: new AudioContext(), endpointing: { silenceMs: 450, minSpeechMs }, onSpeechEnded: ended });
+    await recorder.prepareToRecordAsync();
+    recorder.record();
+    const frame = (time: number, amplitude: number) => { level = amplitude; const callback = nextFrame; nextFrame = undefined; callback?.(time); };
+    frame(0, 0);
+    frame(1000, 0);
+    expect(ended).not.toHaveBeenCalled();
+    frame(1010, 0.1);
+    frame(1110, 0.1);
+    frame(1120, 0);
+    frame(1400, 0.1); // resumed speech cancels the pending silence window
+    frame(1410, 0);
+    frame(1849, 0);
+    expect(ended).not.toHaveBeenCalled();
+    frame(1850, 0);
+    if (minSpeechMs === 1000) {
+      expect(ended).not.toHaveBeenCalled();
+      frame(2010, 0); // a short utterance still ends once the minimum elapsed turn has passed
+    }
+    expect(ended).toHaveBeenCalledOnce();
+    expect(nextFrame).toBeUndefined();
+    await recorder.stop();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(close).not.toHaveBeenCalled();
+    recorder.dispose();
+  });
+
+  it('releases a microphone acquired after disposal while permission was pending', async () => {
+    const h = installBrowserCapture();
+    let grant: (stream: { getTracks: () => { stop: () => void }[] }) => void = () => {};
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: () => new Promise((resolve) => { grant = resolve; }) } });
+    const recorder = createBrowserAudioRecorder();
+    const preparing = recorder.prepareToRecordAsync();
+    recorder.dispose();
+    grant({ getTracks: () => [{ stop: h.trackStop }] });
+    await expect(preparing).rejects.toThrow('web_audio_recording_cancelled');
+    expect(h.trackStop).toHaveBeenCalledOnce();
+    expect(h.instances).toHaveLength(0);
+  });
+});

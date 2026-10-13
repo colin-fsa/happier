@@ -13,6 +13,11 @@ import { t } from '@/text';
   }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock();
+});
+
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('expo-linear-gradient', () => ({
   LinearGradient: 'LinearGradient',
@@ -185,6 +190,33 @@ async function loadLocalConversationSection() {
 }
 
 describe('LocalConversationSection', () => {
+  it.each([
+    ['local_conversation', 'openai_compat'], ['local_conversation', 'google_gemini'],
+    ['local_direct', 'openai_compat'], ['local_direct', 'google_gemini'],
+  ] as const)('lets web users enable hands-free capture for %s / %s', async (adapterId, provider) => {
+    const { LocalDirectSection } = await import('./LocalDirectSection');
+    const LocalConversationSection = await loadLocalConversationSection();
+    const Section = adapterId === 'local_direct' ? LocalDirectSection : LocalConversationSection;
+    const cfg = voiceSettingsDefaults.adapters[adapterId];
+    const voice: VoiceSettings = {
+      ...voiceSettingsDefaults, providerId: adapterId,
+      adapters: { ...voiceSettingsDefaults.adapters, [adapterId]: { ...cfg, stt: { ...cfg.stt, provider } } },
+    };
+    const setVoice = vi.fn();
+    const screen = await renderSettingsView(<Section voice={voice} setVoice={setVoice} />);
+    const item = screen.findAll((node) => String(node.type) === 'Item'
+      && node.props.title === t('settingsVoice.local.conversation.handsFree.enableTitle'))[0];
+    const toggle = item?.props.rightElement;
+    if (!React.isValidElement<{ value: boolean; onValueChange: (value: boolean) => void }>(toggle)) {
+      throw new Error('hands-free enable control is unavailable');
+    }
+    expect(toggle.props.value).toBe(false);
+    await act(async () => { toggle.props.onValueChange(true); });
+    expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
+      adapters: expect.objectContaining({ [adapterId]: expect.objectContaining({ handsFree: expect.objectContaining({ enabled: true }) }) }),
+    }));
+  });
+
   it('does not crash when providerId toggles away from local_conversation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = () => {};

@@ -14,6 +14,7 @@ export async function speakWithLocalTtsProvider(ctx: {
   networkTimeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
   onSpeaking: () => void;
+  signal?: AbortSignal;
 }): Promise<void> {
   const provider = ctx.tts.provider;
 
@@ -21,7 +22,7 @@ export async function speakWithLocalTtsProvider(ctx: {
     let clearStopper = () => {};
     try {
       clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-      await speakDeviceText(ctx.text, ctx.onSpeaking).catch(() => {});
+      await speakDeviceText(ctx.text, ctx.onSpeaking);
     } finally {
       clearStopper();
     }
@@ -31,40 +32,28 @@ export async function speakWithLocalTtsProvider(ctx: {
   if (provider === 'local_neural') {
     const localNeural = (ctx.tts.localNeural ?? null) as any;
     const model = typeof localNeural?.model === 'string' && localNeural.model.trim() ? localNeural.model.trim() : 'kokoro';
-    if (model !== 'kokoro') return;
+    if (model !== 'kokoro') throw new Error('unsupported_local_tts_model');
 
     const assetSetId = typeof localNeural?.assetId === 'string' && localNeural.assetId.trim() ? localNeural.assetId.trim() : null;
     const voiceId = typeof localNeural?.voiceId === 'string' && localNeural.voiceId.trim() ? localNeural.voiceId.trim() : 'af_heart';
     const speed = typeof localNeural?.speed === 'number' && Number.isFinite(localNeural.speed) ? localNeural.speed : 1;
 
     ctx.onSpeaking();
-    const ok = await speakKokoroText({
+    await speakKokoroText({
       text: ctx.text,
       assetSetId,
       voiceId,
       speed,
       timeoutMs: resolveKokoroOperationTimeoutMs(ctx.networkTimeoutMs),
       registerPlaybackStopper: ctx.registerPlaybackStopper,
-    })
-      .then(() => true)
-      .catch(() => false);
-
-    if (ok) return;
-
-    let clearStopper = () => {};
-    try {
-      clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-      await speakDeviceText(ctx.text, ctx.onSpeaking).catch(() => {});
-    } finally {
-      clearStopper();
-    }
+    });
     return;
   }
 
   if (provider === 'google_cloud') {
     const googleCloud = (ctx.tts.googleCloud ?? null) as any;
     const apiKey = googleCloud?.apiKey ? (sync.decryptSecretValue(googleCloud.apiKey) ?? null) : null;
-    if (!apiKey) return;
+    if (!apiKey) throw new Error('missing_tts_api_key');
 
     const voiceName = typeof googleCloud?.voiceName === 'string' && googleCloud.voiceName.trim() ? googleCloud.voiceName.trim() : null;
     const languageCode =
@@ -90,13 +79,13 @@ export async function speakWithLocalTtsProvider(ctx: {
       pitch,
       timeoutMs: ctx.networkTimeoutMs,
       registerPlaybackStopper: ctx.registerPlaybackStopper,
-    }).catch(() => {});
+    });
     return;
   }
 
   // openai_compat
   const baseUrl = String(ctx.tts.openaiCompat.baseUrl ?? '').trim();
-  if (!baseUrl) return;
+  if (!baseUrl) throw new Error('missing_tts_base_url');
   const apiKey = ctx.tts.openaiCompat.apiKey ? (sync.decryptSecretValue(ctx.tts.openaiCompat.apiKey) ?? null) : null;
   const model = ctx.tts.openaiCompat.model ?? 'tts-1';
   const voice = ctx.tts.openaiCompat.voice ?? 'alloy';
@@ -111,6 +100,7 @@ export async function speakWithLocalTtsProvider(ctx: {
     format,
     input: ctx.text,
     timeoutMs: ctx.networkTimeoutMs,
+    signal: ctx.signal,
     registerPlaybackStopper: ctx.registerPlaybackStopper,
-  }).catch(() => {});
+  });
 }

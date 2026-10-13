@@ -8,7 +8,9 @@ export async function speakAssistantText(params: {
   networkTimeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
   onSpeaking: () => void;
+  signal?: AbortSignal;
 }): Promise<void> {
+  if (params.signal?.aborted) throw Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
   const trimmed = params.text.trim();
   if (!trimmed) return;
 
@@ -25,7 +27,24 @@ export async function speakAssistantText(params: {
     settings: params.settings,
     tts,
     networkTimeoutMs: params.networkTimeoutMs,
-    registerPlaybackStopper: params.registerPlaybackStopper,
-    onSpeaking: params.onSpeaking,
+    signal: params.signal,
+    registerPlaybackStopper: (stop) => {
+      if (params.signal?.aborted) { stop(); return () => {}; }
+      let stopped = false;
+      let clear = () => {};
+      const stopOnce = () => {
+        if (stopped) return;
+        stopped = true;
+        clear();
+        stop();
+      };
+      clear = params.registerPlaybackStopper(stopOnce);
+      params.signal?.addEventListener('abort', stopOnce, { once: true });
+      return () => {
+        params.signal?.removeEventListener('abort', stopOnce);
+        clear();
+      };
+    },
+    onSpeaking: params.signal ? () => { if (!params.signal?.aborted) params.onSpeaking(); } : params.onSpeaking,
   });
 }

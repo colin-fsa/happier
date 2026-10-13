@@ -211,6 +211,14 @@ This is the main output test for:
 
 If enabled, Happier speaks replies automatically after a turn completes.
 
+### Browser hands-free conversation
+
+In development builds, browser Local voice also supports **Hands-free** with OpenAI-compatible and Google Gemini STT. Enable it to submit a recording after speech followed by the configured silence timeout. The minimum speech duration delays early submission; short answers can still finish after silence.
+
+With **Auto-speak replies** enabled, capture waits for the welcome message and each spoken reply to finish, then starts listening again. Without hands-free enabled, use the microphone control to finish each recorded turn manually.
+
+The browser needs microphone permission and a secure context. Speech activity detection uses microphone volume, so background noise can delay the end of a turn. Keep the voice tab visible while conversing. If STT or TTS fails, the voice surface reports the error; retry or disconnect and reconnect instead of assuming a reply was heard or spoken.
+
 ### Barge-in
 
 If enabled, starting a new turn can interrupt current speech playback so you do not need to wait for the previous spoken reply to finish.
@@ -413,6 +421,8 @@ If your speech server runs on your computer, use:
 ### Web and CORS
 
 For web builds, your STT or TTS server may need CORS configured correctly.
+
+An HTTPS Happier page needs an HTTPS speech endpoint that the browser itself can reach. A URL reachable only from the relay's Docker container is insufficient. Allow the Happier origin and the endpoint's POST and OPTIONS requests. **Test TTS** checks output only; it does not verify microphone capture or transcription.
 
 ### Exposing services outside your LAN
 

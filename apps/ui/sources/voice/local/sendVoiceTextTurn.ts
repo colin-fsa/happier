@@ -177,6 +177,7 @@ export async function sendVoiceTextTurn(params: {
       const playbackEpoch = params.playbackController.captureEpoch();
       let queuedChunkCount = 0;
       let chunkPlaybackQueue: Promise<void> = Promise.resolve();
+      let chunkPlaybackError: Error | null = null;
 
       const queueSpokenChunk = (chunkText: string) => {
         if (params.signal?.aborted) return;
@@ -185,17 +186,20 @@ export async function sendVoiceTextTurn(params: {
         queuedChunkCount += 1;
         chunkPlaybackQueue = chunkPlaybackQueue
           .then(async () => {
-            if (params.signal?.aborted) return;
+            if (params.signal?.aborted || chunkPlaybackError) return;
             if (!params.playbackController.isEpochCurrent(playbackEpoch)) return;
             await speakAssistantText({
               text: trimmed,
               settings,
               networkTimeoutMs,
+              signal: params.signal,
               registerPlaybackStopper: params.playbackController.registerStopper,
               onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
             });
           })
-          .catch(() => {});
+          .catch((error: unknown) => {
+            chunkPlaybackError = error instanceof Error ? error : new Error('tts_failed');
+          });
       };
 
       const sendOptions = chunker
@@ -211,19 +215,15 @@ export async function sendVoiceTextTurn(params: {
           ? { signal: params.signal }
           : undefined;
 
-      const canSpeak =
-        autoSpeak &&
-        (ttsProvider === 'device' ||
-          ttsProvider === 'local_neural' ||
-          (ttsProvider === 'openai_compat' && Boolean(openaiCompatBaseUrl)));
       const speakAssistantReply = async (assistantText: string, turnIndex: number) => {
-        if (!canSpeak || !assistantText.trim()) return;
+        if (!autoSpeak || !assistantText.trim()) return;
         if (turnIndex === 0 && chunker) {
           chunker.flush().forEach((chunk) => queueSpokenChunk(chunk));
           if (queuedChunkCount === 0) {
             queueSpokenChunk(assistantText);
           }
           await chunkPlaybackQueue;
+          if (chunkPlaybackError) throw chunkPlaybackError;
           return;
         }
 
@@ -232,6 +232,7 @@ export async function sendVoiceTextTurn(params: {
           text: assistantText,
           settings,
           networkTimeoutMs,
+          signal: params.signal,
           registerPlaybackStopper: params.playbackController.registerStopper,
           onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
         });
@@ -269,14 +270,13 @@ export async function sendVoiceTextTurn(params: {
       return;
     } catch (error) {
       if (isTurnAbortedError(error) || params.signal?.aborted) {
-        patchLocalVoiceState({ status: 'idle', sessionId, error: null });
         return;
       }
       voiceActivityController.appendError(sessionId, adapterId, 'voice_agent_send_failed', error instanceof Error ? error.message : 'send_failed');
       patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
       throw error instanceof Error ? error : new Error('send_failed');
     } finally {
-      setIdleStateUnlessRecording(sessionId);
+      if (!params.signal?.aborted) setIdleStateUnlessRecording(sessionId);
     }
   }
 
@@ -308,25 +308,20 @@ export async function sendVoiceTextTurn(params: {
   }
 
   const assistantText = await waitForNextAssistantTextMessage(sessionId, baselineIds, baselineCount, 60_000, params.signal);
-  if (params.signal?.aborted) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
-    return;
-  }
+  if (params.signal?.aborted) return;
   if (!assistantText) {
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
   }
 
-  if (params.signal?.aborted) {
-    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
-    return;
-  }
+  if (params.signal?.aborted) return;
   await speakAssistantText({
     text: assistantText,
     settings,
     networkTimeoutMs,
+    signal: params.signal,
     registerPlaybackStopper: params.playbackController.registerStopper,
     onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
   });
-  setIdleStateUnlessRecording(sessionId);
+  if (!params.signal?.aborted) setIdleStateUnlessRecording(sessionId);
 }

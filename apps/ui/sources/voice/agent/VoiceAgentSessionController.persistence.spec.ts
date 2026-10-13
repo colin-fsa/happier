@@ -8,6 +8,7 @@ const start = vi.fn(async (params?: any) => ({ voiceAgentId: params?.existingRun
 const sendTurn = vi.fn(async () => ({ assistantText: 'ok', actions: [] }));
 const commit = vi.fn(async () => ({ commitText: 'commit' }));
 const welcome = vi.fn(async () => ({ assistantText: '' }));
+const stop = vi.fn(async () => {});
 const refreshSessions = vi.fn(async () => {});
 const spawnSession = vi.fn<(opts: unknown) => Promise<{ type: 'success'; sessionId: string }>>(async (_opts: unknown) => ({
   type: 'success' as const,
@@ -38,7 +39,7 @@ vi.mock('@/voice/agent/daemonVoiceAgentClient', () => ({
     startTurnStream = vi.fn();
     readTurnStream = vi.fn();
     cancelTurnStream = vi.fn();
-    stop = vi.fn();
+    stop = stop;
   },
 }));
 
@@ -218,6 +219,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     commit.mockImplementation(async () => ({ commitText: 'commit' }));
     welcome.mockReset();
     welcome.mockImplementation(async () => ({ assistantText: '' }));
+    stop.mockReset();
     sessionExecutionRunGet.mockClear();
     sessionExecutionRunList.mockClear();
     sessionExecutionRunStop.mockClear();
@@ -254,6 +256,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     state.settings.voice.adapters.local_conversation.agent.machineTargetMode = 'auto';
     state.settings.voice.adapters.local_conversation.agent.machineTargetId = null;
     state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = null;
+    state.settings.voice.adapters.local_conversation.agent.welcome = { enabled: false };
     delete state.sessions.s2;
     delete state.sessions.active_voice;
     delete state.sessions.sys_voice_new;
@@ -449,6 +452,118 @@ describe('VoiceAgentSessionController (persistence)', () => {
 
     expect(sessionExecutionRunStop).toHaveBeenCalledWith('s1', { runId: 'run_prev' });
     expect(state.sessions.s1.metadata.voiceAgentRunV1).toBeNull();
+  });
+
+  it('preserves a reconnected agent when an older pending start finishes stopping', async () => {
+    let finishOldStart!: (result: { voiceAgentId: string }) => void;
+    const oldStartResult = new Promise<{ voiceAgentId: string }>((resolve) => { finishOldStart = resolve; });
+    start.mockImplementationOnce(async () => await oldStartResult).mockResolvedValueOnce({ voiceAgentId: 'run_new' });
+    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+
+    const oldStart = controller.ensureRunning('s1');
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    const stopping = controller.stop('s1');
+    await controller.ensureRunning('s1');
+    finishOldStart({ voiceAgentId: 'run_old' });
+    await Promise.all([oldStart, stopping]);
+
+    expect(controller.isActive('s1')).toBe(true);
+    expect(state.sessions.s1.metadata.voiceAgentRunV1).toMatchObject({ runId: 'run_new' });
+    await controller.sendTurn('s1', 'hello after reconnect');
+    expect(sendTurn).toHaveBeenLastCalledWith(expect.objectContaining({ voiceAgentId: 'run_new' }));
+  });
+
+  it.each(['turn', 'commit', 'welcome'] as const)('preserves a replacement agent when an old %s fails late', async (operation) => {
+    let failOldRpc!: (error: Error) => void;
+    const staleRpc = new Promise<never>((_resolve, reject) => { failOldRpc = reject; });
+    start.mockResolvedValueOnce({ voiceAgentId: 'run_old' }).mockResolvedValueOnce({ voiceAgentId: 'run_new' });
+    state.settings.voice.adapters.local_conversation.agent.welcome = { enabled: true, mode: 'immediate' };
+    const rpc = operation === 'turn' ? sendTurn : operation === 'commit' ? commit : welcome;
+    rpc.mockImplementationOnce(async () => await staleRpc);
+    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+    const pending = operation === 'turn'
+      ? controller.sendTurn('s1', 'old request')
+      : operation === 'commit' ? controller.commit('s1') : controller.ensureRunningAndMaybeWelcome('s1');
+    const result = pending.then((value) => ({ value }), (error: unknown) => ({ error }));
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledTimes(1));
+    await controller.stop('s1');
+    await controller.ensureRunning('s1');
+    const error = new Error('Voice agent not found');
+    failOldRpc(error);
+    const outcome = await result;
+
+    expect(controller.isActive('s1')).toBe(true);
+    expect(state.sessions.s1.metadata.voiceAgentRunV1).toMatchObject({ runId: 'run_new' });
+    expect(start).toHaveBeenCalledTimes(2);
+    if (operation === 'turn') expect(outcome).toMatchObject({ error: { name: 'AbortError' } });
+    else expect(outcome).toEqual(operation === 'welcome' ? { value: null } : { error });
+  });
+
+  it('does not send through an obsolete initialization or consume the replacement context', async () => {
+    let finishOldStart!: (result: { voiceAgentId: string }) => void;
+    const oldStartResult = new Promise<{ voiceAgentId: string }>((resolve) => { finishOldStart = resolve; });
+    start.mockImplementationOnce(async () => await oldStartResult).mockResolvedValueOnce({ voiceAgentId: 'run_new' });
+    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+    const oldTurn = controller.sendTurn('s1', 'old request').then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    const stopping = controller.stop('s1');
+    controller.appendContextUpdate('s1', 'fresh replacement context');
+    await controller.ensureRunning('s1');
+    finishOldStart({ voiceAgentId: 'run_old' });
+    await stopping;
+
+    expect(await oldTurn).toMatchObject({ name: 'AbortError' });
+    expect(sendTurn).not.toHaveBeenCalled();
+    await controller.sendTurn('s1', 'new request');
+    expect(sendTurn).toHaveBeenLastCalledWith(expect.objectContaining({
+      voiceAgentId: 'run_new',
+      userText: expect.stringContaining('fresh replacement context'),
+    }));
+  });
+
+  it('does not stop a run reused by the replacement initialization', async () => {
+    let finishOldStart!: (result: { voiceAgentId: string }) => void;
+    const oldStartResult = new Promise<{ voiceAgentId: string }>((resolve) => { finishOldStart = resolve; });
+    start.mockImplementationOnce(async () => await oldStartResult).mockResolvedValueOnce({ voiceAgentId: 'run_shared' });
+    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+    const oldStart = controller.ensureRunning('s1');
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    const stopping = controller.stop('s1');
+    await controller.ensureRunning('s1');
+    finishOldStart({ voiceAgentId: 'run_shared' });
+    await Promise.all([oldStart, stopping]);
+
+    expect(stop).not.toHaveBeenCalled();
+    expect(controller.isActive('s1')).toBe(true);
+  });
+
+  it.each(['abort', 'stop'] as const)('releases a non-streaming turn on %s so the next turn does not wait for the obsolete RPC', async (action) => {
+    let finishOldRpc!: (result: { assistantText: string; actions: [] }) => void;
+    const oldRpc = new Promise<{ assistantText: string; actions: [] }>((resolve) => { finishOldRpc = resolve; });
+    sendTurn.mockImplementationOnce(async () => await oldRpc);
+    const { createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
+    const controller = createVoiceAgentSessionController();
+    const abort = new AbortController();
+    const oldTurn = controller.sendTurn('s1', 'old request', { signal: abort.signal }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(sendTurn).toHaveBeenCalledTimes(1));
+    if (action === 'abort') abort.abort();
+    else await controller.stop('s1');
+    const nextTurn = controller.sendTurn('s1', 'new request');
+    await vi.waitFor(() => expect(sendTurn).toHaveBeenCalledTimes(2));
+    const abortError = await oldTurn;
+    expect(abortError).toMatchObject({ name: 'AbortError' });
+    await expect(nextTurn).resolves.toMatchObject({ assistantText: 'ok' });
+    finishOldRpc({ assistantText: 'obsolete response', actions: [] });
   });
 
   it('stops all matching persisted daemon voice runs for a session so stale running runs are not reattached on restart', async () => {
@@ -790,7 +905,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
     const { VOICE_AGENT_GLOBAL_SESSION_ID, createVoiceAgentSessionController } = await loadVoiceAgentPersistenceHarness();
     const controller = createVoiceAgentSessionController();
 
-    await expect(controller.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).resolves.toBeNull();
+    await expect(controller.ensureRunningAndMaybeWelcome(VOICE_AGENT_GLOBAL_SESSION_ID)).rejects.toThrow('Voice agent not found');
     await expect(controller.sendTurn(VOICE_AGENT_GLOBAL_SESSION_ID, 'hello')).resolves.toMatchObject({
       assistantText: 'recovered',
       actions: [],
@@ -1117,7 +1232,8 @@ describe('VoiceAgentSessionController (persistence)', () => {
         createdAt: 0,
         updatedAt: 0,
         active: true,
-        activeAt: 1,
+        // The daemon has a fresh heartbeat; the RPC failure is discovered only on start.
+        activeAt: Date.now(),
         revokedAt: null,
         metadata: { host: 'old-box', happyHomeDir: '/old/.happier', homeDir: '/Users/old' },
         metadataVersion: 0,

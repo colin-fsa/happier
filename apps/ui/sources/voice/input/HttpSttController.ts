@@ -16,6 +16,7 @@ export class MissingSttBaseUrlError extends Error {
 export async function transcribeRecordedAudioWithHttpStt(params: {
   uri: string;
   settings: any;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   const { uri, settings } = params;
   const voice = settings?.voice ?? null;
@@ -43,7 +44,7 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
 
 	  const transcriptionReq = await (async () => {
 	    if (Platform.OS === 'web' && uri.startsWith('blob:')) {
-	      const blob = await (await runtimeFetch(uri)).blob();
+	      const blob = await (await runtimeFetch(uri, { signal: params.signal })).blob();
 	      return buildOpenAiTranscriptionRequest({
 	        baseUrl: sttBaseUrl,
 	        apiKey: sttApiKey,
@@ -59,9 +60,9 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
     });
   })();
 
-  const response = await fetchWithTimeout(transcriptionReq.url, transcriptionReq.init, networkTimeoutMs, 'stt_timeout');
+  const response = await fetchWithTimeout(transcriptionReq.url, { ...transcriptionReq.init, signal: params.signal }, networkTimeoutMs, 'stt_timeout');
   if (!response.ok) {
-    return null;
+    throw new Error(`http_stt_failed:${response.status}`);
   }
 
   const json = await response.json().catch(() => null);

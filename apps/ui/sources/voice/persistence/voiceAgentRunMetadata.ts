@@ -68,6 +68,7 @@ async function writeVoiceAgentRunMetadata(
     backendTarget: BackendTargetRefV1;
     resumeHandle: ExecutionRunResumeHandle | null;
     updatedAtMs: number;
+    shouldContinue?: () => boolean;
   }>,
 ): Promise<void> {
   const runId = normalizeNonEmptyString(params.runId);
@@ -89,18 +90,25 @@ async function writeVoiceAgentRunMetadata(
     transcriptContractVersion: VOICE_AGENT_RUN_TRANSCRIPT_CONTRACT_VERSION,
   };
 
-  await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) => ({
+  await sync.patchSessionMetadataWithRetry(sessionId, (metadata) => ({
     ...metadata,
     voiceAgentRunV1: payload,
-  }));
+  }), params.shouldContinue ? { shouldContinue: params.shouldContinue } : undefined);
 }
 
-async function clearVoiceAgentRunMetadata(sessionId: string | null): Promise<void> {
+async function clearVoiceAgentRunMetadata(
+  sessionId: string | null,
+  options: Readonly<{ shouldContinue?: () => boolean; expectedRunId?: string | null }>,
+): Promise<void> {
   if (!sessionId) return;
-  await sync.patchSessionMetadataWithRetry(sessionId, (metadata: any) => ({
-    ...metadata,
-    voiceAgentRunV1: null,
-  }));
+  await sync.patchSessionMetadataWithRetry(sessionId, (metadata) => {
+    if (options.expectedRunId !== undefined) {
+      const run = metadata.voiceAgentRunV1;
+      const currentRunId = isVoiceAgentRunMetadataV1(run) ? run.runId : null;
+      if (options.expectedRunId === null ? run != null : currentRunId !== options.expectedRunId) return metadata;
+    }
+    return { ...metadata, voiceAgentRunV1: null };
+  }, options.shouldContinue ? { shouldContinue: options.shouldContinue } : undefined);
 }
 
 export function readVoiceAgentRunMetadataFromSession(params: Readonly<{ sessionId: string }>): VoiceAgentRunMetadataV1 | null {
@@ -116,6 +124,7 @@ export async function writeVoiceAgentRunMetadataToSession(
     backendTarget: BackendTargetRefV1;
     resumeHandle: ExecutionRunResumeHandle | null;
     updatedAtMs: number;
+    shouldContinue?: () => boolean;
   }>,
 ): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
@@ -123,8 +132,8 @@ export async function writeVoiceAgentRunMetadataToSession(
 }
 
 export async function clearVoiceAgentRunMetadataFromSession(
-  params: Readonly<{ sessionId: string }>,
+  params: Readonly<{ sessionId: string; shouldContinue?: () => boolean; expectedRunId?: string | null }>,
 ): Promise<void> {
   const sessionId = normalizeNonEmptyString(params.sessionId);
-  await clearVoiceAgentRunMetadata(sessionId);
+  await clearVoiceAgentRunMetadata(sessionId, params);
 }

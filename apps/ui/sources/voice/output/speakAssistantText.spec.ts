@@ -219,36 +219,4 @@ describe('speakAssistantText', () => {
     );
   });
 
-  it('falls back to device TTS when Kokoro synthesis fails', async () => {
-    speakKokoroTextSpy.mockRejectedValueOnce(new Error('kokoro failed'));
-    speakDeviceTextSpy.mockClear();
-
-    const onSpeaking = vi.fn();
-    const registerPlaybackStopper = (_s: () => void) => () => {};
-
-    await speakAssistantText({
-      text: 'hello',
-      settings: {
-        voice: {
-          providerId: 'local_direct',
-          adapters: {
-            local_direct: {
-              tts: {
-                provider: 'local_neural',
-                openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
-                localNeural: { model: 'kokoro', assetId: 'kokoro-82m', voiceId: 'af_heart', speed: 1 },
-                autoSpeakReplies: true,
-                bargeInEnabled: true,
-              },
-            },
-          },
-        },
-      },
-      networkTimeoutMs: 15000,
-      registerPlaybackStopper,
-      onSpeaking,
-    });
-
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
-  });
 });

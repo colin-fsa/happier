@@ -25,6 +25,7 @@ import {
 } from '@/voice/agent/voiceAgentRecoveryReplayState';
 import { shouldRecoverUnavailableGlobalVoiceAutoMachine } from '@/voice/agent/shouldRecoverUnavailableGlobalVoiceAutoMachine';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
+import { createTurnAbortError } from '@/voice/agent/voiceAgentAbort';
 import {
     assertActiveDaemonTargetSession,
     clearVoiceAgentRunMetadata,
@@ -36,6 +37,7 @@ import {
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
+    isCurrentInitialization: () => boolean;
     getDaemonVoiceAgentClient: () => VoiceAgentClient;
     getOpenAiCompatVoiceAgentClient: () => VoiceAgentClient;
     enqueuePendingContextUpdate: (sessionId: string, update: string) => void;
@@ -43,6 +45,7 @@ type InitializeVoiceAgentHandleParams = Readonly<{
 
 export async function initializeVoiceAgentHandle({
     sessionId,
+    isCurrentInitialization,
     getDaemonVoiceAgentClient,
     getOpenAiCompatVoiceAgentClient,
     enqueuePendingContextUpdate,
@@ -319,12 +322,13 @@ export async function initializeVoiceAgentHandle({
 
     const started = await (async () => {
         const migrateLegacyGlobalDaemonTranscriptRun = async () => {
-            if (!requiresGlobalDaemonTranscriptMigration()) return;
+            if (!isCurrentInitialization() || !requiresGlobalDaemonTranscriptMigration()) return;
             const legacyRunId = typeof persistedRunMeta?.runId === 'string' ? persistedRunMeta.runId.trim() : '';
             if (legacyRunId) {
                 await sessionExecutionRunStop(rpcSessionId, { runId: legacyRunId }).catch(() => {});
             }
             const listed: any = await sessionExecutionRunList(rpcSessionId, {});
+            if (!isCurrentInitialization()) return;
             const runs = Array.isArray(listed?.runs) ? listed.runs : [];
             const legacyRuns = runs.filter((run: any) =>
                 run
@@ -335,31 +339,39 @@ export async function initializeVoiceAgentHandle({
                 && doesRunMatchResolvedBackendTarget(run),
             );
             for (const legacyRun of legacyRuns) {
+                if (!isCurrentInitialization()) return;
                 await sessionExecutionRunStop(rpcSessionId, { runId: legacyRun.runId }).catch(() => {});
             }
-            await clearVoiceAgentRunMetadata(runMetadataSessionId).catch(() => {});
+            await clearVoiceAgentRunMetadata(runMetadataSessionId, {
+                shouldContinue: isCurrentInitialization,
+                expectedRunId: persistedRunMeta?.runId ?? null,
+            }).catch(() => {});
             persistedRunMeta = null;
             existingRunId = null;
             startResumeHandle = null;
         };
 
         const ensureExistingGlobalDaemonRunHasPersistentTranscript = async () => {
-            if (!requiresPersistentHiddenVoiceTranscript() || !existingRunId) return;
+            if (!isCurrentInitialization() || !requiresPersistentHiddenVoiceTranscript() || !existingRunId) return;
             const existingRunGet: any = await sessionExecutionRunGet(rpcSessionId, {
                 runId: existingRunId,
                 includeStructured: false,
             }).catch(() => null);
-            if (hasPersistentTranscript(existingRunGet?.run)) return;
+            if (!isCurrentInitialization() || hasPersistentTranscript(existingRunGet?.run)) return;
             await sessionExecutionRunStop(rpcSessionId, { runId: existingRunId }).catch(() => {});
-            await clearVoiceAgentRunMetadata(runMetadataSessionId).catch(() => {});
+            await clearVoiceAgentRunMetadata(runMetadataSessionId, {
+                shouldContinue: isCurrentInitialization,
+                expectedRunId: persistedRunMeta?.runId ?? null,
+            }).catch(() => {});
             persistedRunMeta = null;
             existingRunId = null;
             startResumeHandle = null;
         };
 
         const reconcileExistingDaemonRuns = async () => {
-            if (backend !== 'daemon' || !runMetadataSessionId || !resolvedAgentId) return;
+            if (!isCurrentInitialization() || backend !== 'daemon' || !runMetadataSessionId || !resolvedAgentId) return;
             const listed: any = await sessionExecutionRunList(rpcSessionId, {});
+            if (!isCurrentInitialization()) return;
             const runs = Array.isArray(listed?.runs) ? listed.runs : null;
             if (!runs) return;
 
@@ -389,14 +401,19 @@ export async function initializeVoiceAgentHandle({
             });
             if (requiresPersistentHiddenVoiceTranscript() && !hasPersistentTranscript(adoptedRunGet?.run)) {
                 for (const matchingRun of matchingRuns) {
+                    if (!isCurrentInitialization()) return;
                     await sessionExecutionRunStop(rpcSessionId, { runId: matchingRun.runId }).catch(() => {});
                 }
-                await clearVoiceAgentRunMetadata(runMetadataSessionId).catch(() => {});
+                await clearVoiceAgentRunMetadata(runMetadataSessionId, {
+                    shouldContinue: isCurrentInitialization,
+                    expectedRunId: persistedRunMeta?.runId ?? null,
+                }).catch(() => {});
                 persistedRunMeta = null;
                 existingRunId = null;
                 startResumeHandle = null;
                 return;
             }
+            if (!isCurrentInitialization()) return;
             const adoptedResumeHandle = adoptedRunGet?.run?.resumeHandle ?? adoptedRun.resumeHandle ?? null;
             startResumeHandle =
                 configuredTranscriptPersistenceMode === 'persistent' && resumabilityMode === 'provider_resume'
@@ -407,10 +424,12 @@ export async function initializeVoiceAgentHandle({
                 backendId: resolvedAgentId,
                 backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
                 resumeHandle: adoptedResumeHandle,
+                shouldContinue: isCurrentInitialization,
             });
 
             const duplicateRuns = matchingRuns.slice(1);
             for (const duplicateRun of duplicateRuns) {
+                if (!isCurrentInitialization()) return;
                 await sessionExecutionRunStop(rpcSessionId, { runId: duplicateRun.runId }).catch(() => {});
             }
         };
@@ -437,10 +456,12 @@ export async function initializeVoiceAgentHandle({
                 ...(overrides ?? {}),
             }) satisfies VoiceAgentStartParams;
 
-        const startOnce = (overrides?: Partial<Pick<VoiceAgentStartParams, 'existingRunId' | 'resumeWhenInactive' | 'resumeHandle'>>) =>
-            client.start({
+        const startOnce = (overrides?: Partial<Pick<VoiceAgentStartParams, 'existingRunId' | 'resumeWhenInactive' | 'resumeHandle'>>) => {
+            if (!isCurrentInitialization()) throw createTurnAbortError();
+            return client.start({
                 ...buildStartParams(overrides),
             });
+        };
 
         const startDaemonForCurrentSession = async () => {
             try {
@@ -507,26 +528,29 @@ export async function initializeVoiceAgentHandle({
         }
     })();
 
-    if (runMetadataSessionId) {
+    if (runMetadataSessionId && isCurrentInitialization()) {
         try {
             const getRes: any = await sessionExecutionRunGet(rpcSessionId, { runId: started.voiceAgentId, includeStructured: false });
             const resumeHandle = getRes?.run?.resumeHandle ?? null;
-            await persistVoiceAgentRunMetadata(runMetadataSessionId, {
-                runId: started.voiceAgentId,
-                backendId: resolvedAgentId,
-                backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
-                resumeHandle,
-            });
+            if (isCurrentInitialization()) {
+                await persistVoiceAgentRunMetadata(runMetadataSessionId, {
+                    runId: started.voiceAgentId,
+                    backendId: resolvedAgentId,
+                    backendTarget: resolvedBackendTarget ?? { kind: 'builtInAgent', agentId: resolvedAgentId },
+                    resumeHandle,
+                    shouldContinue: isCurrentInitialization,
+                });
+            }
         } catch {
             // best-effort; persistence should not block voice usage
         }
     }
 
-    if (deferredTargetSessionContext.trim().length > 0) {
+    if (isCurrentInitialization() && deferredTargetSessionContext.trim().length > 0) {
         enqueuePendingContextUpdate(sessionId, deferredTargetSessionContext);
     }
 
-    clearVoiceAgentRecoveryReplaySource(sessionId);
+    if (isCurrentInitialization()) clearVoiceAgentRecoveryReplaySource(sessionId);
 
     return {
         client,

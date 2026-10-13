@@ -1535,28 +1535,31 @@ describe('local voice engine agent behavior', () => {
             '</voice_actions>',
         ].join('\n');
 
-        (globalThis.fetch as any)
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ text: 'hello world' }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: `Ok.\n\n${actionsBlock}` } }] }),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: async () => ({ choices: [{ message: { content: 'Review started.' } }] }),
-            });
+        let chatRequests = 0;
+        vi.mocked(fetch).mockImplementation(async (input) => {
+            const url = String(input);
+            if (url.endsWith('/audio/transcriptions')) return Response.json({ text: 'hello world' });
+            if (url.endsWith('/chat/completions')) {
+                const content = chatRequests++ === 0 ? `Ok.\n\n${actionsBlock}` : 'Review started.';
+                return Response.json({ choices: [{ message: { content } }] });
+            }
+            if (url.endsWith('/audio/speech')) {
+                return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'audio/wav' } });
+            }
+            throw new Error(`Unexpected request: ${url}`);
+        });
 
         const { toggleLocalVoiceTurn } = localVoiceEngine;
 
         await toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
         const stopPromise = toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
 
-        const fetchMock = globalThis.fetch as unknown as MockWithCalls;
-        await waitForMockCalls(fetchMock, 3);
+        for (let index = 0; index < 2; index++) {
+            await waitForCondition(() => createdAudioPlayers[index]?.__hasListener?.('playbackStatusUpdate') === true, 'spoken tool response');
+            createdAudioPlayers[index].__emit('playbackStatusUpdate', { didJustFinish: true });
+        }
         await stopPromise;
+        expect(chatRequests).toBe(2);
 
         expect(sessionExecutionRunStart).toHaveBeenCalledWith(
             's1',

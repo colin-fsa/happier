@@ -10,6 +10,7 @@ export async function speakOpenAiCompatText(opts: {
   format: 'mp3' | 'wav';
   input: string;
   timeoutMs: number;
+  signal?: AbortSignal;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
 }): Promise<void> {
   const buffer = await fetchOpenAiCompatSpeechAudio({
@@ -20,6 +21,7 @@ export async function speakOpenAiCompatText(opts: {
     format: opts.format,
     input: opts.input,
     timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
   });
 
   return await playAudioBytesWithStopper({

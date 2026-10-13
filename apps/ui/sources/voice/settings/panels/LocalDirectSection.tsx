@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
+import { supportsLocalVoiceHandsFree } from '@/voice/local/localVoiceSettings';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -30,18 +32,13 @@ export function LocalDirectSection(props: {
     });
   };
 
-  const sttProvider =
-    typeof (cfg.stt as any)?.provider === 'string'
-      ? ((cfg.stt as any).provider as any)
-      : (cfg.stt as any)?.useDeviceStt === true
-        ? 'device'
-        : 'openai_compat';
+
 
   return (
     <>
       <LocalVoiceSttGroup cfgStt={cfg.stt} setStt={(next) => setCfg({ stt: next })} popoverBoundaryRef={props.popoverBoundaryRef} />
 
-      {sttProvider === 'device' ? (
+      {supportsLocalVoiceHandsFree({ voice: props.voice }, Platform.OS) ? (
         <ItemGroup title={t('settingsVoice.local.conversation.handsFree.title')}>
           <Item
             title={t('settingsVoice.local.conversation.handsFree.enableTitle')}

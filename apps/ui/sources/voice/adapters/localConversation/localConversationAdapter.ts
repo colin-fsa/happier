@@ -1,8 +1,6 @@
 import {
   appendLocalVoiceAgentContextUpdate,
   abortLocalVoiceTurn,
-  getLocalVoiceState,
-  subscribeLocalVoiceState,
   stopLocalVoiceSession,
   toggleLocalVoiceTurn,
 } from '@/voice/local/localVoiceEngine';
@@ -10,27 +8,10 @@ import { sendVoiceTextTurn } from '@/voice/local/sendVoiceTextTurn';
 import { storage } from '@/sync/domains/state/storage';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
-import type { VoiceAdapterController, VoiceSessionMode, VoiceSessionSnapshot, VoiceSessionStatus } from '@/voice/session/types';
+import { getLocalVoiceSessionSnapshot, getLocalVoiceState, patchLocalVoiceState, subscribeLocalVoiceState } from '@/voice/local/localVoiceState';
+import type { VoiceAdapterController } from '@/voice/session/types';
 import { voiceSessionBindingManager } from '@/voice/sessionBinding/voiceSessionBindingRuntime';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
-
-function mapLocalStatus(status: any): { status: VoiceSessionStatus; mode: VoiceSessionMode } {
-  switch (status) {
-    case 'recording':
-      return { status: 'connected', mode: 'listening' };
-    case 'transcribing':
-      return { status: 'connected', mode: 'transcribing' };
-    case 'sending':
-      return { status: 'connected', mode: 'thinking' };
-    case 'speaking':
-      return { status: 'connected', mode: 'speaking' };
-    case 'error':
-      return { status: 'error', mode: 'idle' };
-    case 'idle':
-    default:
-      return { status: 'disconnected', mode: 'idle' };
-  }
-}
 
 export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
   const id = 'local_conversation';
@@ -41,24 +22,8 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
     return mode === 'agent' ? VOICE_AGENT_GLOBAL_SESSION_ID : sessionId;
   };
 
-  const getSnapshot = (): VoiceSessionSnapshot => {
-    const local = getLocalVoiceState();
-    const mapped = (() => {
-      // Local voice keeps the sessionId set while the "call" is active, even when idle.
-      if (local.status === 'idle' && local.sessionId) {
-        return { status: 'connected' as const, mode: 'idle' as const };
-      }
-      return mapLocalStatus(local.status);
-    })();
-    return {
-      adapterId: id,
-      sessionId: local.sessionId,
-      status: mapped.status,
-      mode: mapped.mode,
-      canStop: mapped.status !== 'disconnected',
-      ...(local.error ? { errorCode: local.error, errorMessage: local.error } : {}),
-    };
-  };
+  const getSnapshot = () => getLocalVoiceSessionSnapshot(id);
+  let pendingStart: object | null = null;
 
   const toggle = async (opts: Readonly<{ sessionId: string }>) => {
     const settings: any = storage.getState().settings;
@@ -66,25 +31,43 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
     const startSessionId = String(opts.sessionId ?? '').trim();
 
     const resolvedSessionId = mode === 'agent' ? VOICE_AGENT_GLOBAL_SESSION_ID : opts.sessionId;
-    if (mode === 'agent') {
-      const binding = await voiceSessionBindingManager.ensureBound({
-        adapterId: id,
-        controlSessionId: resolvedSessionId,
-        requestedTargetSessionId: startSessionId || null,
-      });
-      // A null binding used to allow recording to start, only to fail with
-      // voice_session_binding_required after the user had already spoken.
-      if (!binding?.conversationSessionId || binding.controlSessionId !== resolvedSessionId) {
-        throw Object.assign(new Error('voice_session_binding_required'), {
-          code: 'VOICE_SESSION_BINDING_REQUIRED',
+    const attempt = {};
+    pendingStart = attempt;
+    try {
+      if (mode === 'agent') {
+        if (!getSnapshot().canStop) {
+          patchLocalVoiceState({ status: 'connecting', sessionId: resolvedSessionId, error: null });
+        }
+        const binding = await voiceSessionBindingManager.ensureBound({
+          adapterId: id,
+          controlSessionId: resolvedSessionId,
+          requestedTargetSessionId: startSessionId || null,
         });
+        if (pendingStart !== attempt) return;
+        if (!binding?.conversationSessionId || binding.controlSessionId !== resolvedSessionId) {
+          throw Object.assign(new Error('voice_session_binding_required'), {
+            code: 'VOICE_SESSION_BINDING_REQUIRED',
+          });
+        }
       }
+      const snap = getSnapshot();
+      if (snap.sessionId && snap.sessionId !== resolvedSessionId && snap.status !== 'disconnected') {
+        await stopLocalVoiceSession();
+      }
+      if (pendingStart !== attempt) return;
+      await toggleLocalVoiceTurn(resolvedSessionId);
+    } catch (error) {
+      if (pendingStart !== attempt) return;
+      const local = getLocalVoiceState();
+      patchLocalVoiceState({
+        status: local.status === 'connecting' || local.status === 'idle' || local.status === 'error' ? 'error' : local.status,
+        sessionId: local.status === 'connecting' && local.sessionId === resolvedSessionId ? null : local.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      if (pendingStart === attempt) pendingStart = null;
     }
-    const snap = getSnapshot();
-    if (snap.sessionId && snap.sessionId !== resolvedSessionId && snap.status !== 'disconnected') {
-      await stopLocalVoiceSession();
-    }
-    await toggleLocalVoiceTurn(resolvedSessionId);
   };
 
   const start = async (opts: Readonly<{ sessionId: string; initialContext?: string }>) => {
@@ -94,6 +77,7 @@ export function createLocalConversationVoiceAdapter(): VoiceAdapterController {
   };
 
   const stop = async (_opts: Readonly<{ sessionId: string }>) => {
+    pendingStart = null;
     await stopLocalVoiceSession();
   };
 

@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('react-native', async () => {
+  const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+  return createReactNativeWebMock({ Platform: { OS: 'web' } });
+});
 
 import type { VoiceAdapterController, VoiceAdapterId, VoiceSessionSnapshot } from './types';
 import { createVoiceSessionManager } from './voiceSessionManager';
@@ -59,6 +64,7 @@ function makeAdapter(id: VoiceAdapterId, opts?: { initial?: Partial<VoiceSession
 }
 
 describe('voiceSessionManager (core)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
   beforeEach(() => {
     setVoiceSessionSnapshot({
       adapterId: null,
@@ -199,6 +205,87 @@ describe('voiceSessionManager (core)', () => {
     finishStart();
     await Promise.all([first, second]);
     expect(mgr.getSnapshot().status).toBe('connected');
+  });
+
+  it('allows a fresh start after stop and ignores the cancelled startup failure', async () => {
+    let failFirst!: (error: Error) => void;
+    const firstStartup = new Promise<void>((_resolve, reject) => { failFirst = reject; });
+    const a = makeAdapter('local_conversation');
+    let attempts = 0;
+    const adapter: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async ({ sessionId }) => {
+        attempts += 1;
+        if (attempts === 1) return await firstStartup;
+        await a.controller.toggle({ sessionId });
+      },
+    };
+    const mgr = createVoiceSessionManager({ resolveActiveAdapterId: () => adapter.id, getAdapter: () => adapter });
+    const first = mgr.toggle('s1');
+    const firstResult = first.catch(() => {});
+    await mgr.stop('s1');
+    const retry = mgr.toggle('s1');
+    expect(retry).not.toBe(first);
+    await retry;
+    failFirst(new Error('Cancelled binding failed late'));
+    await firstResult;
+    expect(mgr.getSnapshot()).toMatchObject({ status: 'connected', sessionId: 's1', errorCode: undefined });
+  });
+
+  it('keeps an existing microphone session stoppable when a toggle fails', async () => {
+    const a = makeAdapter('local_conversation');
+    await a.controller.start({ sessionId: 's1' });
+    setVoiceSessionSnapshot(a.controller.getSnapshot());
+    const adapter: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async () => { throw new Error('Target machine daemon is offline'); },
+    };
+    const mgr = createVoiceSessionManager({ resolveActiveAdapterId: () => adapter.id, getAdapter: () => adapter });
+
+    await expect(mgr.toggle('s1')).rejects.toThrow('Target machine daemon is offline');
+    expect(mgr.getSnapshot()).toMatchObject({ status: 'error', sessionId: 's1', canStop: true });
+    await mgr.stop('s1');
+    expect(mgr.getSnapshot().status).toBe('disconnected');
+  });
+
+  it('does not publish a connected snapshot from a stopped startup', async () => {
+    let finishStart!: () => void;
+    const startup = new Promise<void>((resolve) => { finishStart = resolve; });
+    const a = makeAdapter('local_conversation');
+    const adapter: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async ({ sessionId }) => {
+        await startup;
+        await a.controller.start({ sessionId });
+      },
+    };
+    const mgr = createVoiceSessionManager({ resolveActiveAdapterId: () => adapter.id, getAdapter: () => adapter });
+
+    const attempt = mgr.toggle('s1');
+    await mgr.stop('s1');
+    finishStart();
+    await attempt;
+    expect(mgr.getSnapshot().status).toBe('disconnected');
+  });
+
+  it('unlocks browser audio synchronously before asynchronous voice startup', async () => {
+    let unlocked = false;
+    vi.stubGlobal('AudioContext', class {
+      destination = {};
+      resume() { unlocked = true; return Promise.resolve(); }
+      createBuffer() { return {}; }
+      createBufferSource() { return { connect() {}, start() {}, disconnect() {} }; }
+    });
+    let finishStart!: () => void;
+    const startup = new Promise<void>((resolve) => { finishStart = resolve; });
+    const a = makeAdapter('local_conversation');
+    const adapter: VoiceAdapterController = { ...a.controller, toggle: async () => { await startup; } };
+    const mgr = createVoiceSessionManager({ resolveActiveAdapterId: () => adapter.id, getAdapter: () => adapter });
+
+    const attempt = mgr.toggle('s1');
+    expect(unlocked).toBe(true);
+    finishStart();
+    await attempt;
   });
 
 });

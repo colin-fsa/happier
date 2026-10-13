@@ -14,6 +14,34 @@ vi.mock('react-native', async () => {
 import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
 
 describe('playAudioBytesWithStopper (web)', () => {
+  it('does not start audio decoded after playback was interrupted', async () => {
+    vi.resetModules();
+    const decoding: { resolve: ((value: unknown) => void) | null } = { resolve: null };
+    const start = vi.fn();
+    class DeferredAudioContext {
+      destination = {};
+      async resume() {}
+      decodeAudioData() { return new Promise((resolve) => { decoding.resolve = resolve; }); }
+      createBufferSource() { return { connect() {}, disconnect() {}, start, stop() {}, onended: null }; }
+    }
+    vi.stubGlobal('AudioContext', DeferredAudioContext);
+    const playback: { stop: (() => void) | null } = { stop: null };
+    try {
+      const { playAudioBytesWithStopper: play } = await import('./playAudioBytesWithStopper');
+      const pending = play({ bytes: new ArrayBuffer(4), format: 'wav', registerPlaybackStopper: (stop) => {
+        playback.stop = stop; return () => {};
+      } });
+      await Promise.resolve();
+      expect(decoding.resolve).not.toBeNull();
+      playback.stop?.();
+      await pending;
+      decoding.resolve?.({ duration: 1 });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(start).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('uses WebAudio when available', async () => {
     const createObjectURL = vi.fn(() => 'blob:mock');
     const revokeObjectURL = vi.fn();

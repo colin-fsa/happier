@@ -10,7 +10,7 @@ import {
   captureAssistantTextMessageBaseline,
   collectAssistantTextMessagesSinceBaseline,
 } from '@/voice/runtime/waitForNextAssistantTextMessage';
-import { mergeAbortSignals } from '@/voice/agent/voiceAgentAbort';
+import { createAbortRacer, createTurnAbortError, mergeAbortSignals } from '@/voice/agent/voiceAgentAbort';
 import {
   isVoiceAgentBusyError,
   isVoiceAgentNotFoundError,
@@ -143,9 +143,10 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
     }
   };
 
-  const initVoiceAgentHandle = async (sessionId: string): Promise<VoiceAgentHandle> =>
+  const initVoiceAgentHandle = async (sessionId: string, isCurrentInitialization: () => boolean): Promise<VoiceAgentHandle> =>
     initializeVoiceAgentHandle({
       sessionId,
+      isCurrentInitialization,
       getDaemonVoiceAgentClient: () => {
         daemonVoiceAgentClient ??= new DaemonVoiceAgentClient();
         return daemonVoiceAgentClient;
@@ -170,15 +171,24 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
     const pending = voiceAgentInitBySessionId.get(sessionId);
     if (pending) return await pending;
 
-    const init = initVoiceAgentHandle(sessionId);
+    let init: Promise<VoiceAgentHandle>;
+    init = initVoiceAgentHandle(sessionId, () => voiceAgentInitBySessionId.get(sessionId) === init);
     voiceAgentInitBySessionId.set(sessionId, init);
     try {
       const handle = await init;
-      voiceAgentBySessionId.set(sessionId, handle);
+      if (voiceAgentInitBySessionId.get(sessionId) === init) {
+        voiceAgentBySessionId.set(sessionId, handle);
+      }
       return handle;
     } finally {
-      voiceAgentInitBySessionId.delete(sessionId);
+      if (voiceAgentInitBySessionId.get(sessionId) === init) {
+        voiceAgentInitBySessionId.delete(sessionId);
+      }
     }
+  };
+
+  const assertCurrentHandle = (sessionId: string, handle: VoiceAgentHandle, signal?: AbortSignal): void => {
+    if (voiceAgentBySessionId.get(sessionId) !== handle || signal?.aborted) throw createTurnAbortError();
   };
 
   const sendTurnImpl = async (
@@ -210,6 +220,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
     };
     const sendWithHandle = async (displayUserText: string) => {
       const handle = await getVoiceAgentHandle(sessionId);
+      assertCurrentHandle(sessionId, handle, options?.signal);
       lastHandle = handle;
       const nextUserText = preparePayloadText();
       const transcriptBaseline = captureAssistantTextMessageBaseline(handle.rpcSessionId);
@@ -218,13 +229,14 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
 
       const response = streamingEnabled
         ? await streamVoiceAgentTurn({ sessionId, handle, userText: nextUserText, displayUserText, options })
-        : await handle.client.sendTurn({
+        : await createAbortRacer(options?.signal).race(handle.client.sendTurn({
             sessionId: handle.rpcSessionId,
             voiceAgentId: handle.voiceAgentId,
             userText: nextUserText,
             displayUserText,
             ...(options?.userTranscript ? { userTranscript: options.userTranscript } : {}),
-          });
+            ...(options?.signal ? { signal: options.signal } : {}),
+          }));
       const normalizedResponse = {
         assistantText: response.assistantText,
         actions: response.actions ?? [],
@@ -252,12 +264,15 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
     try {
       return await sendWithHandle(userText);
     } catch (error) {
+      if (lastHandle && voiceAgentBySessionId.get(sessionId) !== lastHandle) throw error;
       if (isVoiceAgentBusyError(error)) {
-        await stop(sessionId).catch(() => {});
+        await stopAgentRun(sessionId).catch(() => {});
+        if (voiceAgentBySessionId.has(sessionId) || voiceAgentInitBySessionId.has(sessionId)) throw error;
         return await sendWithHandle(userText);
       }
       if (isVoiceAgentRpcMethodUnavailable(error)) {
-        await clearStaleDaemonRunState(sessionId, lastHandle).catch(() => {});
+        await clearStaleDaemonRunState(sessionId, lastHandle, () => voiceAgentBySessionId.get(sessionId) === lastHandle).catch(() => {});
+        if (lastHandle && voiceAgentBySessionId.get(sessionId) !== lastHandle) throw error;
         voiceAgentBySessionId.delete(sessionId);
         return await sendWithHandle(userText);
       }
@@ -288,6 +303,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
 
   const commitUserTranscript = async (sessionId: string, userText: string, localId: string): Promise<void> => {
     const handle = await getVoiceAgentHandle(sessionId);
+    assertCurrentHandle(sessionId, handle);
     if (handle.backend !== 'daemon') return;
     await handle.client.commitUserTranscript({
       sessionId: handle.rpcSessionId,
@@ -325,13 +341,17 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
   };
 
   const commit = async (sessionId: string): Promise<string> => {
+    let lastHandle: VoiceAgentHandle | null = null;
     const commitWithHandle = async () => {
       const handle = await getVoiceAgentHandle(sessionId);
+      assertCurrentHandle(sessionId, handle);
+      lastHandle = handle;
       const response = await handle.client.commit({
         sessionId: handle.rpcSessionId,
         voiceAgentId: handle.voiceAgentId,
         kind: 'session_instruction',
       });
+      assertCurrentHandle(sessionId, handle);
 
       const settings: any = storage.getState().settings;
       const agentCfg = settings?.voice?.adapters?.local_conversation?.agent ?? null;
@@ -349,6 +369,7 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
                 backendId,
                 backendTarget,
                 resumeHandle,
+                shouldContinue: () => voiceAgentBySessionId.get(sessionId) === handle,
               });
             }
           } catch {
@@ -356,19 +377,21 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
           }
         }
       }
+      assertCurrentHandle(sessionId, handle);
       return response.commitText;
     };
 
     try {
       return await commitWithHandle();
     } catch (error) {
+      if (lastHandle && voiceAgentBySessionId.get(sessionId) !== lastHandle) throw error;
       if (!isVoiceAgentNotFoundError(error)) throw error;
       voiceAgentBySessionId.delete(sessionId);
       return await commitWithHandle();
     }
   };
 
-  const stop = async (sessionId: string): Promise<void> => {
+  const stopAgentRun = async (sessionId: string): Promise<void> => {
     const agentCfg = storage.getState().settings?.voice?.adapters?.local_conversation?.agent ?? null;
     const requestedBackend = (agentCfg?.backend ?? 'daemon') as 'daemon' | 'openai_compat';
     const metadataSessionId = resolveVoiceRunMetadataSessionId(sessionId, requestedBackend);
@@ -379,17 +402,15 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
     const pendingInit = voiceAgentInitBySessionId.get(sessionId) ?? null;
     // Prevent new callers from awaiting a stale init promise after stop is requested.
     voiceAgentInitBySessionId.delete(sessionId);
+    voiceAgentBySessionId.delete(sessionId);
+
+    const hasReplacement = () => voiceAgentInitBySessionId.has(sessionId) || voiceAgentBySessionId.has(sessionId);
 
     const handle = existingHandle
       ? existingHandle
       : pendingInit
         ? await pendingInit.catch(() => null)
         : null;
-
-    voiceAgentBySessionId.delete(sessionId);
-    voiceAgentPendingContextBySessionId.delete(sessionId);
-    voiceAgentTurnBarrierBySessionId.delete(sessionId);
-    voiceAgentWelcomeEpochBySessionId.delete(sessionId);
 
     const fallbackRpcSessionId =
       sessionId === VOICE_AGENT_GLOBAL_SESSION_ID
@@ -402,6 +423,18 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
         : persistedRunMeta?.backendId ?? null,
     );
 
+    // ensureOrStart can return the same daemon run to a reconnect. Let an already
+    // pending replacement identify its run before retiring the captured handle.
+    const replacementInit = voiceAgentInitBySessionId.get(sessionId);
+    if (replacementInit) await replacementInit.catch(() => null);
+    const replacementHandle = voiceAgentBySessionId.get(sessionId);
+    if (
+      replacementHandle
+      && replacementHandle.backend === (handle?.backend ?? requestedBackend)
+      && replacementHandle.voiceAgentId === (handle?.voiceAgentId ?? persistedRunMeta?.runId)
+      && replacementHandle.rpcSessionId === (handle?.rpcSessionId ?? fallbackRpcSessionId)
+    ) return;
+
     if (handle) {
       try {
         await handle.client.stop({ sessionId: handle.rpcSessionId, voiceAgentId: handle.voiceAgentId });
@@ -412,8 +445,11 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       await sessionExecutionRunStop(fallbackRpcSessionId, { runId: persistedRunMeta.runId }).catch(() => {});
     }
 
+    // A reconnect owns its new run and metadata; this stop only owns the captured run.
+    if (hasReplacement()) return;
     if (requestedBackend === 'daemon' && daemonBackendId) {
       const listed: any = await Promise.resolve(sessionExecutionRunList(daemonRpcSessionId, {})).catch(() => null);
+      if (hasReplacement()) return;
       const runs = Array.isArray(listed?.runs) ? listed.runs : [];
       const matchingRunIds: string[] = Array.from(
         new Set(
@@ -431,11 +467,24 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
         ),
       );
       for (const runId of matchingRunIds) {
+        if (hasReplacement()) return;
         await sessionExecutionRunStop(daemonRpcSessionId, { runId }).catch(() => {});
       }
     }
 
-    await clearVoiceAgentRunMetadata(metadataSessionId).catch(() => {});
+    if (hasReplacement()) return;
+    await clearVoiceAgentRunMetadata(metadataSessionId, {
+      shouldContinue: () => !hasReplacement(),
+      expectedRunId: handle?.voiceAgentId ?? persistedRunMeta?.runId ?? null,
+    }).catch(() => {});
+  };
+
+  const stop = async (sessionId: string): Promise<void> => {
+    interruptActiveTurn(sessionId);
+    voiceAgentPendingContextBySessionId.delete(sessionId);
+    voiceAgentTurnBarrierBySessionId.delete(sessionId);
+    voiceAgentWelcomeEpochBySessionId.delete(sessionId);
+    await stopAgentRun(sessionId);
   };
 
   const appendContextUpdate = (sessionId: string, update: string): void => {
@@ -474,17 +523,20 @@ export function createVoiceAgentSessionController(): VoiceAgentSessionController
       }
 
       const handle = await getVoiceAgentHandle(sessionId);
+      if (voiceAgentBySessionId.get(sessionId) !== handle) return null;
       try {
         const res = await handle.client.welcome({ sessionId: handle.rpcSessionId, voiceAgentId: handle.voiceAgentId });
+        if (voiceAgentBySessionId.get(sessionId) !== handle) return null;
         const assistantText = String(res?.assistantText ?? '').trim();
         if (!assistantText) return null;
         voiceAgentWelcomeEpochBySessionId.set(sessionId, epoch);
         return assistantText;
       } catch (error) {
+        if (voiceAgentBySessionId.get(sessionId) !== handle) return null;
         if (isVoiceAgentNotFoundError(error)) {
           voiceAgentBySessionId.delete(sessionId);
         }
-        return null;
+        throw error;
       }
     },
     isActive: (sessionId: string) => voiceAgentBySessionId.has(sessionId),

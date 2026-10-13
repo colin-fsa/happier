@@ -58,8 +58,10 @@ export async function playAudioBytesWithStopper(opts: {
               await ctx.resume();
             }
 
+            if (settled) return;
             const bytesCopy = opts.bytes.slice(0);
             const audioBuffer = await ctx.decodeAudioData(bytesCopy);
+            if (settled) return;
             const s = ctx.createBufferSource();
             source = s;
             s.buffer = audioBuffer;
@@ -126,6 +128,7 @@ export async function playAudioBytesWithStopper(opts: {
       };
 
       try {
+        if (settled) return;
         const result = audio.play();
         Promise.resolve(result).catch((error) => {
           cleanup();
@@ -192,6 +195,7 @@ export async function playAudioBytesWithStopper(opts: {
       safeResolve();
     };
     clearStopper = opts.registerPlaybackStopper(stopPlayback);
+    if (settled) return;
 
     subscription = player.addListener('playbackStatusUpdate', (status: any) => {
       if (!status?.didJustFinish) return;
@@ -199,6 +203,7 @@ export async function playAudioBytesWithStopper(opts: {
     });
 
     try {
+      if (settled) return;
       const result = player.play();
       Promise.resolve(result).catch((error) => safeReject(error));
     } catch (error) {

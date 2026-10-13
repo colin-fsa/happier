@@ -1,3 +1,5 @@
+import { computeTurnEndpointDelayMs, normalizeTurnEndpointPolicy, type TurnEndpointPolicy } from '../input/TurnEndpointDetector';
+
 export type BrowserAudioRecorder = Readonly<{
   uri: string | null;
   prepareToRecordAsync: () => Promise<void>;
@@ -23,11 +25,31 @@ function resolveSupportedRecordingMimeType(): string | null {
   return null;
 }
 
-export function createBrowserAudioRecorder(): BrowserAudioRecorder {
+export function createBrowserAudioRecorder(options?: Readonly<{
+  endpointing: TurnEndpointPolicy;
+  audioContext: AudioContext | null;
+  onSpeechEnded: () => void;
+  onError?: (error: Error) => void;
+}>): BrowserAudioRecorder {
   let uri: string | null = null;
   let mediaRecorder: MediaRecorder | null = null;
   let mediaStream: MediaStream | null = null;
   let chunks: Blob[] = [];
+  let disposed = false;
+  let audioContext: AudioContext | null = null;
+  let source: MediaStreamAudioSourceNode | null = null;
+  let analyser: AnalyserNode | null = null;
+  let frame: number | null = null;
+  const stopMonitoring = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    source?.disconnect();
+    analyser?.disconnect();
+    source = null;
+    analyser = null;
+    // The playback owner primes and owns the shared context; capture owns only its nodes.
+    audioContext = null;
+  };
 
   return {
     get uri() {
@@ -45,6 +67,10 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
       }
 
       const nextStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (disposed) {
+        nextStream.getTracks().forEach((track) => track.stop());
+        throw new Error('web_audio_recording_cancelled');
+      }
       try {
         const mimeType = resolveSupportedRecordingMimeType();
         const nextRecorder = mimeType
@@ -60,7 +86,21 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
 
         mediaStream = nextStream;
         mediaRecorder = nextRecorder;
+        nextRecorder.addEventListener('error', () => {
+          stopMonitoring();
+          options?.onError?.(new Error('web_audio_recording_failed'));
+        });
+        if (options) {
+          audioContext = options.audioContext;
+          if (!audioContext) throw new Error('web_audio_recording_unavailable');
+          source = audioContext.createMediaStreamSource(nextStream);
+          analyser = audioContext.createAnalyser();
+          source.connect(analyser);
+          await audioContext.resume();
+          if (disposed) throw new Error('web_audio_recording_cancelled');
+        }
       } catch (error) {
+        stopMonitoring();
         nextStream.getTracks().forEach((track) => track.stop());
         throw error;
       }
@@ -72,9 +112,38 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
       }
       chunks = [];
       mediaRecorder.start();
+      if (options && analyser) {
+        const policy = normalizeTurnEndpointPolicy(options.endpointing);
+        const samples = new Float32Array(analyser.fftSize);
+        let speechStartedAt: number | null = null;
+        let lastSpeechAt = 0;
+        // -50 dBFS is the browser speech activity sensitivity used by Hark.
+        // This detects activity, not words; the configured STT remains authoritative.
+        // Record before detection so the beginning of quiet/gradual speech is retained.
+        const speechRms = 10 ** (-50 / 20);
+        const monitor = (now: number) => {
+          frame = null;
+          if (!analyser || disposed) return;
+          analyser.getFloatTimeDomainData(samples);
+          let sum = 0;
+          for (const sample of samples) sum += sample * sample;
+          const active = Math.sqrt(sum / samples.length) >= speechRms;
+          if (active) {
+            speechStartedAt ??= now;
+            lastSpeechAt = now;
+          } else if (speechStartedAt !== null
+            && now - lastSpeechAt >= computeTurnEndpointDelayMs(policy, lastSpeechAt - speechStartedAt)) {
+            options.onSpeechEnded();
+            return;
+          }
+          frame = requestAnimationFrame(monitor);
+        };
+        frame = requestAnimationFrame(monitor);
+      }
     },
 
     async stop() {
+      stopMonitoring();
       const currentRecorder = mediaRecorder;
       const currentStream = mediaStream;
       if (!currentRecorder) {
@@ -120,6 +189,8 @@ export function createBrowserAudioRecorder(): BrowserAudioRecorder {
     },
 
     dispose() {
+      disposed = true;
+      stopMonitoring();
       if (uri) URL.revokeObjectURL(uri);
       uri = null;
       chunks = [];

@@ -1,4 +1,4 @@
-function createTurnAbortError() {
+export function createTurnAbortError() {
     return Object.assign(new Error('turn_aborted'), { name: 'AbortError' });
 }
 

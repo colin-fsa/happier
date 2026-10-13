@@ -12,6 +12,7 @@ import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSes
 import { findVoiceConversationSessionId } from '@/voice/sessionBinding/voiceConversationSession';
 import { voiceAgentSessions } from '@/voice/agent/voiceAgentSessions';
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
+import { getOrCreateWebAudioContext } from '@/voice/output/webAudioContext';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { createVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
@@ -33,6 +34,7 @@ import {
   isVoiceBargeInEnabled,
   resolveLocalSttProvider,
   resolveLocalVoiceAdapterSettings,
+  supportsLocalVoiceHandsFree,
 } from './localVoiceSettings';
 import { createBrowserAudioRecorder } from './browserAudioRecorder';
 import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn';
@@ -50,9 +52,26 @@ type LocalAudioRecorder = {
 
 type AudioRecorderConstructor = new (options: unknown) => LocalAudioRecorder;
 
-function createLocalAudioRecorder(): LocalAudioRecorder {
+function createLocalAudioRecorder(sessionId: string): LocalAudioRecorder {
   if (Platform.OS === 'web') {
-    return createBrowserAudioRecorder();
+    const session = browserRecordingSession;
+    const { config } = resolveLocalVoiceAdapterSettings(storage.getState().settings);
+    return createBrowserAudioRecorder(session?.handsFree ? {
+      endpointing: config.handsFree.endpointing,
+      audioContext: getOrCreateWebAudioContext(),
+      onSpeechEnded: () => {
+        if (browserRecordingSession !== session || session.abortController.signal.aborted) return;
+        const pending = trackInFlight(stopAndSendRecordedTurn(sessionId));
+        fireAndForget(pending, { tag: 'localVoiceEngine.browserHandsFreeTurn' });
+      },
+      onError: () => {
+        if (browserRecordingSession !== session) return;
+        session.abortController.abort();
+        recorder?.dispose?.();
+        recorder = null;
+        patchLocalVoiceState({ status: 'idle', sessionId, error: 'recording_stop_failed' });
+      },
+    } : undefined);
   }
 
   const Recorder = (AudioModule as unknown as { AudioRecorder?: AudioRecorderConstructor }).AudioRecorder;
@@ -62,8 +81,19 @@ function createLocalAudioRecorder(): LocalAudioRecorder {
   return new Recorder(RecordingPresets.HIGH_QUALITY);
 }
 
+type BrowserRecordingSession = Readonly<{
+  sessionId: string;
+  handsFree: boolean;
+  abortController: AbortController;
+}>;
+let browserRecordingSession: BrowserRecordingSession | null = null;
 let recorder: LocalAudioRecorder | null = null;
 let inFlight: Promise<void> | null = null;
+function trackInFlight(operation: Promise<void>): Promise<void> {
+  const pending = operation.finally(() => { if (inFlight === pending) inFlight = null; });
+  inFlight = pending;
+  return pending;
+}
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
 
@@ -74,9 +104,8 @@ const deviceSttController = createDeviceSttController({
   canAutoStopTurn: () => !inFlight,
   onAutoStopTurn: (sessionId: string) => {
     if (inFlight) return;
-    inFlight = stopDeviceSpeechRecognitionAndSend(sessionId).finally(() => {
-      inFlight = null;
-    });
+    const pending = trackInFlight(stopDeviceSpeechRecognitionAndSend(sessionId));
+    fireAndForget(pending, { tag: 'localVoiceEngine.deviceHandsFreeTurn' });
   },
 });
 const sherpaSttController = createSherpaStreamingSttController({
@@ -120,15 +149,25 @@ async function runVoiceTurnWithSendFailureHandling(
 }
 
 async function startRecording(sessionId: string): Promise<void> {
+  const session = browserRecordingSession;
+  if (session?.abortController.signal.aborted) return;
   const permission = await requestMicrophonePermission();
+  if (session?.abortController.signal.aborted) return;
   if (!permission.granted) {
     showMicrophonePermissionDeniedAlert(permission.canAskAgain);
+    patchLocalVoiceState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
     return;
   }
 
-  const nextRecorder = createLocalAudioRecorder();
+  const nextRecorder = createLocalAudioRecorder(sessionId);
+  recorder = nextRecorder;
   try {
     await nextRecorder.prepareToRecordAsync();
+    if (session?.abortController.signal.aborted) {
+      nextRecorder.dispose?.();
+      if (recorder === nextRecorder) recorder = null;
+      return;
+    }
     nextRecorder.record();
     recorder = nextRecorder;
     patchLocalVoiceState({ status: 'recording', sessionId, error: null });
@@ -140,13 +179,21 @@ async function startRecording(sessionId: string): Promise<void> {
     } finally {
       nextRecorder.dispose?.();
     }
-    recorder = null;
+    if (recorder === nextRecorder) recorder = null;
+    if (session?.abortController.signal.aborted) return;
     patchLocalVoiceState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
     throw error;
   }
 }
 
 async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
+  const session = browserRecordingSession;
+  const isCancelled = () => session?.abortController.signal.aborted === true;
+  const resumeListening = async () => {
+    if (session?.handsFree && browserRecordingSession === session && !isCancelled() && !getLocalVoiceState().error) {
+      await startRecording(sessionId);
+    }
+  };
   if (!recorder) {
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
     return;
@@ -158,13 +205,15 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   try {
     await currentRecorder.stop();
     uri = currentRecorder.uri;
+    if (isCancelled()) { currentRecorder.dispose?.(); return; }
   } catch {
     currentRecorder.dispose?.();
-    recorder = null;
+    if (recorder === currentRecorder) recorder = null;
+    if (isCancelled()) return;
     patchLocalVoiceState({ status: 'idle', sessionId, error: 'recording_stop_failed' });
     return;
   }
-  recorder = null;
+  if (recorder === currentRecorder) recorder = null;
 
   if (!uri) {
     currentRecorder.dispose?.();
@@ -175,8 +224,10 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
   const settings = storage.getState().settings as any;
   let text: string | null = null;
   try {
-    text = await transcribeRecordedAudioWithProvider({ uri, settings });
+    text = await transcribeRecordedAudioWithProvider({ uri, settings, signal: session?.abortController.signal });
+    if (isCancelled()) return;
   } catch (error) {
+    if (isCancelled()) return;
     if (error instanceof MissingSttBaseUrlError) {
       patchLocalVoiceState({ status: 'idle', sessionId, error: 'missing_stt_base_url' });
       throw error;
@@ -193,6 +244,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
 
   if (!text) {
     patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+    await resumeListening();
     return;
   }
 
@@ -206,6 +258,7 @@ async function stopAndSendRecordedTurn(sessionId: string): Promise<void> {
       signal,
     }),
   );
+  await resumeListening();
 }
 
 async function stopDeviceSpeechRecognitionAndSend(sessionId: string): Promise<void> {
@@ -353,6 +406,13 @@ export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
   if (!current.sessionId) return;
   if (current.sessionId !== sessionId) return;
 
+  const previousSession = browserRecordingSession;
+  if (previousSession) inFlight = null;
+  previousSession?.abortController.abort();
+  browserRecordingSession = null;
+  const cancelledRecorder = previousSession ? recorder : null;
+  if (previousSession) recorder = null;
+  cancelledRecorder?.dispose?.();
   playbackController.interrupt();
   if (activeTurnAbortController && activeTurnAbortSessionId === sessionId) {
     try {
@@ -362,7 +422,14 @@ export async function abortLocalVoiceTurn(sessionId: string): Promise<void> {
     }
   }
 
-  patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  const { config } = resolveLocalVoiceAdapterSettings(storage.getState().settings);
+  if (previousSession?.handsFree && config?.handsFree?.enabled === true) {
+    browserRecordingSession = { ...previousSession, abortController: new AbortController() };
+    patchLocalVoiceState({ status: 'connecting', sessionId, error: null });
+    await trackInFlight(startRecording(sessionId));
+  } else {
+    patchLocalVoiceState({ status: 'idle', sessionId, error: null });
+  }
 }
 
 export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
@@ -384,86 +451,83 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 
   if (inFlight && !canAttemptBargeIn) {
     await inFlight;
+    if (!initialState.error) return;
   }
 
   const current = getLocalVoiceState();
-  const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
+  const prewarmLocalVoiceAgentOnConnect = async (params: Readonly<{ settings: any; config: any; signal?: AbortSignal }>): Promise<void> => {
     const { config } = params;
     if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
 
-    fireAndForget(
-      (async () => {
-        const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
-        const welcomeMode = config?.agent?.welcome?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
-        const welcomeEnabled = config?.agent?.welcome?.enabled === true;
-        const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
+    try {
+      const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
+      const welcomeMode = config?.agent?.welcome?.mode === 'on_first_turn' ? 'on_first_turn' : 'immediate';
+      const welcomeEnabled = config?.agent?.welcome?.enabled === true;
+      const canSpeakWelcome = config?.tts?.autoSpeakReplies !== false;
 
-        if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
-          const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(sessionId).catch(() => null);
-          const text = typeof assistantText === 'string' ? assistantText.trim() : '';
-          if (text) {
-            voiceActivityController.appendAssistantText(sessionId, 'local_conversation', text);
-            await speakAssistantText({
-              text,
-              settings: params.settings,
-              networkTimeoutMs,
-              registerPlaybackStopper: playbackController.registerStopper,
-              onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
-            });
-          }
-          return;
+      if (welcomeEnabled && welcomeMode === 'immediate' && canSpeakWelcome) {
+        const assistantText = await voiceAgentSessions.ensureRunningAndMaybeWelcome(sessionId);
+        if (params.signal?.aborted) return;
+        const text = typeof assistantText === 'string' ? assistantText.trim() : '';
+        if (text) {
+          voiceActivityController.appendAssistantText(sessionId, 'local_conversation', text);
+          await speakAssistantText({
+            text,
+            settings: params.settings,
+            networkTimeoutMs,
+            signal: params.signal,
+            registerPlaybackStopper: playbackController.registerStopper,
+            onSpeaking: () => patchLocalVoiceState({ status: 'speaking' }),
+          });
         }
+        return;
+      }
 
-        await voiceAgentSessions.ensureRunning(sessionId);
-      })().catch((error) => {
-        if (isUnsupportedVoiceAgentPrewarmError(error)) return;
-        throw error;
-      }),
-      { tag: 'localVoiceEngine.prewarmLocalVoiceAgentOnConnect' },
-    );
+      await voiceAgentSessions.ensureRunning(sessionId);
+    } catch (error) {
+      if (isUnsupportedVoiceAgentPrewarmError(error)) return;
+      throw error;
+    }
   };
 
   if (current.status === 'speaking') {
-    if (current.sessionId !== sessionId) {
-      return;
-    }
-
-    if (!isVoiceBargeInEnabled(storage.getState().settings)) {
-      return;
-    }
-
+    if (current.sessionId !== sessionId || !isVoiceBargeInEnabled(storage.getState().settings)) return;
+    browserRecordingSession?.abortController.abort();
+    if (activeTurnAbortSessionId === sessionId) activeTurnAbortController?.abort();
     playbackController.interrupt();
-    if (inFlight) {
-      await inFlight.catch(() => {});
-    }
-
-    const settings = storage.getState().settings as any;
-    const { config } = resolveLocalVoiceAdapterSettings(settings);
-    prewarmLocalVoiceAgentOnConnect({ settings, config });
-    const sttProvider = resolveLocalSttProvider(settings);
-    const useDeviceStt = sttProvider === 'device';
-    const useSherpaStt = sttProvider === 'local_neural';
-    deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
-    sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
-      inFlight = null;
-    });
-    await inFlight;
-    return;
+    if (inFlight) await inFlight.catch(() => {});
   }
 
-  if (current.status === 'idle') {
+  const isPendingOrFailedStart = (current.status === 'connecting' || current.status === 'error')
+    && (current.sessionId === null || current.sessionId === sessionId);
+  if (current.status === 'idle' || current.status === 'speaking' || isPendingOrFailedStart) {
     const settings = storage.getState().settings as any;
     const { config } = resolveLocalVoiceAdapterSettings(settings);
-    prewarmLocalVoiceAgentOnConnect({ settings, config });
+
     const sttProvider = resolveLocalSttProvider(settings);
     const useDeviceStt = sttProvider === 'device';
     const useSherpaStt = sttProvider === 'local_neural';
     deviceSttController.setHandsFreeSession(useDeviceStt && config?.handsFree?.enabled === true ? sessionId : null);
     sherpaSttController.setHandsFreeSession(useSherpaStt && config?.handsFree?.enabled === true ? sessionId : null);
-    inFlight = (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId)).finally(() => {
-      inFlight = null;
-    });
+    const browserSession = Platform.OS === 'web' && !useDeviceStt && !useSherpaStt
+      ? { sessionId, handsFree: config?.handsFree?.enabled === true && supportsLocalVoiceHandsFree(settings, Platform.OS), abortController: new AbortController() }
+      : null;
+    trackInFlight((async () => {
+      if (browserSession) {
+        browserRecordingSession?.abortController.abort();
+        browserRecordingSession = browserSession;
+        patchLocalVoiceState({ status: 'connecting', sessionId, error: null });
+        await prewarmLocalVoiceAgentOnConnect({ settings, config, signal: browserSession.abortController.signal });
+        if (browserSession.abortController.signal.aborted) return;
+      } else {
+        fireAndForget(prewarmLocalVoiceAgentOnConnect({ settings, config }), { tag: 'localVoiceEngine.prewarmLocalVoiceAgentOnConnect' });
+      }
+      await (useDeviceStt ? deviceSttController.start(sessionId) : useSherpaStt ? sherpaSttController.start(sessionId) : startRecording(sessionId));
+    })().catch((error: unknown) => {
+      if (browserSession?.abortController.signal.aborted) return;
+      if (!getLocalVoiceState().error) patchLocalVoiceState({ status: 'idle', sessionId, error: 'send_failed' });
+      throw error;
+    }));
     await inFlight;
     return;
   }
@@ -486,24 +550,28 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
       sherpaSttController.clearHandsFreeSession();
     }
 
-    inFlight = (useDeviceStt
+    if (browserRecordingSession) {
+      browserRecordingSession = { ...browserRecordingSession, handsFree: false };
+    }
+    trackInFlight(useDeviceStt
       ? stopDeviceSpeechRecognitionAndSend(sessionId)
       : useSherpaStt
         ? stopSherpaSpeechRecognitionAndSend(sessionId)
-        : stopAndSendRecordedTurn(sessionId)).finally(() => {
-      inFlight = null;
-    });
+        : stopAndSendRecordedTurn(sessionId));
     await inFlight;
   }
 }
 
 export async function stopLocalVoiceSession(): Promise<void> {
+  const stoppingBrowserSession = browserRecordingSession;
+  if (stoppingBrowserSession) inFlight = null;
+  stoppingBrowserSession?.abortController.abort();
+  browserRecordingSession = null;
   const current = getLocalVoiceState();
-  if (!current.sessionId) return;
+  const activeSessionId = current.sessionId ?? stoppingBrowserSession?.sessionId;
+  if (!activeSessionId) return;
 
   playbackController.interrupt();
-
-  const activeSessionId = current.sessionId;
   if (activeTurnAbortController && activeTurnAbortSessionId === activeSessionId) {
     try {
       activeTurnAbortController.abort();
@@ -514,9 +582,17 @@ export async function stopLocalVoiceSession(): Promise<void> {
     activeTurnAbortSessionId = null;
   }
 
+  // Begin agent shutdown before awaiting the old recorder's asynchronous final data.
+  const stoppingAgent = voiceAgentSessions.stop(activeSessionId).catch(() => {});
+  deviceSttController.clearHandsFreeSession(activeSessionId);
+  sherpaSttController.clearHandsFreeSession(activeSessionId);
+  patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
+
   // Best-effort stop any recording (we intentionally do not send).
   if (recorder) {
     const currentRecorder = recorder;
+    recorder = null;
+    if (current.status !== 'recording') currentRecorder.dispose?.();
     try {
       await currentRecorder.stop();
     } catch {
@@ -524,7 +600,6 @@ export async function stopLocalVoiceSession(): Promise<void> {
     } finally {
       currentRecorder.dispose?.();
     }
-    recorder = null;
   }
 
   if (typeof activeSessionId === 'string' && activeSessionId.trim().length > 0) {
@@ -542,15 +617,11 @@ export async function stopLocalVoiceSession(): Promise<void> {
     }
     sherpaSttController.clearHandsFreeSession(activeSessionId);
 
-    try {
-      await voiceAgentSessions.stop(activeSessionId);
-    } catch {
-      // ignore
-    }
+    await stoppingAgent;
   } else {
     deviceSttController.clearHandsFreeSession();
     sherpaSttController.clearHandsFreeSession();
   }
 
-  patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
+  if (!browserRecordingSession) patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
 }

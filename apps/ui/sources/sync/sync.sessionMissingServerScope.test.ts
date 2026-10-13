@@ -1015,6 +1015,85 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         });
     });
 
+    it.each([
+        ['write', 'encrypt'], ['clear', 'encrypt'],
+        ['write', 'version-mismatch'], ['clear', 'version-mismatch'],
+    ] as const)('retires obsolete voice metadata %s during %s without overwriting a replacement', async (operation, retirementPhase) => {
+        const sessionId = 'voice_metadata_lifetime';
+        const target = { kind: 'builtInAgent', agentId: 'claude' } as const;
+        const initialMetadata = {
+            path: '/tmp/repo', host: 'test-host',
+            voiceAgentRunV1: { v: 1, runId: 'run_old', backendId: 'claude', backendTarget: target, resumeHandle: null, updatedAtMs: 1 },
+        };
+        storage.getState().applySessions([{
+            ...createSession(sessionId), encryptionMode: 'e2ee', metadataVersion: 1, metadata: initialMetadata,
+        }]);
+        let serverVersion = 1;
+        let serverMetadata: NonNullable<Session['metadata']> = initialMetadata;
+        let current = true;
+        let firstEncryption = true;
+        let firstEmission = true;
+        const entered = createDeferred<void>();
+        const released = createDeferred<void>();
+        const { sync } = await import('./sync');
+        // The encryption adapter and socket acknowledgement are genuine external boundaries;
+        // the public voice writer, Sync orchestrator, store and CAS retry remain real.
+        Reflect.set(sync, 'encryption', {
+            getSessionEncryption: () => ({
+                encryptMetadata: async (metadata: NonNullable<Session['metadata']>) => {
+                    if (firstEncryption) {
+                        firstEncryption = false;
+                        if (retirementPhase === 'encrypt') {
+                            entered.resolve();
+                            await released.promise;
+                        }
+                    }
+                    return JSON.stringify(metadata);
+                },
+                decryptMetadata: async (_version: number, metadata: string) => JSON.parse(metadata),
+            }),
+        });
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async (payload: { expectedVersion: number; metadata: string }) => {
+            if (firstEmission) {
+                firstEmission = false;
+                if (retirementPhase === 'version-mismatch') {
+                    entered.resolve();
+                    await released.promise;
+                }
+            }
+            if (payload.expectedVersion !== serverVersion) {
+                return { result: 'version-mismatch', version: serverVersion, metadata: JSON.stringify(serverMetadata) };
+            }
+            serverMetadata = JSON.parse(payload.metadata);
+            serverVersion++;
+            return { result: 'success', version: serverVersion, metadata: JSON.stringify(serverMetadata) };
+        });
+        const { writeVoiceAgentRunMetadataToSession, clearVoiceAgentRunMetadataFromSession } = await import('@/voice/persistence/voiceAgentRunMetadata');
+        const oldOperation = operation === 'write'
+            ? writeVoiceAgentRunMetadataToSession({ sessionId, runId: 'run_old', backendId: 'claude', backendTarget: target, resumeHandle: null, updatedAtMs: 2, shouldContinue: () => current })
+            : clearVoiceAgentRunMetadataFromSession({ sessionId, shouldContinue: () => current });
+        await entered.promise;
+        await writeVoiceAgentRunMetadataToSession({ sessionId, runId: 'run_new', backendId: 'claude', backendTarget: target, resumeHandle: null, updatedAtMs: 3 });
+        current = false;
+        released.resolve();
+        await oldOperation;
+        expect(serverMetadata.voiceAgentRunV1).toMatchObject({ runId: 'run_new' });
+        expect(storage.getState().sessions[sessionId]?.metadata?.voiceAgentRunV1).toMatchObject({ runId: 'run_new' });
+    });
+
+    it.each(['run_old', null])('preserves replacement voice metadata when clearing a captured run %s', async (expectedRunId) => {
+        const sessionId = 'voice_metadata_clear_owner';
+        const metadata = {
+            path: '/tmp/repo', host: 'test-host',
+            voiceAgentRunV1: { v: 1, runId: 'run_new', backendId: 'claude', resumeHandle: null, updatedAtMs: 3 },
+        };
+        storage.getState().applySessions([{ ...createSession(sessionId), encryptionMode: 'plain', metadataVersion: 1, metadata }]);
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async (payload: { metadata: string }) => ({ result: 'success', version: 2, metadata: payload.metadata }));
+        const { clearVoiceAgentRunMetadataFromSession } = await import('@/voice/persistence/voiceAgentRunMetadata');
+        await clearVoiceAgentRunMetadataFromSession({ sessionId, expectedRunId });
+        expect(storage.getState().sessions[sessionId]?.metadata?.voiceAgentRunV1).toMatchObject({ runId: 'run_new' });
+    });
+
     it('hydrates lightweight session rows before patching metadata', async () => {
         const sessionId = 'plain_metadata_lightweight_row';
         requestMock.mockResolvedValueOnce(

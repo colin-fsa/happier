@@ -70,7 +70,6 @@ describe('voiceAgentRunMetadata', () => {
       updatedAtMs: 999,
     });
 
-    expect(patchSessionMetadataWithRetry).toHaveBeenCalledWith('sys_voice', expect.any(Function));
     expect(state.sessions.sys_voice.metadata.voiceAgentRunV1).toMatchObject({
       v: 1,
       runId: 'run_2',

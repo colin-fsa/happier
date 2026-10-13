@@ -32,6 +32,7 @@ export async function transcribeWithGoogleGeminiStt(opts: {
   audio: GoogleGeminiSttAudio;
   language?: string | null;
   timeoutMs: number;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   const apiKey = String(opts.apiKey ?? '').trim();
   const rawModel = String(opts.model ?? '').trim();
@@ -50,6 +51,7 @@ export async function transcribeWithGoogleGeminiStt(opts: {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const init: RequestInit = {
     method: 'POST',
+    signal: opts.signal,
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': apiKey,
