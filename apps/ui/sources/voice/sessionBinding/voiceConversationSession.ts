@@ -160,12 +160,12 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     if (fixedRouteMachineId && fixedDirectory) return { machineId: fixedRouteMachineId, directory: fixedDirectory };
   }
 
-  const isKnownInactiveMachine = (machineId: string): boolean => {
+  const isKnownUnavailableMachine = (machineId: string): boolean => {
     const machine =
       resolveMachineForActiveServerFromState(state, machineId)
       ?? state?.machines?.[machineId]
       ?? null;
-    return machine?.active === false;
+    return machine != null && (machine.active === false || !isMachineOnline(machine));
   };
 
   const stickyAutoMachineId = readVoiceAutoTargetMachineId(state);
@@ -175,7 +175,9 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
       ?? state?.machines?.[stickyAutoMachineId]
       ?? null;
     const stickyDirectory = resolveVoiceHomeDirectory(state, stickyAutoMachineId);
-    if (stickyDirectory && stickyMachine?.active !== false) {
+    // A daemon can retain active=true after its last heartbeat expires.
+    // Do not keep routing voice to a sticky machine that is no longer online.
+    if (stickyDirectory && stickyMachine && stickyMachine.active !== false && isMachineOnline(stickyMachine)) {
       return { machineId: stickyAutoMachineId, directory: stickyDirectory };
     }
   }
@@ -204,7 +206,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     if (!machineId) continue;
     if (seenMachineIds.has(machineId)) continue;
     seenMachineIds.add(machineId);
-    if (isKnownInactiveMachine(machineId)) continue;
+    if (isKnownUnavailableMachine(machineId)) continue;
     const directory =
       resolveVoiceHomeDirectory(state, machineId)
       ?? resolveRecentVoiceDirectoryForMachine(state, originMachineId)
@@ -393,6 +395,8 @@ export async function ensureVoiceConversationSessionForVoiceHome(): Promise<stri
   if (!target) {
     throw Object.assign(new Error('voice_conversation_spawn_target_missing'), { code: 'VOICE_CONVERSATION_TARGET_MISSING' });
   }
+  // Recheck before reusing an existing voice-home session or spawning a new one.
+  assertTargetMachineOnline(target.machineId);
 
   await retireLegacyVoiceConversationSessions(target).catch(() => {});
   const state: any = storage.getState();
