@@ -52,20 +52,6 @@ export const resolveModelPackManifestUrl = vi.fn(() => 'https://example.com/mani
 export const setActiveServerAndSwitch = vi.fn(async (_params?: any) => false);
 export const refreshFromActiveServer = vi.fn(async () => {});
 export const routerNavigate = vi.fn();
-export const isRuntimeFeatureEnabled = vi.fn<(args: any) => Promise<boolean>>(async (_args) => true);
-export const resolveRuntimeFeatureDecision = vi.fn(async (args: any) => ({
-    featureId: args?.featureId,
-    state: 'enabled',
-    blockedBy: null,
-    blockerCode: 'none',
-    diagnostics: [],
-    evaluatedAt: Date.now(),
-    scope: {
-        scopeKind: 'runtime',
-        ...(args?.serverId ? { serverId: String(args.serverId) } : {}),
-    },
-}));
-
 let platformOs: 'ios' | 'web' = 'ios';
 let nextRecorderPrepareError: Error | null = null;
 let speechRecRecognitionAvailable = true;
@@ -112,6 +98,8 @@ export function emitAudioStreamEvent(eventName: string, event: any = {}) {
 }
 
 export const BASE_SETTINGS = {
+    experiments: true,
+    featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
     voice: {
         providerId: 'local_conversation',
         privacy: {
@@ -333,10 +321,18 @@ vi.mock('@/auth/context/AuthContext', () => ({
     getCurrentAuth: () => ({ refreshFromActiveServer }),
 }));
 
-vi.mock('@/sync/domains/features/featureDecisionInputs', () => ({
-    isRuntimeFeatureEnabled: (args: any) => isRuntimeFeatureEnabled(args),
-    resolveRuntimeFeatureDecision: (args: any) => resolveRuntimeFeatureDecision(args),
-}));
+// Feature decisions stay real; only the server HTTP boundary is supplied here.
+vi.mock('@/sync/http/client', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/http/client')>();
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { createServerFetchWithReachabilityProbe } = await import('@/dev/testkit/mocks/serverFetch');
+    return { ...actual, serverFetch: createServerFetchWithReachabilityProbe(async (input) => {
+        if (String(input) !== '/v1/features') throw new Error(`Unexpected server request: ${String(input)}`);
+        return new Response(JSON.stringify(createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } })), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+        });
+    }) };
+});
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -539,6 +535,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
         expoSpeechSpeak.mockReset();
         expoSpeechStop.mockReset();
         speechRecStart.mockReset();
+        speechRecStart.mockImplementation(() => { queueMicrotask(() => emitSpeechRecEvent('start')); });
         speechRecStop.mockReset();
         speechRecAbort.mockReset();
         speechRecRequestPermissionsAsync.mockReset();
@@ -567,8 +564,8 @@ export function registerLocalVoiceEngineHarnessHooks() {
             },
         });
         resolveModelPackManifestUrl.mockReturnValue('https://example.com/manifest.json');
-        isRuntimeFeatureEnabled.mockReset();
-        isRuntimeFeatureEnabled.mockResolvedValue(true);
+        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        resetServerFeaturesClientForTests();
         speechRecRecognitionAvailable = true;
         setExpoSpeechStubState({
             speakImpl: (...args: any[]) => (expoSpeechSpeak as any)(...args),

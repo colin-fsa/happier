@@ -20,6 +20,7 @@ export const useVoiceSessionStore = create<VoiceSessionState>((set) => ({
     set(() => ({
       ...snapshot,
       // Ensure optional error fields clear when omitted from a later snapshot.
+      deviceFallback: snapshot.deviceFallback,
       errorCode: snapshot.errorCode,
       errorMessage: snapshot.errorMessage,
     })),

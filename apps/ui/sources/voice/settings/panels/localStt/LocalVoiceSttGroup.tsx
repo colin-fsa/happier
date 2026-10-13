@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
+import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { VoiceLocalSttSchema, type VoiceLocalSttSettings } from '@/sync/domains/settings/voiceLocalSttSettings';
 import { t } from '@/text';
@@ -55,6 +56,15 @@ export function LocalVoiceSttGroup(props: {
           setOpenMenu(null);
         }}
       />
+
+      {normalized.provider === 'openai_compat' ? (
+        <Item
+          testID="voice-stt-fallback-to-device"
+          title={t('settingsVoice.local.sttFallbackToDevice')}
+          subtitle={t('settingsVoice.local.sttFallbackToDeviceSubtitle')}
+          rightElement={<Switch value={normalized.fallbackToDevice} onValueChange={(fallbackToDevice) => props.setStt({ ...normalized, fallbackToDevice })} />}
+        />
+      ) : null}
 
       <providerSpec.Settings cfgStt={normalized} setStt={props.setStt} popoverBoundaryRef={props.popoverBoundaryRef} />
     </ItemGroup>

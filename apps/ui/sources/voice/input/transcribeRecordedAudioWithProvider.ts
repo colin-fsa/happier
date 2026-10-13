@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 
+import { resolveLocalSttProvider, resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { sync } from '@/sync/sync';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { MissingSttBaseUrlError, transcribeRecordedAudioWithHttpStt } from '@/voice/input/HttpSttController';
@@ -13,22 +14,6 @@ export class MissingGeminiApiKeyError extends Error {
     super('missing_gemini_api_key');
     this.name = 'MissingGeminiApiKeyError';
   }
-}
-
-function resolveLocalAdapter(settings: any): any {
-  const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
-  if (providerId === 'local_direct') return voice?.adapters?.local_direct ?? null;
-  if (providerId === 'local_conversation') return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;
-  return voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct ?? null;
-}
-
-function resolveSttProvider(adapter: any): 'device' | 'openai_compat' | 'google_gemini' | 'local_neural' {
-  const stt = adapter?.stt ?? null;
-  const provider = typeof stt?.provider === 'string' ? stt.provider : null;
-  if (provider === 'device' || provider === 'openai_compat' || provider === 'google_gemini' || provider === 'local_neural') return provider;
-  if (stt?.useDeviceStt === true) return 'device';
-  return 'openai_compat';
 }
 
 function guessMimeType(uri: string): string {
@@ -46,8 +31,8 @@ export async function transcribeRecordedAudioWithProvider(params: {
   decryptSecretValue?: (value: unknown) => string | null;
 }): Promise<string | null> {
   const decryptSecretValue = params.decryptSecretValue ?? ((value: unknown) => sync.decryptSecretValue(value as any));
-  const adapter = resolveLocalAdapter(params.settings);
-  const provider = resolveSttProvider(adapter);
+  const { config: adapter } = resolveLocalVoiceAdapterSettings(params.settings);
+  const provider = resolveLocalSttProvider(params.settings);
 
   // Local neural STT is streaming-based (no file upload). File transcription is a no-op.
   // The live controller is responsible for capturing audio and producing transcripts.

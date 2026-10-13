@@ -6450,6 +6450,10 @@ export const it: TranslationStructure = {
   },
 
   voiceSurface: {
+
+      deviceSttFallback: "Riconoscimento alternativo del browser o dispositivo selezionato. Se l’ultimo intervento non è stato trascritto, ripetilo quando compare lo stato di ascolto. Il browser può usare un servizio cloud.",
+
+      deviceTtsFallback: "Server vocale non disponibile. Le risposte usano la voce di questo dispositivo come alternativa.",
     start: "Avvia",
     stop: "Ferma",
     selectSessionToStart: "Seleziona una sessione per avviare la voce",
@@ -9913,6 +9917,10 @@ settingsSession: {
       deviceStt: "STT del dispositivo (sperimentale)",
       deviceSttSubtitle:
         "Usa il riconoscimento vocale sul dispositivo invece di un endpoint compatibile con OpenAI",
+      sttFallbackToDevice: "Riconoscimento vocale alternativo",
+      sttFallbackToDeviceSubtitle: "Se il server vocale non è disponibile, usare il riconoscimento del browser o dispositivo e chiedere di ripetere. Il browser può usare un servizio cloud.",
+      ttsFallbackToDevice: "Voce alternativa del dispositivo",
+      ttsFallbackToDeviceSubtitle: "Se il server vocale non è disponibile, leggere la risposta con questo dispositivo. Le voci disponibili dipendono dal dispositivo.",
       sttProvider: "Provider STT",
       neuralStt: {
         title: "STT sul dispositivo",

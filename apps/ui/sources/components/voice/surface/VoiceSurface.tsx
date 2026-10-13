@@ -320,6 +320,16 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             <Text style={[styles.statusText, { color: theme.colors.text.primary }]} numberOfLines={1}>
               {statusInfo.label}
             </Text>
+            {snap.deviceFallback?.stt ? (
+              <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
+                {t('voiceSurface.deviceSttFallback')}
+              </Text>
+            ) : null}
+            {snap.deviceFallback?.tts ? (
+              <Text accessibilityLiveRegion="polite" style={[styles.targetText, { color: theme.colors.text.secondary }]}>
+                {t('voiceSurface.deviceTtsFallback')}
+              </Text>
+            ) : null}
             {snap.status === 'error' && snap.errorMessage ? (
               <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} numberOfLines={2}>
                 {snap.errorMessage}

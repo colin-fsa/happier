@@ -9,6 +9,7 @@ export type VoiceSessionSnapshot = Readonly<{
   status: VoiceSessionStatus;
   mode: VoiceSessionMode;
   canStop: boolean;
+  deviceFallback?: Readonly<{ stt?: true; tts?: true }>;
   errorCode?: string;
   errorMessage?: string;
 }>;

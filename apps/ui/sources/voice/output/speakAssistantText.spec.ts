@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const speakDeviceTextSpy = vi.fn().mockResolvedValue(undefined);
-const stopDeviceSpeechSpy = vi.fn();
-vi.mock('@/voice/local/speakDeviceText', () => ({
-  speakDeviceText: (...args: any[]) => speakDeviceTextSpy(...args),
-  stopDeviceSpeech: (..._args: any[]) => stopDeviceSpeechSpy(..._args),
-}));
+import { __resetExpoSpeechStub, __setExpoSpeechImpls } from '@/dev/expoSpeechStub';
 
 const speakOpenAiCompatTextSpy = vi.fn().mockResolvedValue(undefined);
 vi.mock('@/voice/output/TtsController', () => ({
@@ -31,14 +26,20 @@ import { speakAssistantText } from '@/voice/output/speakAssistantText';
 
 describe('speakAssistantText', () => {
   it('routes device TTS provider to expo speech', async () => {
+    __resetExpoSpeechStub();
     const onSpeaking = vi.fn();
+    let finish: (() => void) | undefined;
+    const speak = vi.fn((_text: string, options?: { onStopped?: () => void }) => { finish = options?.onStopped; });
+    const stop = vi.fn(() => finish?.());
+    __setExpoSpeechImpls({ speak, stop });
+    const clearStopper = vi.fn();
     let stopper: (() => void) | null = null;
     const registerPlaybackStopper = (s: () => void) => {
       stopper = s;
-      return () => {};
+      return clearStopper;
     };
 
-    await speakAssistantText({
+    const speaking = speakAssistantText({
       text: 'hello',
       settings: {
         voice: {
@@ -61,8 +62,15 @@ describe('speakAssistantText', () => {
       onSpeaking,
     });
 
-    expect(speakDeviceTextSpy).toHaveBeenCalledWith('hello', onSpeaking);
+    expect(speak).toHaveBeenCalledWith('hello', expect.objectContaining({ onDone: expect.any(Function), onStopped: expect.any(Function), onError: expect.any(Function) }));
+    expect(onSpeaking).toHaveBeenCalledOnce();
     expect(typeof stopper).toBe('function');
+    expect(clearStopper).not.toHaveBeenCalled();
+    (stopper as unknown as () => void)();
+    await speaking;
+    expect(stop).toHaveBeenCalledOnce();
+    expect(clearStopper).toHaveBeenCalled();
+    __resetExpoSpeechStub();
   });
 
   it('routes OpenAI-compatible provider to speakOpenAiCompatText', async () => {

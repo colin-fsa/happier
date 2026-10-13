@@ -29,6 +29,7 @@ const VoiceLocalSttLocalNeuralSchema = z
   .prefault({});
 
 const VoiceLocalSttSchemaV2 = z.object({
+  fallbackToDevice: z.boolean().default(false),
   provider: VoiceLocalSttProviderSchema.default('openai_compat'),
   openaiCompat: VoiceLocalSttOpenAiCompatSchema,
   googleGemini: VoiceLocalSttGoogleGeminiSchema,
@@ -49,6 +50,7 @@ function migrateLegacyLocalStt(input: Record<string, unknown>): VoiceLocalSttV2 
 
   return {
     provider,
+    fallbackToDevice: false,
     openaiCompat: {
       baseUrl: baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null,
       apiKey,

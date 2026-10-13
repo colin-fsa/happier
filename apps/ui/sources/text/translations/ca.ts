@@ -5752,6 +5752,10 @@ deps: {
     },
 
       voiceSurface: {
+
+          deviceSttFallback: "Reconeixement alternatiu del navegador o dispositiu seleccionat. Si l’últim torn no s’ha transcrit, repeteix-lo quan aparegui l’estat d’escolta. El navegador pot utilitzar un servei al núvol.",
+
+          deviceTtsFallback: "Servidor de veu no disponible. Les respostes utilitzen la veu d’aquest dispositiu com a alternativa.",
           start: 'Inicia',
           stop: 'Atura',
           selectSessionToStart: 'Selecciona una sessio per iniciar la veu',
@@ -8976,6 +8980,10 @@ settingsSession: {
             deviceStt: 'STT del dispositiu (experimental)',
             deviceSttSubtitle:
                 'Fes servir el reconeixement de veu del dispositiu en lloc d’un endpoint compatible amb OpenAI',
+            sttFallbackToDevice: "Reconeixement de veu alternatiu",
+            sttFallbackToDeviceSubtitle: "Si el servidor de veu no està disponible, utilitza el reconeixement del navegador o dispositiu i demana que repeteixis. El navegador pot utilitzar un servei al núvol.",
+            ttsFallbackToDevice: "Veu alternativa del dispositiu",
+            ttsFallbackToDeviceSubtitle: "Si el servidor de veu no està disponible, llegeix la resposta amb aquest dispositiu. Les veus disponibles depenen del dispositiu.",
             sttProvider: 'Proveïdor STT',
             neuralStt: {
                 title: 'STT al dispositiu',

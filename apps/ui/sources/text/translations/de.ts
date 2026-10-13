@@ -5753,6 +5753,10 @@ export const de: TranslationStructure = {
     },
 
     voiceSurface: {
+
+        deviceSttFallback: "Browser- oder Geräteerkennung als Ersatz ausgewählt. Falls Ihre letzte Äußerung nicht transkribiert wurde, wiederholen Sie sie, sobald der Zuhörstatus erscheint. Der Browser kann einen Cloud-Dienst nutzen.",
+
+        deviceTtsFallback: "Sprachserver nicht verfügbar. Antworten werden ersatzweise mit der Stimme dieses Geräts vorgelesen.",
         start: 'Start',
         stop: 'Stopp',
         selectSessionToStart: 'Wähl eine Session, um Voice zu starten',
@@ -9043,6 +9047,10 @@ settingsSession: {
             chatMaxTokensInvalid: 'Gib bitte eine positive Zahl ein oder lass das Feld leer.',
             deviceStt: 'Geräte-STT (experimentell)',
             deviceSttSubtitle: 'Spracherkennung auf dem Gerät statt eines OpenAI-kompatiblen Endpunkts nutzen',
+            sttFallbackToDevice: "Spracherkennung als Ersatz",
+            sttFallbackToDeviceSubtitle: "Wenn der Sprachserver nicht verfügbar ist, die Erkennung im Browser oder Gerät verwenden und um Wiederholung bitten. Der Browser kann einen Cloud-Dienst nutzen.",
+            ttsFallbackToDevice: "Gerätestimme als Ersatz",
+            ttsFallbackToDeviceSubtitle: "Wenn der Sprachserver nicht verfügbar ist, die Antwort mit diesem Gerät vorlesen. Verfügbare Stimmen hängen vom Gerät ab.",
             sttProvider: 'STT-Provider',
             neuralStt: {
                 title: 'STT auf dem Gerät',

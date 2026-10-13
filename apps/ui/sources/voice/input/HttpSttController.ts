@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { sync } from '@/sync/sync';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import { fetchWithTimeout, resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
@@ -19,12 +20,7 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
   signal?: AbortSignal;
 }): Promise<string | null> {
   const { uri, settings } = params;
-  const voice = settings?.voice ?? null;
-  const providerId = voice?.providerId;
-  const adapter =
-    providerId === 'local_direct'
-      ? voice?.adapters?.local_direct
-      : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
+  const { config: adapter } = resolveLocalVoiceAdapterSettings(settings);
 
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(adapter?.networkTimeoutMs, 15_000);
   const stt = adapter?.stt ?? null;
@@ -66,7 +62,8 @@ export async function transcribeRecordedAudioWithHttpStt(params: {
   }
 
   const json = await response.json().catch(() => null);
-  const text = json && typeof json.text === 'string' ? json.text.trim() : '';
+  if (!json || typeof json !== 'object' || 'error' in json || typeof json.text !== 'string') throw new Error('stt_response_invalid');
+  const text = json.text.trim();
   return text || null;
 }
 

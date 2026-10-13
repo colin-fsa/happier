@@ -88,3 +88,8 @@ export const ExpoSpeechRecognitionModule = {
 
 export default { ExpoSpeechRecognitionModule };
 
+
+// The SDK exposes the browser constructor itself; capability queries remain an
+// external browser boundary rather than being simulated by domain logic.
+const browserGlobals = globalThis as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown };
+export const ExpoWebSpeechRecognition = browserGlobals.webkitSpeechRecognition ?? browserGlobals.SpeechRecognition ?? null;

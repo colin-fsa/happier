@@ -973,6 +973,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     voiceSurface: {
+        deviceSttFallback: "已選擇瀏覽器或裝置備用語音辨識。如果上一句話未被轉錄，請在顯示聆聽狀態後重複。瀏覽器可能使用雲端服務。",
+        deviceTtsFallback: "語音伺服器無法使用。回覆將使用此裝置的備用聲音。",
 	        a11y: {
 	            teleport: '傳送語音代理',
 	            toggleActivity: '切換語音活動',
@@ -7546,6 +7548,10 @@ settingsSession: {
             disconnectConfirm: '中斷連線',
         },
         local: {
+            sttFallbackToDevice: "備用語音辨識",
+            sttFallbackToDeviceSubtitle: "語音伺服器無法使用時，使用瀏覽器或裝置的語音辨識，並提示你重新說一次。瀏覽器可能使用雲端服務。",
+            ttsFallbackToDevice: "裝置備用語音",
+            ttsFallbackToDeviceSubtitle: "語音伺服器無法使用時，使用此裝置朗讀回覆。可用聲音取決於裝置。",
             title: '本機 OSS 語音',
             footer: '設定 speech-to-text (STT) 與 text-to-speech (TTS) 的 OpenAI 相容端點。',
             localhostWarning: '注意："localhost" 與 "127.0.0.1" 通常無法在手機上使用。請使用電腦的 LAN IP 或隧道。',

@@ -1,0 +1,249 @@
+diff --git a/node_modules/expo-speech-recognition/src/ExpoSpeechRecognitionModule.web.ts b/node_modules/expo-speech-recognition/src/ExpoSpeechRecognitionModule.web.ts
+--- a/node_modules/expo-speech-recognition/src/ExpoSpeechRecognitionModule.web.ts
++++ b/node_modules/expo-speech-recognition/src/ExpoSpeechRecognitionModule.web.ts
+@@ -123,6 +123,13 @@
+     _speechRecognitionRef.interimResults = options.interimResults ?? false;
+     _speechRecognitionRef.maxAlternatives = options.maxAlternatives ?? 1;
+     _speechRecognitionRef.continuous = options.continuous ?? false;
++    // Honor explicit local recognition instead of silently using a remote service.
++    if (options.requiresOnDeviceRecognition === true) {
++      if (!("processLocally" in _speechRecognitionRef)) {
++        throw new Error("on_device_recognition_unavailable");
++      }
++      _speechRecognitionRef.processLocally = true;
++    }
+ 
+     // Re-subscribe to events so that we don't lose them
+     // This covers the case where the user has already subscribed to an event prior to calling `start()`
+@@ -255,7 +262,10 @@
+   }
+ 
+   supportsOnDeviceRecognition() {
+-    return false;
++    const Recognition = typeof webkitSpeechRecognition !== "undefined"
++      ? webkitSpeechRecognition
++      : typeof SpeechRecognition !== "undefined" ? SpeechRecognition : null;
++    return Recognition !== null && "processLocally" in Recognition.prototype;
+   }
+ 
+   supportsRecording() {
+@@ -314,62 +324,46 @@
+   error: (ev) => ({ error: ev.error, message: ev.message }),
+   nomatch: (ev) => null,
+   result: (ev): ExpoSpeechRecognitionNativeEventMap["result"] => {
+-    const isFinal = Boolean(ev.results[ev.resultIndex]?.isFinal);
+-
+-    if (isFinal) {
+-      const results: ExpoSpeechRecognitionNativeEventMap["result"]["results"] =
+-        [];
+-
+-      for (let i = 0; i < ev.results[ev.resultIndex].length; i++) {
+-        const result = ev.results[ev.resultIndex][i];
++    const lastIndex = ev.results.length - 1;
++    const lastResult = ev.results[lastIndex];
++    const isFinal = Boolean(lastResult?.isFinal);
++    const completedPrefix = [];
++    for (let index = 0; index < lastIndex; index++) {
++      const text = ev.results[index][0]?.transcript.trim();
++      if (text) completedPrefix.push(text);
++    }
++    if (isFinal && lastResult) {
++      const results = [];
++      for (let index = 0; index < lastResult.length; index++) {
++        const result = lastResult[index];
+         results.push({
+-          transcript: result.transcript,
++          transcript: [...completedPrefix, result.transcript.trim()].filter(Boolean).join(" "),
+           confidence: result.confidence,
+           segments: [],
+         });
+       }
+-      return {
+-        isFinal: true,
+-        results,
+-      };
+-    }
+-
+-    // Interim results: Append to the transcript
+-    let transcript = "";
++      return { isFinal: true, results };
++    }
++    // Browser results are cumulative across a continuous recognition session.
++    // Preserve finalized phrases when the next phrase is still interim.
+     const segments: ExpoSpeechRecognitionResultSegment[] = [];
+-
+-    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+-      const resultList = ev.results[i];
+-
+-      for (let j = 0; j < resultList.length; j++) {
+-        const result = resultList[j];
+-        if (!result) {
+-          continue;
+-        }
+-        segments.push({
+-          confidence: result.confidence,
+-          segment: result.transcript,
+-          startTimeMillis: 0,
+-          endTimeMillis: 0,
+-        });
+-
+-        if (!isFinal) {
+-          transcript += result.transcript;
+-        }
+-      }
+-    }
+-
++    for (let index = 0; index < ev.results.length; index++) {
++      const result = ev.results[index][0];
++      if (!result) continue;
++      segments.push({
++        confidence: result.confidence,
++        segment: result.transcript,
++        startTimeMillis: 0,
++        endTimeMillis: 0,
++      });
++    }
+     return {
+       isFinal: false,
+-      results: [
+-        {
+-          transcript,
+-          confidence:
+-            segments.reduce((acc, curr) => acc + curr.confidence, 0) /
+-            segments.length,
+-          segments,
+-        },
+-      ],
++      results: [{
++        transcript: segments.map((segment) => segment.segment.trim()).filter(Boolean).join(" "),
++        confidence: segments.reduce((total, segment) => total + segment.confidence, 0) / segments.length,
++        segments,
++      }],
+     };
+   },
+   soundstart: (ev) => null,
+diff --git a/node_modules/expo-speech-recognition/build/ExpoSpeechRecognitionModule.web.js b/node_modules/expo-speech-recognition/build/ExpoSpeechRecognitionModule.web.js
+--- a/node_modules/expo-speech-recognition/build/ExpoSpeechRecognitionModule.web.js
++++ b/node_modules/expo-speech-recognition/build/ExpoSpeechRecognitionModule.web.js
+@@ -78,6 +78,13 @@
+         _speechRecognitionRef.interimResults = options.interimResults ?? false;
+         _speechRecognitionRef.maxAlternatives = options.maxAlternatives ?? 1;
+         _speechRecognitionRef.continuous = options.continuous ?? false;
++        // Honor explicit local recognition instead of silently using a remote service.
++        if (options.requiresOnDeviceRecognition === true) {
++          if (!("processLocally" in _speechRecognitionRef)) {
++            throw new Error("on_device_recognition_unavailable");
++          }
++          _speechRecognitionRef.processLocally = true;
++        }
+         // Re-subscribe to events so that we don't lose them
+         // This covers the case where the user has already subscribed to an event prior to calling `start()`
+         this._nativeListeners.forEach((listeners, eventName) => {
+@@ -177,7 +184,10 @@
+         };
+     }
+     supportsOnDeviceRecognition() {
+-        return false;
++        const Recognition = typeof webkitSpeechRecognition !== "undefined"
++          ? webkitSpeechRecognition
++          : typeof SpeechRecognition !== "undefined" ? SpeechRecognition : null;
++        return Recognition !== null && "processLocally" in Recognition.prototype;
+     }
+     supportsRecording() {
+         return false;
+@@ -219,54 +229,47 @@
+     error: (ev) => ({ error: ev.error, message: ev.message }),
+     nomatch: (ev) => null,
+     result: (ev) => {
+-        const isFinal = Boolean(ev.results[ev.resultIndex]?.isFinal);
+-        if (isFinal) {
+-            const results = [];
+-            for (let i = 0; i < ev.results[ev.resultIndex].length; i++) {
+-                const result = ev.results[ev.resultIndex][i];
+-                results.push({
+-                    transcript: result.transcript,
+-                    confidence: result.confidence,
+-                    segments: [],
+-                });
+-            }
+-            return {
+-                isFinal: true,
+-                results,
+-            };
+-        }
+-        // Interim results: Append to the transcript
+-        let transcript = "";
+-        const segments = [];
+-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+-            const resultList = ev.results[i];
+-            for (let j = 0; j < resultList.length; j++) {
+-                const result = resultList[j];
+-                if (!result) {
+-                    continue;
+-                }
+-                segments.push({
+-                    confidence: result.confidence,
+-                    segment: result.transcript,
+-                    startTimeMillis: 0,
+-                    endTimeMillis: 0,
+-                });
+-                if (!isFinal) {
+-                    transcript += result.transcript;
+-                }
+-            }
+-        }
+-        return {
+-            isFinal: false,
+-            results: [
+-                {
+-                    transcript,
+-                    confidence: segments.reduce((acc, curr) => acc + curr.confidence, 0) /
+-                        segments.length,
+-                    segments,
+-                },
+-            ],
+-        };
++      const lastIndex = ev.results.length - 1;
++      const lastResult = ev.results[lastIndex];
++      const isFinal = Boolean(lastResult?.isFinal);
++      const completedPrefix = [];
++      for (let index = 0; index < lastIndex; index++) {
++        const text = ev.results[index][0]?.transcript.trim();
++        if (text) completedPrefix.push(text);
++      }
++      if (isFinal && lastResult) {
++        const results = [];
++        for (let index = 0; index < lastResult.length; index++) {
++          const result = lastResult[index];
++          results.push({
++            transcript: [...completedPrefix, result.transcript.trim()].filter(Boolean).join(" "),
++            confidence: result.confidence,
++            segments: [],
++          });
++        }
++        return { isFinal: true, results };
++      }
++      // Browser results are cumulative across a continuous recognition session.
++      // Preserve finalized phrases when the next phrase is still interim.
++      const segments = [];
++      for (let index = 0; index < ev.results.length; index++) {
++        const result = ev.results[index][0];
++        if (!result) continue;
++        segments.push({
++          confidence: result.confidence,
++          segment: result.transcript,
++          startTimeMillis: 0,
++          endTimeMillis: 0,
++        });
++      }
++      return {
++        isFinal: false,
++        results: [{
++          transcript: segments.map((segment) => segment.segment.trim()).filter(Boolean).join(" "),
++          confidence: segments.reduce((total, segment) => total + segment.confidence, 0) / segments.length,
++          segments,
++        }],
++      };
+     },
+     soundstart: (ev) => null,
+     speechend: (ev) => null,

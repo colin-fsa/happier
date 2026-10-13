@@ -6103,6 +6103,10 @@ export const es: TranslationStructure = {
   },
 
   voiceSurface: {
+
+      deviceSttFallback: "Reconocimiento alternativo del navegador o dispositivo seleccionado. Si tu último turno no se transcribió, repítelo cuando aparezca el estado de escucha. El navegador puede usar un servicio en la nube.",
+
+      deviceTtsFallback: "Servidor de voz no disponible. Las respuestas usan la voz de este dispositivo como alternativa.",
     start: "Iniciar",
     stop: "Detener",
     selectSessionToStart: "Selecciona una sesión para iniciar la voz",
@@ -9595,6 +9599,10 @@ settingsSession: {
       deviceStt: "STT del dispositivo (experimental)",
       deviceSttSubtitle:
         "Usar reconocimiento de voz en el dispositivo en lugar de un endpoint compatible con OpenAI",
+      sttFallbackToDevice: "Reconocimiento de voz alternativo",
+      sttFallbackToDeviceSubtitle: "Si el servidor de voz no está disponible, usar el reconocimiento del navegador o dispositivo y pedir que repitas. El navegador puede usar un servicio en la nube.",
+      ttsFallbackToDevice: "Voz alternativa del dispositivo",
+      ttsFallbackToDeviceSubtitle: "Si el servidor de voz no está disponible, leer la respuesta con este dispositivo. Las voces disponibles dependen del dispositivo.",
       sttProvider: "Proveedor de STT",
       neuralStt: {
         title: "STT en el dispositivo",

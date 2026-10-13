@@ -77,6 +77,7 @@ describe('GoogleCloudTtsSettings', () => {
     tree = (await renderScreen(React.createElement(googleCloudTtsProviderSpec.Settings, {
           cfgTts: {
             provider: 'google_cloud',
+      fallbackToDevice: false,
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
             localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
             googleCloud: {
@@ -113,6 +114,7 @@ describe('GoogleCloudTtsSettings', () => {
     expect(setTts).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'google_cloud',
+      fallbackToDevice: false,
         googleCloud: expect.objectContaining({ languageCode: 'fr-FR' }),
       }),
     );
@@ -128,6 +130,7 @@ describe('GoogleCloudTtsSettings', () => {
     tree = (await renderScreen(React.createElement(googleCloudTtsProviderSpec.Settings, {
           cfgTts: {
             provider: 'google_cloud',
+      fallbackToDevice: false,
             openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
             localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
             googleCloud: {

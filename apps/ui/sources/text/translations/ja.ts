@@ -6373,6 +6373,10 @@ localTailscale: {
   },
 
   voiceSurface: {
+
+      deviceSttFallback: "ブラウザーまたは端末の代替音声認識を選択しています。直前の発話が文字起こしされなかった場合は、リスニング状態になってから繰り返してください。ブラウザーはクラウドサービスを利用する場合があります。",
+
+      deviceTtsFallback: "音声サーバーを利用できません。返答にはこの端末の代替音声を使います。",
     start: "開始",
     stop: "停止",
     selectSessionToStart: "音声を開始するセッションを選択してください",
@@ -9818,6 +9822,10 @@ settingsSession: {
       deviceStt: "デバイス STT（実験的）",
       deviceSttSubtitle:
         "OpenAI互換エンドポイントの代わりに端末内音声認識を使用",
+      sttFallbackToDevice: "音声認識の代替",
+      sttFallbackToDeviceSubtitle: "音声サーバーが利用できない場合、ブラウザーまたは端末の音声認識を使い、発話の繰り返しを案内します。ブラウザーはクラウドサービスを利用する場合があります。",
+      ttsFallbackToDevice: "端末の代替音声",
+      ttsFallbackToDeviceSubtitle: "音声サーバーが利用できない場合、この端末で返答を読み上げます。利用できる音声は端末によって異なります。",
       sttProvider: "STTプロバイダー",
       neuralStt: {
         title: "端末内 STT",

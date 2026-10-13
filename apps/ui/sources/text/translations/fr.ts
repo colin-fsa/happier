@@ -5740,6 +5740,10 @@ export const fr: TranslationStructure = {
     },
 
     voiceSurface: {
+
+        deviceSttFallback: "Reconnaissance de secours du navigateur ou de l’appareil sélectionnée. Si votre dernier message n’a pas été transcrit, répétez-le lorsque l’écoute est active. Le navigateur peut utiliser un service cloud.",
+
+        deviceTtsFallback: "Serveur vocal indisponible. Les réponses utilisent la voix de cet appareil en secours.",
         start: 'Démarrer',
         stop: 'Arrêter',
         selectSessionToStart: 'Sélectionne une session pour démarrer la voix',
@@ -9030,6 +9034,10 @@ settingsSession: {
             chatMaxTokensInvalid: 'Saisis un nombre positif, ou laisse vide.',
             deviceStt: 'STT de l’appareil (expérimental)',
             deviceSttSubtitle: 'Utiliser la reconnaissance vocale de l’appareil plutôt qu’un endpoint compatible OpenAI',
+            sttFallbackToDevice: "Reconnaissance de secours",
+            sttFallbackToDeviceSubtitle: "Si le serveur vocal est indisponible, utiliser la reconnaissance du navigateur ou de l’appareil et vous demander de répéter. Le navigateur peut utiliser un service cloud.",
+            ttsFallbackToDevice: "Voix de secours de l’appareil",
+            ttsFallbackToDeviceSubtitle: "Si le serveur vocal est indisponible, lire la réponse avec cet appareil. Les voix disponibles dépendent de l’appareil.",
             sttProvider: 'Provider STT',
             neuralStt: {
                 title: 'STT sur l’appareil',

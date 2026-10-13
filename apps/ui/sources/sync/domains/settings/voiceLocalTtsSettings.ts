@@ -40,6 +40,7 @@ const VoiceLocalTtsGoogleCloudSchema = z
   .prefault({});
 
 const VoiceLocalTtsSchemaV2 = z.object({
+  fallbackToDevice: z.boolean().default(false),
   provider: VoiceLocalTtsProviderSchema.default('openai_compat'),
   openaiCompat: VoiceLocalTtsOpenAiCompatSchema,
   localNeural: VoiceLocalTtsLocalNeuralSchema,
@@ -68,6 +69,7 @@ function migrateLegacyLocalTts(input: Record<string, unknown>): VoiceLocalTtsV2 
 
   return {
     provider,
+    fallbackToDevice: false,
     openaiCompat: {
       baseUrl: baseUrl && baseUrl.trim().length > 0 ? baseUrl.trim() : null,
       apiKey,

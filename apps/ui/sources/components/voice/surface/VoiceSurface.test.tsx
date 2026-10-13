@@ -145,6 +145,19 @@ describe('VoiceSurface', () => {
     useSessionSpy.mockClear();
   });
 
+  it('keeps device fallback notices visible while listening and clears them when the call ends', async () => {
+    vi.resetModules();
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_direct', sessionId: 's1', status: 'connected', mode: 'listening', canStop: true, deviceFallback: { stt: true, tts: true } });
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+    expect(screen.getTextContent()).toContain('voiceSurface.deviceSttFallback');
+    expect(screen.getTextContent()).toContain('voiceSurface.deviceTtsFallback');
+    await act(async () => { setVoiceSessionSnapshot({ adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false }); });
+    expect(screen.getTextContent()).not.toContain('voiceSurface.deviceSttFallback');
+    expect(screen.getTextContent()).not.toContain('voiceSurface.deviceTtsFallback');
+  });
+
   it('disables daemon local voice start when voice.agent is unavailable on the active server', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = false;

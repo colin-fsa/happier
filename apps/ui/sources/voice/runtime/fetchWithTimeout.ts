@@ -31,6 +31,7 @@ export async function fetchWithTimeout(
       if (callerSignal?.aborted) throw error;
       throw new Error(timeoutErrorCode);
     }
+    if (error instanceof TypeError) throw new Error('voice_network_unavailable', { cause: error });
     throw error;
   } finally {
     clearTimeout(timeout);

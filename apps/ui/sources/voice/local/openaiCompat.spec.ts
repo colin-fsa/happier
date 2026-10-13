@@ -11,6 +11,15 @@ describe('local voice OpenAI-compatible helpers', () => {
     expect(normalizeOpenAiCompatibleBaseUrl(' https://api.example.com/custom/ ')).toBe('https://api.example.com/custom/v1');
   });
 
+  it.each(['http://[invalid', '/relative-speech-server', 'ftp://speech.test', 'https://user:password@speech.test'])('rejects invalid endpoint configuration before transport (%s)', (baseUrl) => {
+    expect(() => buildOpenAiSpeechRequest({
+      baseUrl, apiKey: null, model: 'tts-1', voice: 'alloy', responseFormat: 'wav', input: 'hello',
+    })).toThrow('Invalid base URL');
+    expect(() => buildOpenAiTranscriptionRequest({
+      baseUrl, apiKey: null, model: 'whisper-1', file: { kind: 'web', blob: new Blob(['audio']), name: 'recording.wav' },
+    })).toThrow('Invalid base URL');
+  });
+
   it('builds a TTS request with optional Authorization header', () => {
     const withKey = buildOpenAiSpeechRequest({
       baseUrl: 'http://localhost:8000',

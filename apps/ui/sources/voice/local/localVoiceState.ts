@@ -7,6 +7,7 @@ export type LocalVoiceState = {
   status: LocalVoiceStatus;
   sessionId: string | null;
   error: string | null;
+  deviceFallback?: Readonly<{ stt?: true; tts?: true }>;
 };
 
 const useLocalVoiceStore = create<LocalVoiceState>(() => ({
@@ -44,6 +45,7 @@ export function getLocalVoiceSessionSnapshot(adapterId: VoiceAdapterId): VoiceSe
     status,
     mode: SESSION_MODES[local.status],
     canStop: local.sessionId !== null && status !== 'disconnected',
+    ...(local.deviceFallback ? { deviceFallback: local.deviceFallback } : {}),
     ...(local.error ? { errorCode: local.error, errorMessage: local.error } : {}),
   };
 }
@@ -57,7 +59,7 @@ export function subscribeLocalVoiceState(listener: () => void): () => void {
 export function patchLocalVoiceState(patch: Partial<LocalVoiceState>): void {
   useLocalVoiceStore.setState((state) => {
     const next = { ...state, ...patch };
-    if (state.status === next.status && state.sessionId === next.sessionId && state.error === next.error) {
+    if (state.status === next.status && state.sessionId === next.sessionId && state.error === next.error && state.deviceFallback === next.deviceFallback) {
       return state;
     }
     return next;
@@ -75,3 +77,9 @@ export function setIdleStateUnlessRecording(sessionId: string): void {
   patchLocalVoiceState({ status: 'idle', sessionId });
 }
 
+
+export function markLocalVoiceDeviceFallback(sessionId: string, kind: 'stt' | 'tts'): void {
+  const current = getLocalVoiceState();
+  if (current.sessionId !== sessionId || current.deviceFallback?.[kind]) return;
+  patchLocalVoiceState({ deviceFallback: { ...current.deviceFallback, [kind]: true } });
+}

@@ -18,16 +18,7 @@ export async function speakWithLocalTtsProvider(ctx: {
 }): Promise<void> {
   const provider = ctx.tts.provider;
 
-  if (provider === 'device') {
-    let clearStopper = () => {};
-    try {
-      clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
-      await speakDeviceText(ctx.text, ctx.onSpeaking);
-    } finally {
-      clearStopper();
-    }
-    return;
-  }
+  if (provider === 'device') return speakWithDeviceTts(ctx);
 
   if (provider === 'local_neural') {
     const localNeural = (ctx.tts.localNeural ?? null) as any;
@@ -103,4 +94,20 @@ export async function speakWithLocalTtsProvider(ctx: {
     signal: ctx.signal,
     registerPlaybackStopper: ctx.registerPlaybackStopper,
   });
+}
+
+export async function speakWithDeviceTts(ctx: {
+  text: string;
+  preferLocalVoice?: boolean;
+  language?: string | null;
+  registerPlaybackStopper: VoicePlaybackStopperRegistrar;
+  onSpeaking: () => void;
+}): Promise<void> {
+  let clearStopper = () => {};
+  try {
+    clearStopper = ctx.registerPlaybackStopper(() => stopDeviceSpeech());
+    await speakDeviceText(ctx.text, ctx.onSpeaking, { preferLocalVoice: ctx.preferLocalVoice, language: ctx.language });
+  } finally {
+    clearStopper();
+  }
 }

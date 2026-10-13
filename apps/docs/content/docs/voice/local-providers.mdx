@@ -407,6 +407,17 @@ On web, Kokoro runtime files are stored in browser caches. On native, model pack
 - **TTS**: Kokoro or Google Cloud TTS
 - **Conversation mode**: Agent
 
+## When your speech server is unavailable
+
+In the development version, **Browser speech fallback** and **Device speech fallback** are optional controls for OpenAI-compatible STT and TTS. Both are off by default. Your configured speech server remains primary for each new call.
+
+When enabled, connection failures, request timeouts, and HTTP 502, 503, or 504 responses activate the corresponding fallback for the rest of the call. The call displays which fallback is active. Authentication, configuration, quota, and invalid response errors remain visible; they do not switch providers.
+
+- **Input:** Happier starts browser or device speech recognition and asks you to repeat the last utterance. The browser recognizer cannot transcribe the recording that failed to upload. When the browser reports the selected language already available for on-device recognition, Happier requests local processing. Otherwise, the fallback uses the browser’s available recognition service. Recognition availability depends on the browser, language, permissions, and recognition service. Safari may require Siri enabled. Browser recognition may use Apple or Google cloud services; this is not a guarantee of offline recognition.
+- **Output:** Happier speaks the same reply using the device speech voice. On browsers, Happier prefers an available local voice matching the selected language. Available voices depend on the device; when no matching local voice is available, the default device voice may use local or remote synthesis. This does not download Kokoro or start another server.
+
+End the call and start a new one to try your configured speech server again. These controls do not make the voice agent or its coding machine available when those separate services are offline.
+
 ## Networking notes
 
 ### Mobile and localhost
@@ -437,6 +448,16 @@ Check:
 - that a TTS provider is selected
 - that **Auto-speak replies** is enabled if you expect automatic playback
 - that **Test TTS** works
+
+### A phone recording fails with MLX Audio
+
+For MLX Audio 0.5.7, validate actual phone AAC/M4A recordings against your transcription endpoint. A tested installation returned HTTP 200 with an error payload because it tried to re-encode audio using the uploaded `.m4a` filename. AAC containers with metadata at the end also exposed a byte-input decoding issue. The local service correction uses a seekable FFmpeg byte input and a lossless WAV intermediary.
+
+This is a version-specific operator concern, not a claim that every MLX Audio release requires the same patch. Keep any local correction available and revalidate phone recordings after upgrading the service. Happier surfaces a malformed transcription response as a failed turn; it does not treat it as a service outage or silently switch providers.
+
+### The model returns no spoken reply
+
+A successful HTTP response with no assistant content is surfaced as a failed voice turn. Reasoning-only model output is not spoken as the assistant’s reply. Check the model and its OpenAI-compatible chat endpoint, then retry the turn.
 
 ### Kokoro is unavailable
 

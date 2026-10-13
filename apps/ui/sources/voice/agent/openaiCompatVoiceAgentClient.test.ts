@@ -59,13 +59,13 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('preserves empty assistant responses in message history', async () => {
+  it('rejects empty assistant responses without polluting message history', async () => {
     const bodies: any[] = [];
     (globalThis.fetch as any).mockImplementation(async (_url: string, init?: any) => {
       bodies.push(JSON.parse(String(init?.body ?? 'null')));
       return {
         ok: true,
-        json: async () => ({ choices: [{ message: { content: '' } }] }),
+        json: async () => ({ choices: [{ message: { content: bodies.length === 1 ? '' : 'A valid answer' } }] }),
       };
     });
 
@@ -81,11 +81,12 @@ describe('OpenAiCompatVoiceAgentClient', () => {
       initialContext: 'Initial context',
     });
 
-    await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
+    await expect(client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' })).rejects.toThrow('chat_empty_response');
     await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'world' });
 
     const second = bodies[1];
-    expect(second?.messages?.some((m: any) => m?.role === 'assistant' && m?.content === '')).toBe(true);
+    expect(second?.messages?.some((m: any) => m?.role === 'assistant' && m?.content === '')).toBe(false);
+    expect(second?.messages?.some((m: any) => m?.role === 'user' && m?.content === 'hello')).toBe(false);
   });
 
   it('includes verbosity guidance in the system prompt', async () => {
@@ -198,7 +199,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     expect(roles).toContainEqual({ role: 'user', content: 'hello' });
   });
 
-  it('extracts voice actions from assistant responses', async () => {
+  it.each(['Ok, sending.', ''])('extracts voice actions with optional spoken text (%s)', async (spokenText) => {
     (globalThis.fetch as any).mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -206,7 +207,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
           {
             message: {
               content: [
-                'Ok, sending.',
+                spokenText,
                 '',
                 '<voice_actions>',
                 JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }] }),
@@ -231,7 +232,7 @@ describe('OpenAiCompatVoiceAgentClient', () => {
     });
 
     const result = await client.sendTurn({ sessionId: 's1', voiceAgentId, userText: 'hello' });
-    expect(result.assistantText).toBe('Ok, sending.');
+    expect(result.assistantText).toBe(spokenText);
     expect((result as any).actions?.[0]?.t).toBe('sendSessionMessage');
   });
 

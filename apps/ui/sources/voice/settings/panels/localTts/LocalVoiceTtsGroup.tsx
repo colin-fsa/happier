@@ -67,6 +67,15 @@ export function LocalVoiceTtsGroup(props: {
         rightElement={<Switch value={cfg.bargeInEnabled} onValueChange={(v) => setCfg({ bargeInEnabled: v })} />}
       />
 
+      {cfg.provider === 'openai_compat' ? (
+        <Item
+          testID="voice-tts-fallback-to-device"
+          title={t('settingsVoice.local.ttsFallbackToDevice')}
+          subtitle={t('settingsVoice.local.ttsFallbackToDeviceSubtitle')}
+          rightElement={<Switch value={cfg.fallbackToDevice} onValueChange={(fallbackToDevice) => setCfg({ fallbackToDevice })} />}
+        />
+      ) : null}
+
       <providerSpec.Settings
         cfgTts={cfg}
         setTts={props.setTts}

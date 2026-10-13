@@ -150,6 +150,49 @@ describe('local voice engine agent behavior', () => {
         expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/chat/completions');
     }, 60_000);
 
+    it.each(['', '<voice_actions>{"actions":[]}</voice_actions>'])('surfaces an empty agent response (%s) instead of silently resuming after no answer', async (content) => {
+        const storage = await getStorage();
+        const current = storage.getState().settings;
+        const conversation = current.voice.adapters.local_conversation;
+        storage.__setState({
+            settings: {
+                ...current,
+                voice: {
+                    ...current.voice,
+                    providerId: 'local_conversation',
+                    adapters: {
+                        ...current.voice.adapters,
+                        local_conversation: {
+                            ...conversation,
+                            conversationMode: 'agent',
+                            tts: { ...conversation.tts, autoSpeakReplies: false },
+                            agent: {
+                                ...conversation.agent,
+                                backend: 'openai_compat',
+                                openaiCompat: { ...conversation.agent.openaiCompat, chatBaseUrl: 'http://localhost:8002' },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        vi.mocked(globalThis.fetch)
+            .mockResolvedValueOnce(Response.json({ text: 'How many sessions are running?' }))
+            .mockResolvedValueOnce(Response.json({ choices: [{
+                finish_reason: 'stop',
+                message: { content, reasoning_content: 'I should count the sessions.' },
+            }] }));
+
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+        await localVoiceEngine.toggleLocalVoiceTurn(VOICE_AGENT_GLOBAL_SESSION_ID);
+
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ error: 'send_failed' });
+        const events = useVoiceActivityStore.getState().eventsBySessionId[VOICE_AGENT_GLOBAL_SESSION_ID] ?? [];
+        expect(events.some((event) => event.kind === 'error' && event.errorMessage === 'chat_empty_response')).toBe(true);
+        expect(events.some((event) => event.kind === 'assistant.text')).toBe(false);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
     it('agent mode (openai_compat) sends a session message when the voice agent emits sendSessionMessage', async () => {
         useVoiceTargetStore.getState().setPrimaryActionSessionId('s1');
 

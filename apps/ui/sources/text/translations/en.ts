@@ -5774,6 +5774,10 @@ export const en = {
     },
 
     voiceSurface: {
+
+        deviceSttFallback: "Using browser or device speech fallback. If your last turn was not transcribed, repeat it when Listening appears. Browser recognition may use a cloud service.",
+
+        deviceTtsFallback: "Speech server unavailable. Replies use this device’s speech voice for fallback.",
         start: 'Start',
         stop: 'Stop',
         selectSessionToStart: 'Select a session to start voice',
@@ -9075,6 +9079,10 @@ settingsSession: {
             chatMaxTokensInvalid: 'Please enter a positive number, or leave blank.',
             deviceStt: 'Device STT (experimental)',
             deviceSttSubtitle: 'Use on-device speech recognition instead of an OpenAI-compatible endpoint',
+            sttFallbackToDevice: "Browser speech fallback",
+            sttFallbackToDeviceSubtitle: "If the speech server is unavailable, use browser or device recognition and ask you to repeat. Browser recognition may use a cloud service.",
+            ttsFallbackToDevice: "Device speech fallback",
+            ttsFallbackToDeviceSubtitle: "If the speech server is unavailable, speak the reply using this device. Voice availability depends on the device.",
             sttProvider: 'STT Provider',
             neuralStt: {
                 title: 'On-device STT',

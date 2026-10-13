@@ -35,6 +35,7 @@ describe('localNeuralTtsProviderSpec', () => {
 
     const cfgTts: VoiceLocalTtsSettings = {
       provider: 'local_neural',
+      fallbackToDevice: false,
       openaiCompat: { baseUrl: null, apiKey: null, model: 'tts-1', voice: 'alloy', format: 'mp3' },
       localNeural: { model: 'kokoro', assetId: null, voiceId: null, speed: null },
       googleCloud: {

@@ -131,6 +131,7 @@ export class OpenAiCompatVoiceAgentClient implements VoiceAgentClient {
     const assistantTextRaw = await parseOpenAiChatCompletionAssistantText(res);
     if (params.signal?.aborted) throw createTurnAbortError();
     const extracted = extractVoiceActionsFromAssistantText(assistantTextRaw);
+    if (!extracted.assistantText.trim() && extracted.actions.length === 0) throw new Error('chat_empty_response');
     const assistantText = extracted.assistantText;
     state.messages.push(userMessage);
     state.messages.push({ role: 'assistant', content: assistantText });

@@ -2,6 +2,16 @@ export function normalizeOpenAiCompatibleBaseUrl(raw: string): string {
   const trimmed = String(raw ?? '').trim();
   if (!trimmed) return '';
 
+  let endpoint: URL;
+  try {
+    endpoint = new URL(trimmed);
+  } catch {
+    throw new Error('Invalid base URL');
+  }
+  if ((endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') || endpoint.username || endpoint.password) {
+    throw new Error('Invalid base URL');
+  }
+
   // Remove trailing slashes.
   const noTrailing = trimmed.replace(/\/+$/, '');
 

@@ -26,6 +26,7 @@ export function useVoiceSessionSnapshot() {
       status: state.status,
       mode: state.mode,
       canStop: state.canStop,
+      deviceFallback: state.deviceFallback,
       errorCode: state.errorCode,
       errorMessage: state.errorMessage,
     }))

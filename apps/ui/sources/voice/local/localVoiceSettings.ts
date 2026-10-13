@@ -29,11 +29,6 @@ export function resolveLocalSttProvider(settings: any): 'device' | 'openai_compa
   return 'openai_compat';
 }
 
-export function isHandsFreeDeviceSttEnabled(settings: any): boolean {
-  const { config } = resolveLocalVoiceAdapterSettings(settings);
-  return resolveLocalSttProvider(settings) === 'device' && config?.handsFree?.enabled === true;
-}
-
 export function isHandsFreeLocalNeuralSttEnabled(settings: any): boolean {
   const { config } = resolveLocalVoiceAdapterSettings(settings);
   return resolveLocalSttProvider(settings) === 'local_neural' && config?.handsFree?.enabled === true;

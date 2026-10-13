@@ -6126,6 +6126,10 @@ export const pl: TranslationStructure = {
   },
 
   voiceSurface: {
+
+      deviceSttFallback: "Wybrano zapasowe rozpoznawanie przeglądarki lub urządzenia. Jeśli ostatnia wypowiedź nie została zapisana, powtórz ją, gdy pojawi się stan słuchania. Przeglądarka może korzystać z chmury.",
+
+      deviceTtsFallback: "Serwer mowy niedostępny. Odpowiedzi korzystają zastępczo z głosu tego urządzenia.",
     start: "Uruchom",
     stop: "Zatrzymaj",
     selectSessionToStart: "Wybierz sesje, aby uruchomic glos",
@@ -9589,6 +9593,10 @@ settingsSession: {
       deviceStt: "STT urządzenia (eksperymentalne)",
       deviceSttSubtitle:
         "Użyj rozpoznawania mowy na urządzeniu zamiast OpenAI-compat endpointu",
+      sttFallbackToDevice: "Zapasowe rozpoznawanie mowy",
+      sttFallbackToDeviceSubtitle: "Gdy serwer mowy jest niedostępny, użyj rozpoznawania przeglądarki lub urządzenia i poproś o powtórzenie. Przeglądarka może korzystać z usługi chmurowej.",
+      ttsFallbackToDevice: "Zapasowy głos urządzenia",
+      ttsFallbackToDeviceSubtitle: "Gdy serwer mowy jest niedostępny, odczytaj odpowiedź na tym urządzeniu. Dostępne głosy zależą od urządzenia.",
       sttProvider: "Dostawca STT",
       neuralStt: {
         title: "STT na urządzeniu",

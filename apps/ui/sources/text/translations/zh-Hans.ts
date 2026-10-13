@@ -5908,6 +5908,10 @@ export const zhHans: TranslationStructure = {
   },
 
   voiceSurface: {
+
+      deviceSttFallback: "已选择浏览器或设备备用语音识别。如果上一句话未被转录，请在显示聆听状态后重复。浏览器可能使用云服务。",
+
+      deviceTtsFallback: "语音服务器不可用。回复将使用此设备的备用声音。",
     start: "开始",
     stop: "停止",
     selectSessionToStart: "请选择一个会话以开始语音",
@@ -9240,6 +9244,10 @@ settingsSession: {
       deviceStt: "设备 STT（实验）",
       deviceSttSubtitle:
         "使用设备端语音识别，而不是 OpenAI 兼容端点",
+      sttFallbackToDevice: "备用语音识别",
+      sttFallbackToDeviceSubtitle: "语音服务器不可用时，使用浏览器或设备的语音识别，并提示你重新说一遍。浏览器可能使用云服务。",
+      ttsFallbackToDevice: "设备备用语音",
+      ttsFallbackToDeviceSubtitle: "语音服务器不可用时，使用此设备朗读回复。可用声音取决于设备。",
       sttProvider: "STT 提供方",
       neuralStt: {
         title: "设备端 STT",

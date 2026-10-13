@@ -1,3 +1,4 @@
+import { resolveLocalVoiceAdapterSettings } from '@/voice/local/localVoiceSettings';
 import { randomUUID } from '@/platform/randomUUID';
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { getOptionalHappierAudioStreamNativeModule } from '@happier-dev/audio-stream-native';
@@ -126,12 +127,7 @@ export function createSherpaStreamingSttController(deps: {
     }
 
     const settings = deps.getSettings();
-    const voice = settings?.voice ?? null;
-    const providerId = voice?.providerId;
-    const adapter =
-      providerId === 'local_direct'
-        ? voice?.adapters?.local_direct
-        : voice?.adapters?.local_conversation ?? voice?.adapters?.local_direct;
+    const { config: adapter } = resolveLocalVoiceAdapterSettings(settings);
     const stt = adapter?.stt ?? null;
     let normalizedStt: any;
     try {

@@ -8,6 +8,9 @@ import {
     setPlatformOs,
     createdAudioPlayers,
     expoSpeechSpeak,
+    emitSpeechRecEvent,
+    speechRecStart,
+    speechRecStop,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine recording lifecycle', () => {
@@ -276,7 +279,7 @@ describe('browser HTTP hands-free conversation', () => {
     });
 
 
-    it.each(['three turns', 'Google Cloud three turns', 'missing TTS base URL', 'STT failure', 'TTS failure', 'cancel STT', 'interrupt STT', 'cancel TTS', 'duplicate activation', 'failed greeting', 'cancel greeting', 'pending microphone', 'permission denied', 'delayed stop reconnect'] as const)('handles %s through browser capture, HTTP providers and the real agent lifecycle', async (outcome) => {
+    it.each(['three turns', 'manual send then next hands-free turn', 'STT device fallback', 'cancel device fallback', 'Google Cloud three turns', 'missing TTS base URL', 'STT failure', 'TTS failure', 'cancel STT', 'interrupt STT', 'cancel TTS', 'duplicate activation', 'failed greeting', 'cancel greeting', 'pending microphone', 'permission denied', 'delayed stop reconnect'] as const)('handles %s through browser capture, HTTP providers and the real agent lifecycle', async (outcome) => {
         setPlatformOs('web');
         let amplitude = 0;
         let nextFrame: FrameRequestCallback | undefined;
@@ -333,7 +336,7 @@ describe('browser HTTP hands-free conversation', () => {
         const settings = storage.getState().settings;
         const cfg = settings.voice.adapters.local_conversation;
         storage.__setState({ settings: { ...settings, voice: { ...settings.voice, adapters: { ...settings.voice.adapters,
-            local_conversation: { ...cfg, conversationMode: 'agent', handsFree: { enabled: true, endpointing: { silenceMs: 450, minSpeechMs: 120 } },
+            local_conversation: { ...cfg, stt: { ...cfg.stt, fallbackToDevice: outcome === 'STT device fallback' || outcome === 'cancel device fallback' }, conversationMode: 'agent', handsFree: { enabled: true, endpointing: { silenceMs: 450, minSpeechMs: 120 } },
                 tts: { ...cfg.tts, autoSpeakReplies: true, openaiCompat: { ...cfg.tts.openaiCompat, baseUrl: 'http://localhost:8001' },
                     ...(outcome === 'Google Cloud three turns' ? { provider: 'google_cloud', googleCloud: { apiKey: { _isSecretValue: true, value: 'test-google-key' } } } : {}),
                 },
@@ -341,7 +344,7 @@ describe('browser HTTP hands-free conversation', () => {
                     openaiCompat: { ...cfg.agent.openaiCompat, chatBaseUrl: 'http://localhost:8002' } },
             },
         } } } });
-        let failStt = outcome === 'STT failure';
+        let failStt = outcome === 'STT failure' || outcome === 'STT device fallback' || outcome === 'cancel device fallback';
         let failTts = outcome === 'TTS failure';
         let cancelStt = outcome === 'cancel STT' || outcome === 'interrupt STT';
         let cancelTts = outcome === 'cancel TTS';
@@ -464,6 +467,58 @@ describe('browser HTTP hands-free conversation', () => {
                 expect(recording).toBe(true);
                 expect(engine.getLocalVoiceState().status).toBe('recording');
                 expect(engine.getLocalVoiceState().sessionId).toBe('s1');
+                return;
+            }
+            if (outcome === 'manual send then next hands-free turn') {
+                const manualTurn = engine.toggleLocalVoiceTurn('s1');
+                await until(() => createdAudioPlayers.length === 2);
+                createdAudioPlayers.at(-1).__emit('ended');
+                await manualTurn;
+                expect(recording).toBe(false);
+                await startVoice();
+                expect(recording).toBe(true);
+                frame(0, 0.1); frame(150, 0.1); frame(200, 0); frame(600, 0);
+                await until(() => createdAudioPlayers.length === 3);
+                expect(chats.at(-1)).toContain('spoken turn 2');
+                createdAudioPlayers.at(-1).__emit('ended');
+                await until(() => recording);
+                expect(transcripts).toHaveLength(2);
+                return;
+            }
+            if (outcome === 'STT device fallback' || outcome === 'cancel device fallback') {
+                frame(0, 0.1); frame(150, 0.1); frame(200, 0); frame(600, 0);
+                await vi.waitFor(() => expect(speechRecStart).toHaveBeenCalledTimes(1));
+                expect(recording).toBe(false);
+                expect(engine.getLocalVoiceState()).toMatchObject({ deviceFallback: { stt: true } });
+                if (outcome === 'cancel device fallback') {
+                    const cancelling = engine.abortLocalVoiceTurn('s1');
+                    emitSpeechRecEvent('end');
+                    await cancelling;
+                    expect(speechRecStart).toHaveBeenCalledTimes(2);
+                    expect(recording).toBe(false);
+                    expect(engine.getLocalVoiceState()).toMatchObject({ status: 'recording', deviceFallback: { stt: true } });
+                    return;
+                }
+                for (let turn = 0; turn < 3; turn++) {
+                    // Browser recognition events arrive as tasks after SDK startup
+                    // and its promise continuations settle.
+                    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                    emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: `device fallback turn ${turn + 1}` }] });
+                    emitSpeechRecEvent('end');
+                    expect(engine.getLocalVoiceState().status).not.toBe('recording');
+                    await until(() => createdAudioPlayers.length === turn + 2);
+                    expect(chats.at(-1)).toContain(`device fallback turn ${turn + 1}`);
+                    createdAudioPlayers.at(-1).__emit('ended');
+                    await until(() => speechRecStart.mock.calls.length === turn + 2);
+                    await until(() => engine.getLocalVoiceState().status === 'recording');
+                }
+                expect(transcripts).toHaveLength(1);
+                expect(chats).toHaveLength(3);
+                expect(speech).toHaveLength(4);
+                const stopping = engine.stopLocalVoiceSession();
+                emitSpeechRecEvent('end');
+                await stopping;
+                expect(engine.getLocalVoiceState().deviceFallback).toBeUndefined();
                 return;
             }
             for (let turn = 0; turn < 3; turn++) {

@@ -217,6 +217,24 @@ describe('LocalConversationSection', () => {
     }));
   });
 
+  it.each(['stt', 'tts'] as const)('keeps the primary provider when enabling outage fallback for %s', async (kind) => {
+    // Existing section tests omit these groups. Exercise the actual shared owner
+    // for fallback controls instead of testing the legacy null stubs.
+    const { LocalVoiceSttGroup } = await vi.importActual<typeof import('./localStt/LocalVoiceSttGroup')>('./localStt/LocalVoiceSttGroup');
+    const { LocalVoiceTtsGroup } = await vi.importActual<typeof import('./localTts/LocalVoiceTtsGroup')>('./localTts/LocalVoiceTtsGroup');
+    const cfg = voiceSettingsDefaults.adapters.local_conversation;
+    const setCfg = vi.fn();
+    const screen = await renderSettingsView(kind === 'stt'
+      ? <LocalVoiceSttGroup cfgStt={cfg.stt} setStt={setCfg} />
+      : <LocalVoiceTtsGroup cfgTts={cfg.tts} setTts={setCfg} networkTimeoutMs={15000} />);
+    const item = screen.findAll((node) => String(node.type) === 'Item' && node.props.testID === `voice-${kind}-fallback-to-device`)[0];
+    const toggle = item?.props.rightElement;
+    if (!React.isValidElement<{ value: boolean; onValueChange: (value: boolean) => void }>(toggle)) throw new Error(`${kind} fallback control is unavailable`);
+    expect(toggle.props.value).toBe(false);
+    await act(async () => { toggle.props.onValueChange(true); });
+    expect(setCfg).toHaveBeenLastCalledWith(expect.objectContaining({ provider: 'openai_compat', fallbackToDevice: true }));
+  });
+
   it('does not crash when providerId toggles away from local_conversation', async () => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = () => {};
