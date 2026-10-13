@@ -135,4 +135,70 @@ describe('voiceSessionManager (core)', () => {
     await mgr.toggle('s1');
     expect(mgr.getSnapshot().status).toBe('disconnected');
   });
+  it('surfaces a failed agent binding and allows a fresh connection attempt', async () => {
+    const a = makeAdapter('local_conversation');
+    let attempts = 0;
+    const adapter: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async ({ sessionId }) => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error('Target machine daemon is offline'), {
+            code: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
+          });
+        }
+        await a.controller.toggle({ sessionId });
+      },
+    };
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => adapter.id,
+      getAdapter: () => adapter,
+    });
+
+    await expect(mgr.toggle('s1')).rejects.toThrow('Target machine daemon is offline');
+    expect(mgr.getSnapshot()).toMatchObject({
+      adapterId: adapter.id,
+      status: 'error',
+      mode: 'idle',
+      sessionId: null,
+      canStop: false,
+      errorCode: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
+      errorMessage: 'Target machine daemon is offline',
+    });
+
+    await mgr.toggle('s1');
+    expect(attempts).toBe(2);
+    expect(mgr.getSnapshot().status).toBe('connected');
+    expect(mgr.getSnapshot().errorCode).toBeUndefined();
+  });
+
+  it('does not create two voice sessions from clicks while startup is pending', async () => {
+    let finishStart!: () => void;
+    const startup = new Promise<void>((resolve) => { finishStart = resolve; });
+    const a = makeAdapter('local_conversation');
+    let attempts = 0;
+    const adapter: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async ({ sessionId }) => {
+        attempts += 1;
+        await startup;
+        await a.controller.toggle({ sessionId });
+      },
+    };
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => adapter.id,
+      getAdapter: () => adapter,
+    });
+
+    const first = mgr.toggle('s1');
+    const second = mgr.toggle('s1');
+    expect(second).toBe(first);
+    expect(attempts).toBe(1);
+    expect(mgr.getSnapshot().status).toBe('connecting');
+
+    finishStart();
+    await Promise.all([first, second]);
+    expect(mgr.getSnapshot().status).toBe('connected');
+  });
+
 });
