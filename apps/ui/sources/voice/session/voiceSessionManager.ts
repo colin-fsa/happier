@@ -36,7 +36,9 @@ export function createVoiceSessionManager(deps: Readonly<{
     });
   };
 
-  const toggle = async (sessionId: string) => {
+  // An extra click while session binding is pending must not spawn a second voice session.
+  let pendingToggle: Promise<void> | null = null;
+  const toggleOnce = async (sessionId: string) => {
     const snap = getVoiceSessionSnapshot();
     const adapterId = deps.resolveActiveAdapterId();
     // If voice is currently active but settings flipped to off, allow toggle to hang up.
@@ -52,8 +54,48 @@ export function createVoiceSessionManager(deps: Readonly<{
     // Give UI immediate feedback even if adapter takes time to transition.
     ensureAdapterSnapshotFallback(adapterId, sessionId);
 
-    await adapter.toggle({ sessionId });
+    try {
+      await adapter.toggle({ sessionId });
+    } catch (error) {
+      // Binding, daemon, and microphone failures happen before the adapter can publish
+      // a new snapshot. Never leave the UI indefinitely displaying "connecting".
+      if (deps.resolveActiveAdapterId() === adapterId) {
+        const carrier = error && typeof error === 'object'
+          ? (error as { code?: unknown; rpcErrorCode?: unknown })
+          : null;
+        const errorCode =
+          typeof carrier?.code === 'string'
+            ? carrier.code
+            : typeof carrier?.rpcErrorCode === 'string'
+              ? carrier.rpcErrorCode
+              : 'voice_connect_failed';
+        const errorMessage =
+          error instanceof Error ? error.message : typeof error === 'string' ? error : 'Failed to connect voice';
+        setVoiceSessionSnapshot({
+          adapterId,
+          sessionId: null,
+          status: 'error',
+          mode: 'idle',
+          canStop: false,
+          errorCode,
+          errorMessage,
+        });
+      }
+      throw error;
+    }
     refreshFromAdapter(adapter);
+  };
+
+  const toggle = (sessionId: string): Promise<void> => {
+    if (pendingToggle) return pendingToggle;
+    const attempt = toggleOnce(sessionId);
+    pendingToggle = attempt;
+    // Handle both outcomes so the cleanup itself cannot cause an unhandled rejection.
+    void attempt.then(
+      () => { if (pendingToggle === attempt) pendingToggle = null; },
+      () => { if (pendingToggle === attempt) pendingToggle = null; },
+    );
+    return attempt;
   };
 
   const stop = async (sessionId: string) => {
