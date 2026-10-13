@@ -824,6 +824,36 @@ describe('VoiceSurface', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/session/voice-root-s1', expect.any(Object));
   });
 
+  it('shows the connection error details and keeps retry available', async () => {
+    vi.resetModules();
+    featureEnabledState['voice.agent'] = true;
+    voiceSettingState.current = {
+      providerId: 'local_conversation',
+      ui: { activityFeedEnabled: false, scopeDefault: 'global', surfaceLocation: 'auto' },
+      adapters: {
+        local_conversation: { conversationMode: 'agent' },
+      },
+    };
+
+    const { setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({
+      adapterId: 'local_conversation',
+      sessionId: null,
+      status: 'error',
+      mode: 'idle',
+      canStop: false,
+      errorCode: 'VOICE_AGENT_TARGET_MACHINE_OFFLINE',
+      errorMessage: 'Target machine daemon is offline',
+    });
+
+    const { VoiceSurface } = await import('./VoiceSurface');
+    const screen = await renderScreen(React.createElement(VoiceSurface, { variant: 'sidebar' }));
+
+    expect(screen.getTextContent()).toContain('voiceAssistant.connectionError');
+    expect(screen.getTextContent()).toContain('Target machine daemon is offline');
+    expect(screen.findByProps({ accessibilityLabel: 'voiceAssistant.label' }).props.disabled).toBe(false);
+  });
+
   it('does not disable the stop button while connecting (escape hatch)', async () => {
     vi.resetModules();
     featureEnabledState['voice.agent'] = true;
