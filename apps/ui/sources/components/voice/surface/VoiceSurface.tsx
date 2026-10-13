@@ -320,7 +320,11 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             <Text style={[styles.statusText, { color: theme.colors.text.primary }]} numberOfLines={1}>
               {statusInfo.label}
             </Text>
-            {targetLabel ? (
+            {snap.status === 'error' && snap.errorMessage ? (
+              <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} numberOfLines={2}>
+                {snap.errorMessage}
+              </Text>
+            ) : targetLabel ? (
               <Text style={[styles.targetText, { color: theme.colors.text.secondary }]} numberOfLines={1}>
                 {t('voiceSurface.targetSession')}: {targetLabel}
               </Text>
