@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
+import type { VoiceSessionBinding } from '@/voice/sessionBinding/voiceSessionBindingTypes';
 
 const toggleLocalVoiceTurn = vi.fn(async () => {});
 const stopLocalVoiceSession = vi.fn(async () => {});
@@ -12,7 +13,14 @@ const getLocalVoiceState = vi.fn(() => ({
   error: null as Error | null,
 }));
 
-const ensureBound = vi.fn(async (_params: any) => null);
+const ensureBound = vi.fn(async (params: any): Promise<VoiceSessionBinding | null> => ({
+  adapterId: 'local_conversation',
+  controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+  conversationSessionId: 'sys_voice',
+  transcriptMode: 'native_session',
+  targetSessionId: params.requestedTargetSessionId ?? null,
+  updatedAt: 1,
+}));
 const voiceAgentSessions = { sendTurn: vi.fn(), stop: vi.fn(), isActive: vi.fn(), appendContextUpdate: vi.fn() };
 
 const state: any = {
@@ -187,4 +195,44 @@ describe('local conversation voice adapter', () => {
       }),
     );
   });
+  it('does not record a voice-agent turn when the binding was never established', async () => {
+    ensureBound.mockResolvedValueOnce(null);
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    await expect(adapter.toggle({ sessionId: 's1' })).rejects.toMatchObject({
+      code: 'VOICE_SESSION_BINDING_REQUIRED',
+      message: 'voice_session_binding_required',
+    });
+    expect(toggleLocalVoiceTurn).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale bindings for another control session before recording', async () => {
+    ensureBound.mockResolvedValueOnce({
+      adapterId: 'local_conversation',
+      controlSessionId: 'wrong-session',
+      conversationSessionId: 'sys_voice',
+      transcriptMode: 'native_session',
+      targetSessionId: 's1',
+      updatedAt: 1,
+    });
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    await expect(adapter.toggle({ sessionId: 's1' })).rejects.toMatchObject({
+      code: 'VOICE_SESSION_BINDING_REQUIRED',
+    });
+    expect(toggleLocalVoiceTurn).not.toHaveBeenCalled();
+  });
+
+  it('does not require an agent binding in direct-session mode', async () => {
+    state.settings.voice.adapters.local_conversation.conversationMode = 'direct_session';
+    const { createLocalConversationVoiceAdapter } = await import('./localConversationAdapter');
+    const adapter = createLocalConversationVoiceAdapter();
+
+    await adapter.toggle({ sessionId: 's1' });
+    expect(ensureBound).not.toHaveBeenCalled();
+    expect(toggleLocalVoiceTurn).toHaveBeenCalledWith('s1');
+  });
+
 });
