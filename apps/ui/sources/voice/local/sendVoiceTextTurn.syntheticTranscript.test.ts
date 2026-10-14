@@ -12,6 +12,7 @@ const submitMessage = vi.fn();
 const enqueuePendingMessage = vi.fn();
 let conversationMode: 'agent' | 'direct_session' = 'agent';
 let voiceAgentBackend: 'daemon' | 'openai_compat' = 'daemon';
+let bindingTranscriptMode: 'synthetic' | 'native_session' = 'synthetic';
 
 vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
   resolveVoiceSessionBindingByControlSessionId: (params: { controlSessionId: string }) =>
@@ -20,7 +21,7 @@ vi.mock('@/voice/sessionBinding/resolveVoiceSessionBinding', () => ({
           adapterId: 'local_conversation',
           controlSessionId: 'voice-global',
           conversationSessionId: 'carrier-s1',
-          transcriptMode: 'synthetic',
+          transcriptMode: bindingTranscriptMode,
           targetSessionId: 's1',
           updatedAt: 1,
         }
@@ -128,6 +129,7 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     }));
     conversationMode = 'agent';
     voiceAgentBackend = 'daemon';
+    bindingTranscriptMode = 'synthetic';
   });
 
   it('submits direct-session voice input durably before immediate provider dispatch', async () => {
@@ -160,6 +162,28 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       },
     );
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('submits a microphone turn durably through a daemon-backed native-session binding', async () => {
+    bindingTranscriptMode = 'native_session';
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    const sendTurn = vi.fn(async () => ({ assistantText: 'Four.', actions: [] }));
+
+    await sendVoiceTextTurn({
+      sessionId: 'voice-global',
+      settings: {},
+      userText: 'what is two plus two',
+      playbackController: {
+        registerStopper: () => () => {},
+        interrupt: () => {},
+        captureEpoch: () => 1,
+        isEpochCurrent: () => true,
+      },
+      voiceAgentSessions: { sendTurn },
+    });
+
+    expect(enqueuePendingMessage.mock.calls[0]?.[0]).toBe('carrier-s1');
+    expect(sendTurn).toHaveBeenCalledTimes(1);
   });
 
   it('delegates the durable user row to the daemon while mirroring assistant turns locally', async () => {

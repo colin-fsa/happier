@@ -79,11 +79,12 @@ export async function sendVoiceTextTurn(params: {
     ?? (sessionId === VOICE_AGENT_GLOBAL_SESSION_ID ? null : sessionId);
 
   if (conversationMode === 'agent' && !params.durableDispatch) {
-    if (!syntheticConversationSessionId) {
+    const conversationSessionId = sessionBinding?.conversationSessionId ?? null;
+    if (!conversationSessionId) {
       throw new Error('voice_session_binding_required');
     }
     const result = await submitDurableVoiceTextTurn({
-      conversationSessionId: syntheticConversationSessionId,
+      conversationSessionId,
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async (durableDispatch) => {
