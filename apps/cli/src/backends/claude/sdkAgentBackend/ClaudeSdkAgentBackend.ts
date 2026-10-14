@@ -45,7 +45,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private sendChain: Promise<void> = Promise.resolve();
   private pendingTurn: { resolve: () => void; reject: (e: Error) => void; buffer: string[] } | null = null;
   private pendingTurnCompletion: Promise<void> | null = null;
-  private ignoreNextNonSuccessResult = false;
   // Claude emits exactly one `result` per prompt, in order. A cancelled prompt's result still arrives and
   // must not settle the next prompt's turn. (`num_turns` is per prompt, not a session-wide counter.)
   private staleResultsToSkip = 0;
@@ -235,11 +234,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     }
     if (this.disposed) return;
 
-    // Only ignore a non-success result when we're actually cancelling an in-flight turn.
-    // Otherwise we'd swallow legitimate error results from future turns.
+    // Only expect a stale result when we're actually cancelling an in-flight turn.
+    // Otherwise we'd swallow the next prompt's result.
     const hadPendingTurn = Boolean(this.pendingTurn);
     if (hadPendingTurn) {
-      this.ignoreNextNonSuccessResult = true;
       this.staleResultsToSkip += 1;
       const pending = this.pendingTurn;
       this.pendingTurn = null;
@@ -561,7 +559,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       const result = msg as SDKResultMessage;
       if (this.staleResultsToSkip > 0) {
         this.staleResultsToSkip -= 1;
-        this.ignoreNextNonSuccessResult = false;
         return;
       }
 
@@ -573,10 +570,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         return;
       }
 
-      if (this.ignoreNextNonSuccessResult) {
-        // Cancellation raced with a clean completion; clear the ignore flag so we don't swallow future errors.
-        this.ignoreNextNonSuccessResult = false;
-      }
       const pending = this.pendingTurn;
       if (pending) {
         this.pendingTurn = null;
