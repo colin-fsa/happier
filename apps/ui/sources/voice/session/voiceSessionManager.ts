@@ -52,7 +52,21 @@ export function createVoiceSessionManager(deps: Readonly<{
     // Give UI immediate feedback even if adapter takes time to transition.
     ensureAdapterSnapshotFallback(adapterId, sessionId);
 
-    await adapter.toggle({ sessionId });
+    try {
+      await adapter.toggle({ sessionId });
+    } catch (error) {
+      // The fallback snapshot above reports 'connecting'; a failed start must not leave it there.
+      setVoiceSessionSnapshot({
+        adapterId,
+        sessionId,
+        status: 'error',
+        mode: 'idle',
+        canStop: false,
+        errorCode: 'voice_start_failed',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     refreshFromAdapter(adapter);
   };
 
