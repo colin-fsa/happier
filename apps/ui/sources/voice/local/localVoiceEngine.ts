@@ -1,4 +1,5 @@
 import { AudioModule, RecordingPresets } from 'expo-audio';
+import { Platform } from 'react-native';
 
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -38,7 +39,7 @@ import { sendVoiceTextTurn as sendVoiceTextTurnImpl } from './sendVoiceTextTurn'
 export type { LocalVoiceState, LocalVoiceStatus } from './localVoiceState';
 export { getLocalVoiceState, useLocalVoiceStatus, subscribeLocalVoiceState } from './localVoiceState';
 
-let recorder: InstanceType<typeof AudioModule.AudioRecorder> | null = null;
+let recorder: VoiceAudioRecorder | null = null;
 let inFlight: Promise<void> | null = null;
 let activeTurnAbortController: AbortController | null = null;
 let activeTurnAbortSessionId: string | null = null;
@@ -95,6 +96,16 @@ async function runVoiceTurnWithSendFailureHandling(
   }
 }
 
+// expo-audio's native module exposes `AudioRecorder`; its web build exposes the same class as `AudioRecorderWeb`.
+type VoiceAudioRecorder = InstanceType<typeof AudioModule.AudioRecorder>;
+function createAudioRecorder(): VoiceAudioRecorder {
+  const { AudioRecorderWeb } = AudioModule as typeof AudioModule & {
+    AudioRecorderWeb?: typeof AudioModule.AudioRecorder;
+  };
+  const RecorderClass = Platform.OS === 'web' ? AudioRecorderWeb : AudioModule.AudioRecorder;
+  return new RecorderClass!(RecordingPresets.HIGH_QUALITY);
+}
+
 async function startRecording(sessionId: string): Promise<void> {
   const permission = await requestMicrophonePermission();
   if (!permission.granted) {
@@ -102,7 +113,7 @@ async function startRecording(sessionId: string): Promise<void> {
     return;
   }
 
-  const nextRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const nextRecorder = createAudioRecorder();
   try {
     await nextRecorder.prepareToRecordAsync();
     nextRecorder.record();
