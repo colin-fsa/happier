@@ -197,7 +197,7 @@ RUN yarn workspace @happier-dev/protocol postinstall:real \
     && yarn workspace @happier-dev/transfers postinstall:real
 RUN yarn workspace @happier-dev/app postinstall:real
 RUN rm -rf apps/ui/dist
-RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist --max-workers 1
+RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist --max-workers 5
 RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/dist --gzip-only
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp
