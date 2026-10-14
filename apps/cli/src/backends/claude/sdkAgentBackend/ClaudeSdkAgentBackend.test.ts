@@ -26,6 +26,7 @@ const emitWriteFlow = process.env.FAKE_CLAUDE_EMIT_WRITE_FLOW === '1';
 const emitDiffFlow = process.env.FAKE_CLAUDE_EMIT_DIFF_FLOW === '1';
 const emitUsage = process.env.FAKE_CLAUDE_EMIT_USAGE === '1';
 
+// Real Claude Code reports num_turns per prompt (the agentic turns inside that prompt), not as a session-wide counter.
 let turn = 0;
 let didInit = false;
 let didCompact = false;
@@ -51,7 +52,7 @@ const rl = readline.createInterface({ input: process.stdin });
       // to signal turn cancellation (mirrors real Claude Code behavior closely enough for tests).
       process.stdout.write(JSON.stringify({ type: 'control_response', response: { request_id: msg.request_id, subtype: 'success' } }) + '\\n');
       if (hangTurn && turn === 1) {
-        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error', result: 'INTERRUPTED', num_turns: turn, total_cost_usd: 0, usage: undefined, duration_ms: 1, duration_api_ms: 1, is_error: true, session_id: sessionId }) + '\\n');
+        process.stdout.write(JSON.stringify({ type: 'result', subtype: 'error', result: 'INTERRUPTED', num_turns: 1, total_cost_usd: 0, usage: undefined, duration_ms: 1, duration_api_ms: 1, is_error: true, session_id: sessionId }) + '\\n');
       }
       return;
 	    }
@@ -84,7 +85,7 @@ const rl = readline.createInterface({ input: process.stdin });
       const behavior = msg2.response.response && msg2.response.response.behavior;
       const label = behavior === 'allow' ? 'TOOL_ALLOWED' : 'TOOL_DENIED';
       process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: label }] } }) + '\\n');
-      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+      process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: 1, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     };
     rl.on('line', onControl);
     return;
@@ -97,7 +98,7 @@ const rl = readline.createInterface({ input: process.stdin });
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'read', input: { path: 'README.md' } }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK' }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'TOOL_DONE' }] } }) + '\\n');
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: 1, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     return;
   }
   if (emitWriteFlow && turn === 1) {
@@ -105,7 +106,7 @@ const rl = readline.createInterface({ input: process.stdin });
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Edit', input: { file_path: 'src/app.ts', old_string: 'old', new_string: 'new' } }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK', is_error: false }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'WRITE_DONE' }] } }) + '\\n');
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: 1, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     return;
   }
   if (emitDiffFlow && turn === 1) {
@@ -113,7 +114,7 @@ const rl = readline.createInterface({ input: process.stdin });
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Diff', input: { files: [{ file_path: 'src/diff.ts', oldText: 'before', newText: 'after' }] } }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'OK', is_error: false }] } }) + '\\n');
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'DIFF_DONE' }] } }) + '\\n');
-    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: 1, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
     return;
   }
   if (multiChunk) {
@@ -122,7 +123,7 @@ const rl = readline.createInterface({ input: process.stdin });
   } else {
     process.stdout.write(JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'FAKE_ASSIST_' + turn }] } }) + '\\n');
   }
-  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: turn, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
+  process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', result: 'DONE_' + turn, num_turns: 1, total_cost_usd: emitUsage ? 0.123 : 0, usage: emitUsage ? { input_tokens: 11, output_tokens: 22, cache_read_input_tokens: 3, cache_creation_input_tokens: 4 } : undefined, duration_ms: 1, duration_api_ms: 1, is_error: false, session_id: sessionId }) + '\\n');
 });
 rl.on('close', () => process.exit(0));
 `;
