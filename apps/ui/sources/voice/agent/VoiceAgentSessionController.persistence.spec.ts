@@ -1117,7 +1117,7 @@ describe('VoiceAgentSessionController (persistence)', () => {
         createdAt: 0,
         updatedAt: 0,
         active: true,
-        activeAt: 1,
+        activeAt: Date.now(),
         revokedAt: null,
         metadata: { host: 'old-box', happyHomeDir: '/old/.happier', homeDir: '/Users/old' },
         metadataVersion: 0,

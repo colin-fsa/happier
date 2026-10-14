@@ -51,10 +51,6 @@ vi.mock('@/sync/sync', () => ({
   },
 }));
 
-vi.mock('@/utils/sessions/machineUtils', () => ({
-  isMachineOnline: () => true,
-}));
-
 vi.mock('@/voice/runtime/voiceTargetStore', () => ({
   useVoiceTargetStore: {
     getState: () => ({
@@ -179,6 +175,40 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
       directory: '/Users/test/.happier/voice-agent',
       serverId: 'server-1',
     }));
+  });
+
+  it('does not pick a sticky auto-target machine whose heartbeat expired while the server still flags it active', async () => {
+    state.settings.voice.adapters.local_conversation.agent.autoTargetMachineId = 'dead-machine';
+    state.machines['dead-machine'] = {
+      id: 'dead-machine',
+      active: true,
+      activeAt: Date.now() - 10 * 60_000,
+      metadata: { happyHomeDir: '/Users/dead/.happier' },
+    };
+    state.machines['machine-1'].activeAt = Date.now();
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-1' }));
+  });
+
+  it('does not pick a recent machine whose heartbeat expired while the server still flags it active', async () => {
+    state.settings.recentMachinePaths = [{ machineId: 'dead-machine', path: '/Users/dead/.happier/voice-agent' }];
+    state.machines['dead-machine'] = {
+      id: 'dead-machine',
+      active: true,
+      activeAt: Date.now() - 10 * 60_000,
+      metadata: { happyHomeDir: '/Users/dead/.happier' },
+    };
+    state.machines['machine-1'].activeAt = Date.now();
+
+    const { ensureVoiceConversationSessionForVoiceHome } = await import('./voiceConversationSession');
+
+    await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
+
+    expect(machineSpawnNewSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-1' }));
   });
 
   it('routes recent voice-home spawn targets through active machine replacements', async () => {

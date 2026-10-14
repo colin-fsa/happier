@@ -160,12 +160,12 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     if (fixedRouteMachineId && fixedDirectory) return { machineId: fixedRouteMachineId, directory: fixedDirectory };
   }
 
-  const isKnownInactiveMachine = (machineId: string): boolean => {
+  const isKnownOfflineMachine = (machineId: string): boolean => {
     const machine =
       resolveMachineForActiveServerFromState(state, machineId)
       ?? state?.machines?.[machineId]
       ?? null;
-    return machine?.active === false;
+    return machine != null && !isMachineOnline(machine);
   };
 
   const stickyAutoMachineId = readVoiceAutoTargetMachineId(state);
@@ -175,7 +175,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
       ?? state?.machines?.[stickyAutoMachineId]
       ?? null;
     const stickyDirectory = resolveVoiceHomeDirectory(state, stickyAutoMachineId);
-    if (stickyDirectory && stickyMachine?.active !== false) {
+    if (stickyDirectory && (stickyMachine == null || isMachineOnline(stickyMachine))) {
       return { machineId: stickyAutoMachineId, directory: stickyDirectory };
     }
   }
@@ -188,7 +188,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
         : []
     ),
     ...resolveVisibleMachinesForActiveServerFromState(state)
-      .filter((machine) => machine.active === true)
+      .filter((machine) => isMachineOnline(machine))
       .map((machine) => normalizeNonEmptyString(machine.id)),
     ...listPreferredMachineIds({
       machines: resolveVisibleMachinesForActiveServerFromState(state),
@@ -204,7 +204,7 @@ function resolveVoiceHomeSpawnTarget(state: any): { machineId: string; directory
     if (!machineId) continue;
     if (seenMachineIds.has(machineId)) continue;
     seenMachineIds.add(machineId);
-    if (isKnownInactiveMachine(machineId)) continue;
+    if (isKnownOfflineMachine(machineId)) continue;
     const directory =
       resolveVoiceHomeDirectory(state, machineId)
       ?? resolveRecentVoiceDirectoryForMachine(state, originMachineId)
