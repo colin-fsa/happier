@@ -135,4 +135,25 @@ describe('voiceSessionManager (core)', () => {
     await mgr.toggle('s1');
     expect(mgr.getSnapshot().status).toBe('disconnected');
   });
+
+  it('reports an error instead of staying connecting when the adapter fails to start', async () => {
+    const a = makeAdapter('test_adapter' as VoiceAdapterId);
+    const failing: VoiceAdapterController = {
+      ...a.controller,
+      toggle: async () => {
+        throw new Error('voice_conversation_session_not_ready');
+      },
+    };
+    const mgr = createVoiceSessionManager({
+      resolveActiveAdapterId: () => failing.id,
+      getAdapter: (id) => (id === failing.id ? failing : null),
+    });
+
+    await expect(mgr.toggle('s1')).rejects.toThrow('voice_conversation_session_not_ready');
+
+    expect(mgr.getSnapshot()).toMatchObject({
+      status: 'error',
+      errorMessage: 'voice_conversation_session_not_ready',
+    });
+  });
 });
