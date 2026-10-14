@@ -56,6 +56,8 @@ export function createVoiceSessionManager(deps: Readonly<{
       await adapter.toggle({ sessionId });
     } catch (error) {
       // The fallback snapshot above reports 'connecting'; a failed start must not leave it there.
+      // (A failing stop leaves a different snapshot in place and is left to the adapter.)
+      if (getVoiceSessionSnapshot().status !== 'connecting') throw error;
       setVoiceSessionSnapshot({
         adapterId,
         sessionId,
