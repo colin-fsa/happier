@@ -4,6 +4,7 @@ import {
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     setNextRecorderPrepareError,
+    setPlatformOs,
 } from './localVoiceEngine.testHarness';
 
 describe('local voice engine recording lifecycle', () => {
@@ -16,6 +17,16 @@ describe('local voice engine recording lifecycle', () => {
         await expect(toggleLocalVoiceTurn('s1')).rejects.toThrow('prepare failed');
         expect(getLocalVoiceState().status).toBe('idle');
         expect(getLocalVoiceState().error).toBe('recording_start_failed');
+    });
+
+    it('starts recording on web, where expo-audio exposes only AudioRecorderWeb', async () => {
+        setPlatformOs('web');
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+
+        expect(getLocalVoiceState().status).toBe('recording');
+        expect(getLocalVoiceState().error).toBeNull();
     });
 
     it('throws when STT base URL is missing', async () => {
