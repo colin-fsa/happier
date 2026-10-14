@@ -45,9 +45,9 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private sendChain: Promise<void> = Promise.resolve();
   private pendingTurn: { resolve: () => void; reject: (e: Error) => void; buffer: string[] } | null = null;
   private pendingTurnCompletion: Promise<void> | null = null;
-  private ignoreNextNonSuccessResult = false;
-  private currentTurnOrdinal = 0;
-  private settledTurnOrdinal = 0;
+  // Claude emits exactly one `result` per prompt, in order. A cancelled prompt's result still arrives and
+  // must not settle the next prompt's turn. (`num_turns` is per prompt, not a session-wide counter.)
+  private staleResultsToSkip = 0;
 
   constructor(
     private readonly opts: Readonly<{
@@ -179,7 +179,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
         this.pendingTurn = { resolve: completionResolve, reject: completionReject, buffer: [] };
         this.pendingTurnCompletion = completionPromise;
-        this.currentTurnOrdinal += 1;
         this.turnChangeTracker.beginTurn();
 
         this.promptStream.push({
@@ -235,15 +234,14 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     }
     if (this.disposed) return;
 
-    // Only ignore a non-success result when we're actually cancelling an in-flight turn.
-    // Otherwise we'd swallow legitimate error results from future turns.
+    // Only expect a stale result when we're actually cancelling an in-flight turn.
+    // Otherwise we'd swallow the next prompt's result.
     const hadPendingTurn = Boolean(this.pendingTurn);
     if (hadPendingTurn) {
-      this.ignoreNextNonSuccessResult = true;
+      this.staleResultsToSkip += 1;
       const pending = this.pendingTurn;
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
-      this.settledTurnOrdinal = this.currentTurnOrdinal;
       this.turnChangeTracker.resetTurn();
       pending?.reject(new Error('Turn cancelled'));
     }
@@ -293,7 +291,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
       this.suppressedExplicitDiffCallIds.clear();
-      this.settledTurnOrdinal = this.currentTurnOrdinal;
       pending.reject(new Error('Agent disposed'));
     }
     try {
@@ -380,7 +377,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     this.emit({ type: 'status', status: 'idle' });
   }
 
-  private completeSuccessfulTurn(params: Readonly<{ settledTurnOrdinal: number | null }>): void {
+  private completeSuccessfulTurn(): void {
     const turnChangeSet = this.turnChangeTracker.completeTurn({
       sessionId: this.vendorSessionId ?? this.localSessionId,
       status: 'completed',
@@ -411,9 +408,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       this.pendingTurn = null;
       this.pendingTurnCompletion = null;
       pending.resolve();
-    }
-    if (params.settledTurnOrdinal !== null) {
-      this.settledTurnOrdinal = params.settledTurnOrdinal;
     }
     this.emitIdleIfProviderBackgroundWorkComplete();
   }
@@ -482,7 +476,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
           previousVendorSessionId !== system.session_id.trim(),
         );
         if (isSessionBoundary && pending) {
-          this.completeSuccessfulTurn({ settledTurnOrdinal: this.currentTurnOrdinal });
+          this.completeSuccessfulTurn();
         }
       }
       return;
@@ -563,10 +557,8 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
 
     if (type === 'result') {
       const result = msg as SDKResultMessage;
-      if (result.num_turns <= this.settledTurnOrdinal) {
-        if (this.ignoreNextNonSuccessResult) {
-          this.ignoreNextNonSuccessResult = false;
-        }
+      if (this.staleResultsToSkip > 0) {
+        this.staleResultsToSkip -= 1;
         return;
       }
 
@@ -574,14 +566,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
       this.emitTokenCountTelemetry(result);
 
       if (result.subtype === 'success') {
-        this.completeSuccessfulTurn({ settledTurnOrdinal: result.num_turns });
+        this.completeSuccessfulTurn();
         return;
       }
 
-      if (this.ignoreNextNonSuccessResult) {
-        // Cancellation raced with a clean completion; clear the ignore flag so we don't swallow future errors.
-        this.ignoreNextNonSuccessResult = false;
-      }
       const pending = this.pendingTurn;
       if (pending) {
         this.pendingTurn = null;
@@ -590,7 +578,6 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         this.suppressedExplicitDiffCallIds.clear();
         pending.reject(new Error(`Claude SDK error: ${result.subtype}`));
       }
-      this.settledTurnOrdinal = result.num_turns;
       this.emit({ type: 'status', status: 'error', detail: String(result.subtype) });
       return;
     }
