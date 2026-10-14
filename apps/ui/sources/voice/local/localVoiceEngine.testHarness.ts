@@ -381,24 +381,32 @@ vi.mock('react-native', async () => {
     );
 });
 
-vi.mock('expo-audio', () => ({
-    RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
-    AudioModule: {
-        AudioRecorder: class {
-            uri: string | null = null;
-            async prepareToRecordAsync() {
-                if (nextRecorderPrepareError) {
-                    const error = nextRecorderPrepareError;
-                    nextRecorderPrepareError = null;
-                    throw error;
-                }
+vi.mock('expo-audio', () => {
+    class MockAudioRecorder {
+        uri: string | null = null;
+        async prepareToRecordAsync() {
+            if (nextRecorderPrepareError) {
+                const error = nextRecorderPrepareError;
+                nextRecorderPrepareError = null;
+                throw error;
             }
-            record() { }
-            async stop() {
-                this.uri = 'file:///tmp/rec.m4a';
-            }
+        }
+        record() { }
+        async stop() {
+            this.uri = 'file:///tmp/rec.m4a';
+        }
+    }
+    return {
+        RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
+        // Mirrors the real package: native exposes `AudioRecorder`, the web build only `AudioRecorderWeb`.
+        AudioModule: {
+            get AudioRecorder() {
+                return platformOs === 'web' ? undefined : MockAudioRecorder;
+            },
+            get AudioRecorderWeb() {
+                return platformOs === 'web' ? MockAudioRecorder : undefined;
+            },
         },
-    },
     createAudioPlayer: (source?: any) => {
         const listeners = new Map<string, (arg: any) => void>();
         const player = {
@@ -415,7 +423,8 @@ vi.mock('expo-audio', () => ({
         createdAudioPlayers.push(player);
         return player;
     },
-}));
+    };
+});
 
 vi.mock('expo-file-system', () => ({
     Paths: { cache: 'file:///tmp/' },
